@@ -6,6 +6,24 @@ compare attempts. Ordinary reads never start model work. The HTML interface is
 served by FastAPI at `/experiments`; opening a template with `file://` cannot
 render the application.
 
+## Requested next iteration: document extraction
+
+This is pending work, not a description of the current implementation.
+
+- Present the extracted document as continuous readable text or Markdown while
+  retaining original PDF page references and exact evidence text internally.
+- Capture the paper's own bibliographic metadata: title, authors, publication
+  year, publication venue and DOI when available. Mark missing or uncertain
+  fields explicitly rather than inventing them.
+- Capture the bibliography as individual references and preserve in-text
+  citation markers, linking them to references where the mapping is reliable.
+  Distinguish cited works from the uploaded paper itself.
+- Preserve headings and document sections where extraction supports them.
+  Decide how section extraction relates to information blocks before adding
+  another semantic model pass; these are different outputs.
+- Evaluate scientific PDF-to-Markdown tools and bibliographic extraction before
+  choosing an implementation. Keep provenance and extraction quality inspectable.
+
 ## Shared operations and boundaries
 
 | Step | Shared operation |
