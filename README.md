@@ -26,8 +26,11 @@ they are not a substitute for useful synthesis.
 
 The first priority is an **isolated experimentation dashboard**: run a PDF
 through the real workflow, inspect every intermediate result, compare prompts
-and processing choices, then discard the test environment. The tooling deserves
-as much attention as the application code. See [#1][issue-1].
+and processing choices, then discard the test environment. The first shared
+runner now covers manual PDF extraction and source-grounded information blocks;
+the later knowledge and writing steps are deliberately marked as pending until
+their existing operations are connected. The tooling deserves as much
+attention as the application code. See [#1][issue-1].
 
 ## Working model
 
@@ -83,7 +86,59 @@ The HTML app has no login: keep it on loopback and use an SSH tunnel for remote
 access. Run `uv run knowledge --help` for commands. Model workflows require a
 separate Hermes installation; the current adapter uses `gpt-5.6-luna` through
 `openai-codex`. See [deployment](deploy/README.md) for Linux extraction runtimes
-and backup requirements. The disposable test environment is not built yet.
+and backup requirements. The disposable experiment dashboard is available at
+`/experiments`. It stores private run data beside the archive, advances one
+step at a time, never calls a model while reading, and can delete a run on
+request. The remaining steps show their implementation status instead of
+pretending that a UI card is a working pipeline.
+
+### Shared execution boundaries
+
+The experiment runner calls the same extraction, validation and model adapter
+functions as the normal application. It owns only temporary inputs, outputs
+and logs.
+
+```mermaid
+flowchart LR
+  PDF[Uploaded PDF] --> EX[extract_text]
+  EX --> SNAP[Revisioned extraction snapshot]
+  SNAP --> BL[segment_blocks]
+  BL --> BLOCKS[Blocks with exact source spans]
+  BLOCKS --> KNOW[Shared knowledge operations]
+  KNOW --> WRITE[Shared writing operations]
+  RUN[Experiment directory] -. isolates .-> EX
+  RUN -. records .-> KNOW
+```
+
+Every column is a manually started operation. The dashboard reads pinned JSON
+and JSONL files; it does not start follow-up work implicitly.
+
+```mermaid
+sequenceDiagram
+  participant Human
+  participant UI as Experiment UI
+  participant Runner
+  participant Operation as Shared operation
+  participant Log as Run log
+  Human->>UI: Choose one step and submit
+  UI->>Runner: Run step with pinned inputs
+  Runner->>Operation: Execute and validate
+  Operation->>Log: Request, response, validation and errors
+  Runner-->>UI: Persisted result
+  UI-->>Human: Result and expandable trace
+```
+
+Prompt and recipe revisions live in the private configuration registry. Saving a
+revision and activating a default are separate operations; an experiment pins
+the revision it actually used.
+
+```mermaid
+flowchart TD
+  Draft[Save configuration revision] --> Review[Human review]
+  Review --> Activate[Activate explicit default]
+  Activate --> Recipe[Versioned recipe]
+  Recipe --> Run[Experiment pins recipe and inputs]
+```
 
 ### Checks
 

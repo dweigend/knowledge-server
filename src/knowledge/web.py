@@ -10,7 +10,7 @@ from urllib.error import URLError
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -27,6 +27,14 @@ from knowledge.application import (
 )
 from knowledge.config import DEFAULT_BATCH, Settings
 from knowledge.contracts import Assessment, Evidence, Note, Record, Reference, Source
+from knowledge.experimentation import (
+    STEP_LABELS,
+    create_experiment,
+    delete_experiment,
+    experiment_directory,
+    read_manifest,
+    run_step,
+)
 from knowledge.source_view import compose_article, preview_image
 from knowledge.storage import Conflict, Database, Ledger, Missing
 
@@ -59,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:  # noqa: C901
     application = Knowledge(database)
     app = FastAPI(title="Knowledge pilot", docs_url=None, redoc_url=None)
     app.mount("/pdf-viewer", StaticFiles(directory=Path(__file__).with_name("static") / "pdfjs"))
+    app.mount("/static", StaticFiles(directory=Path(__file__).with_name("static")), name="static")
     app.add_middleware(
         TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "testserver"]
     )
@@ -123,6 +132,80 @@ def create_app(settings: Settings | None = None) -> FastAPI:  # noqa: C901
         return templates.TemplateResponse(
             request=request, name="runs.html", context={"runs": [], "events": events, "name": name}
         )
+
+    @app.get("/experiments", response_class=HTMLResponse)
+    def experiments(request: Request) -> HTMLResponse:
+        """List isolated experiments without executing any pipeline step."""
+        root = settings.archive_root.parent / "experiments"
+        runs = []
+        if root.exists():
+            for directory in sorted(root.iterdir()):
+                manifest = directory / "manifest.json"
+                if directory.is_dir() and manifest.exists():
+                    runs.append(json.loads(manifest.read_text()))
+        return templates.TemplateResponse(
+            request=request,
+            name="experiments.html",
+            context={
+                "experiment": None,
+                "runs": runs,
+                "steps": STEP_LABELS,
+                "outputs": {},
+                "events": [],
+            },
+        )
+
+    @app.post("/experiments", response_class=RedirectResponse)
+    async def create_experiment_route(source: UploadFile = File(...)) -> RedirectResponse:  # noqa: B008
+        """Store one uploaded PDF in a private disposable experiment directory."""
+        experiment_id = create_experiment(
+            settings.archive_root, source.filename or "source.pdf", await source.read()
+        )
+        return RedirectResponse(f"/experiments/{experiment_id}", status_code=303)
+
+    @app.get("/experiments/{experiment_id}", response_class=HTMLResponse)
+    def experiment_detail(request: Request, experiment_id: str) -> HTMLResponse:
+        """Render pinned outputs and logs without triggering model calls."""
+        manifest = read_manifest(settings.archive_root, experiment_id)
+        directory = experiment_directory(settings.archive_root, experiment_id)
+        outputs = {}
+        for step, filename in (
+            ("extract_text", "extraction.json"),
+            ("segment_blocks", "blocks.json"),
+        ):
+            path = directory / filename
+            if path.exists():
+                outputs[step] = json.loads(path.read_text())
+        events = read_run_events(directory.parent, experiment_id)
+        return templates.TemplateResponse(
+            request=request,
+            name="experiments.html",
+            context={
+                "experiment": manifest,
+                "runs": [],
+                "steps": STEP_LABELS,
+                "outputs": outputs,
+                "events": events,
+            },
+        )
+
+    @app.post("/experiments/{experiment_id}/steps/{step}", response_class=RedirectResponse)
+    def experiment_step(
+        experiment_id: str,
+        step: str,
+        max_characters: Annotated[int, Form()] = 2000,
+    ) -> RedirectResponse:
+        """Run one explicitly selected experiment step and return to its dashboard."""
+        if step not in STEP_LABELS:
+            raise ValueError("Unknown experiment step")
+        run_step(settings.archive_root, experiment_id, step, max_characters=max_characters)  # type: ignore[arg-type]
+        return RedirectResponse(f"/experiments/{experiment_id}", status_code=303)
+
+    @app.post("/experiments/{experiment_id}/delete", response_class=RedirectResponse)
+    def delete_experiment_route(experiment_id: str) -> RedirectResponse:
+        """Delete only the selected disposable experiment data."""
+        delete_experiment(settings.archive_root, experiment_id)
+        return RedirectResponse("/experiments", status_code=303)
 
     @app.get("/records/{entity_id}", response_class=HTMLResponse)
     def detail(

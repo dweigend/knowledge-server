@@ -1,0 +1,12 @@
+.experiment-columns {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  overflow-x: auto;
+}
+
+.experiment-step {
+  min-width: 18rem;
+  border: 1px solid #aaa;
+  padding: 1rem;
+}

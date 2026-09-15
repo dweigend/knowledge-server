@@ -12,6 +12,7 @@ from knowledge.contracts import Assessment, Contract, Evidence, Record, Referenc
 from knowledge.evidence import records_for_claim
 from knowledge.generation import generate
 from knowledge.ingestion import locate_passage
+from knowledge.prompt_registry import load_prompt
 from knowledge.zotero import get_bibliography
 
 
@@ -153,7 +154,7 @@ def prepare_comparison(
         return CompareEvidence.model_validate_json(prepared.read_text())
     packet, selection = candidate_packet(claim, current_evidence, source_records)
     comparison = generate(
-        (prompts / "compare.md").read_text(),
+        load_prompt("compare"),
         packet,
         Comparison,
         batch_root / "proposals",
@@ -195,9 +196,7 @@ def assess_compared_claim(
             if isinstance(record.payload, Assessment) and record.payload.claim == claim.reference()
         ]
     packet = assessment_packet(claim, relations, search)
-    assessment = generate(
-        (prompts / "assess.md").read_text(), packet, Assessment, batch_root / "proposals"
-    )
+    assessment = generate(load_prompt("assess"), packet, Assessment, batch_root / "proposals")
     existing = max(assessments, key=lambda record: record.created_at) if assessments else None
     receipt_id = f"{batch_id}:cross-assess:{claim.entity_id}"
     with application.database.transaction() as ledger:

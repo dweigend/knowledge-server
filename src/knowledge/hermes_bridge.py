@@ -9,19 +9,16 @@ if TYPE_CHECKING:
     from run_agent import AIAgent
 
 
-def configured_model() -> tuple[str, str]:
-    """Require the reviewed model and provider from the installed Hermes configuration."""
-    from hermes_cli.config import load_config
-
-    configuration = load_config()
-    model = configuration["model"]["default"]
-    provider = configuration["model"]["provider"]
-    if model != "gpt-5.6-luna" or provider != "openai-codex":
-        raise RuntimeError("Pilot requires the reviewed Luna/openai-codex configuration")
-    return model, provider
+def configured_model(configuration: dict | None = None) -> tuple[str, str]:
+    """Resolve per-request choices without changing the user's Hermes configuration."""
+    configuration = configuration or {}
+    return (
+        configuration.get("model") or "gpt-5.6-luna",
+        configuration.get("provider") or "openai-codex",
+    )
 
 
-def create_agent(model: str, provider: str) -> "AIAgent":
+def create_agent(model: str, provider: str, timeout_seconds: float = 240) -> "AIAgent":
     """Reuse Hermes authentication with tools, memory and background review disabled."""
     from hermes_cli.runtime_provider import resolve_runtime_provider
     from run_agent import AIAgent
@@ -39,7 +36,7 @@ def create_agent(model: str, provider: str) -> "AIAgent":
         skip_background_review=True,
         quiet_mode=True,
         max_iterations=2,
-        run_budget_seconds=180,
+        run_budget_seconds=min(180, timeout_seconds),
         reasoning_config={"effort": "medium"},
     )
 
@@ -47,8 +44,9 @@ def create_agent(model: str, provider: str) -> "AIAgent":
 def main() -> None:
     """Read one request, persist its response and always close the Hermes agent."""
     request = json.loads(Path(sys.argv[1]).read_text())
-    model, provider = configured_model()
-    agent = create_agent(model, provider)
+    configuration = json.loads(request.get("configuration", "{}"))
+    model, provider = configured_model(configuration)
+    agent = create_agent(model, provider, configuration.get("timeout_seconds", 240))
     try:
         response = run_request(agent, request, model, provider)
         Path(sys.argv[2]).write_text(json.dumps(response, ensure_ascii=False))
@@ -63,8 +61,10 @@ def run_request(agent: "AIAgent", request: dict[str, str], model: str, provider:
         system_message=request["instructions"],
     )
     return {
-        "model": model,
-        "provider": provider,
+        "model": getattr(agent, "model", model),
+        "provider": getattr(agent, "provider", provider),
+        "requested_model": model,
+        "requested_provider": provider,
         "response": result["final_response"],
         "session_id": agent.session_id,
     }

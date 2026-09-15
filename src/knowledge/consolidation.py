@@ -14,6 +14,7 @@ from knowledge.application import AssessmentCommand, Knowledge
 from knowledge.contracts import Assessment, Contract, Evidence, Note, Record, Reference, Review
 from knowledge.evidence import records_for_claim
 from knowledge.generation import generate
+from knowledge.prompt_registry import load_prompt
 from knowledge.run_log import record_event
 from knowledge.storage import Ledger
 
@@ -138,9 +139,9 @@ def propose_note_revision(
     """Generate a validated proposal with the exact context revisions supplied to Luna."""
     supplied = note_context(target, records)
     packet = note_packet(target, supplied, records)
-    prompt = Path(__file__).with_name("prompts") / "consolidate.md"
+    prompt = load_prompt("consolidate")
     proposal = generate(
-        prompt.read_text(),
+        prompt,
         packet,
         NoteRevision,
         run_directory / "proposals",
@@ -297,9 +298,9 @@ def reassess_claim(
             "coverage": "Convenience-selected supplied texts; no systematic literature search.",
         }
     )
-    prompt = Path(__file__).with_name("prompts") / "assess.md"
+    prompt = load_prompt("assess")
     assessment = generate(
-        prompt.read_text(),
+        prompt,
         packet,
         Assessment,
         run_directory / "proposals",

@@ -7,8 +7,9 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
+from typing import Self
 
-from pydantic import ValidationError
+from pydantic import Field, ValidationError, model_validator
 
 from knowledge.contracts import Contract
 from knowledge.run_log import record_event
@@ -20,16 +21,57 @@ HERMES_PYTHON = Path(
 )
 
 
+class ModelConfiguration(Contract):
+    """Pin the bounded, tool-free Hermes request configuration."""
+
+    model: str | None = Field(default=None, min_length=1)
+    provider: str | None = Field(default=None, min_length=1)
+    max_attempts: int = Field(default=2, ge=1, le=2)
+    timeout_seconds: float = Field(default=240, ge=1, le=240)
+    allowed_tools: list[str] = Field(default_factory=list)
+    cost_limit_usd: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def reject_unsupported_capabilities(self) -> Self:
+        """Reject limits or capabilities that the adapter cannot enforce."""
+        if self.allowed_tools:
+            raise ValueError("This Hermes adapter does not support tool execution")
+        if self.cost_limit_usd is not None:
+            raise ValueError("This Hermes adapter cannot enforce a monetary cost limit")
+        return self
+
+    def resolved(self) -> "ModelConfiguration":
+        """Make the existing Luna defaults explicit before hashing a request."""
+        return self.model_copy(
+            update={
+                "model": self.model or "gpt-5.6-luna",
+                "provider": self.provider or "openai-codex",
+            }
+        )
+
+
+def check_cancelled(cancelled: Callable[[], bool] | None) -> None:
+    """Stop before further work when the caller cancels this request."""
+    if cancelled is not None and cancelled():
+        raise InterruptedError("Model request cancelled")
+
+
 def generate[T: Contract](
     instructions: str,
     packet: str,
     contract: type[T],
     output_directory: Path,
     validate: Callable[[T], None] | None = None,
+    *,
+    configuration: ModelConfiguration | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> T:
     """Reuse a validated proposal or request at most two schema-checked attempts."""
+    check_cancelled(cancelled)
+    configuration = (configuration or ModelConfiguration()).resolved()
     schema = json.dumps(contract.model_json_schema(), ensure_ascii=False)
     request = {"instructions": instructions, "input": f"SCHEMA:\n{schema}\n\nINPUT:\n{packet}"}
+    request["configuration"] = configuration.model_dump_json()
     identity = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
     directory = output_directory / identity
     directory.mkdir(parents=True, exist_ok=True)
@@ -37,7 +79,7 @@ def generate[T: Contract](
     cached = load_cached_proposal(accepted, contract, validate)
     if cached is not None:
         return cached
-    return generate_attempts(request, directory, contract, validate)
+    return generate_attempts(request, directory, contract, validate, configuration, cancelled)
 
 
 def generate_attempts[T: Contract](
@@ -45,12 +87,16 @@ def generate_attempts[T: Contract](
     directory: Path,
     contract: type[T],
     validate: Callable[[T], None] | None,
+    configuration: ModelConfiguration,
+    cancelled: Callable[[], bool] | None,
 ) -> T:
     """Try the initial request and one repair, preserving every response for inspection."""
     accepted = directory / "validated.json"
-    for attempt in range(2):
+    for attempt in range(configuration.max_attempts):
+        check_cancelled(cancelled)
         started = monotonic()
-        response = request_response(request, directory, attempt)
+        response = request_response(request, directory, attempt, cancelled=cancelled)
+        check_cancelled(cancelled)
         proposal = validate_response(response, request, contract, validate)
         record_event(
             directory,
@@ -113,24 +159,70 @@ def load_cached_proposal[T: Contract](
     return cached
 
 
-def run_hermes(request_path: Path, response_path: Path, log_path: Path) -> None:
+def run_hermes(
+    request_path: Path,
+    response_path: Path,
+    log_path: Path,
+    *,
+    cancelled: Callable[[], bool] | None = None,
+) -> None:
     """Run the installed Hermes adapter with a timeout and a private diagnostic log."""
+    request = json.loads(request_path.read_text())
+    configuration = ModelConfiguration.model_validate_json(request["configuration"])
+    arguments = [
+        str(HERMES_PYTHON),
+        str(Path(__file__).with_name("hermes_bridge.py")),
+        str(request_path),
+        str(response_path),
+    ]
+    check_cancelled(cancelled)
     with log_path.open("w") as log:
-        subprocess.run(
-            [
-                str(HERMES_PYTHON),
-                str(Path(__file__).with_name("hermes_bridge.py")),
-                str(request_path),
-                str(response_path),
-            ],
-            stdout=log,
-            stderr=log,
-            check=True,
-            timeout=240,
-        )
+        if cancelled is None:
+            subprocess.run(
+                arguments, stdout=log, stderr=log, check=True, timeout=configuration.timeout_seconds
+            )
+            return
+        with subprocess.Popen(arguments, stdout=log, stderr=log) as process:
+            wait_for_hermes(process, configuration.timeout_seconds, cancelled)
 
 
-def request_response(request: dict[str, str], directory: Path, attempt: int) -> str:
+def wait_for_hermes(
+    process: subprocess.Popen,
+    timeout_seconds: float,
+    cancelled: Callable[[], bool],
+) -> None:
+    """Poll cancellation and terminate the external request on cancellation or timeout."""
+    deadline = monotonic() + timeout_seconds
+    try:
+        while True:
+            check_cancelled(cancelled)
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Hermes request exceeded its time limit")
+            try:
+                return_code = process.wait(timeout=min(0.1, remaining))
+            except subprocess.TimeoutExpired:
+                continue
+            if return_code:
+                raise subprocess.CalledProcessError(return_code, process.args)
+            return
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+
+
+def request_response(
+    request: dict[str, str],
+    directory: Path,
+    attempt: int,
+    *,
+    cancelled: Callable[[], bool] | None = None,
+) -> str:
     """Reuse recorded responses and preserve changed repair requests separately."""
     request_path = directory / f"request-{attempt}.json"
     response_path = directory / f"response-{attempt}.json"
@@ -140,7 +232,11 @@ def request_response(request: dict[str, str], directory: Path, attempt: int) -> 
         response_path = directory / f"response-{attempt}-{suffix}.json"
     request_path.write_text(json.dumps(request, ensure_ascii=False))
     if not response_path.exists():
-        run_hermes(request_path, response_path, directory / f"hermes-{attempt}.log")
+        log_path = directory / f"hermes-{attempt}.log"
+        if cancelled is None:
+            run_hermes(request_path, response_path, log_path)
+        else:
+            run_hermes(request_path, response_path, log_path, cancelled=cancelled)
     response = json.loads(response_path.read_text())["response"].strip()
     if response.startswith("```json") and response.endswith("```"):
         response = response[7:-3].strip()

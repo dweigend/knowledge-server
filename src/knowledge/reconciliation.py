@@ -1,6 +1,7 @@
 """Match extracted claims against existing candidates before accepting new knowledge."""
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -9,8 +10,9 @@ from pydantic import Field
 from knowledge import evidence, sources
 from knowledge.application import Knowledge
 from knowledge.contracts import Claim, Contract, Evidence, ExtractedClaim, Record, Reference, Source
-from knowledge.generation import generate
+from knowledge.generation import ModelConfiguration, generate
 from knowledge.grounding import check_passage
+from knowledge.prompt_registry import load_prompt
 from knowledge.run_log import record_event
 from knowledge.storage import Ledger
 
@@ -78,7 +80,13 @@ def reconcile_claim(
 
 
 def propose_matching(
-    proposal: ExtractedClaim, candidates: list[Record], run_directory: Path
+    proposal: ExtractedClaim,
+    candidates: list[Record],
+    run_directory: Path,
+    *,
+    instructions: str | None = None,
+    configuration: ModelConfiguration | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> ClaimDecision:
     """Match one extracted claim against the exact supplied candidate revisions."""
     packet = json.dumps(
@@ -87,13 +95,15 @@ def propose_matching(
             "candidates": [record.model_dump(mode="json") for record in candidates],
         }
     )
-    prompt = Path(__file__).with_name("prompts") / "reconcile.md"
+    prompt = instructions if instructions is not None else load_prompt("reconcile")
     return generate(
-        prompt.read_text(),
+        prompt,
         packet,
         ClaimDecision,
         run_directory / "proposals",
         lambda result: validate_decision(result, candidates),
+        configuration=configuration,
+        cancelled=cancelled,
     )
 
 

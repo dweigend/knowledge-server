@@ -3,6 +3,7 @@
 import hashlib
 import json
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import Field
@@ -18,8 +19,9 @@ from knowledge.contracts import (
     Text,
     ZoteroReference,
 )
-from knowledge.generation import generate
+from knowledge.generation import ModelConfiguration, generate
 from knowledge.ingestion import extract_pdf_pages, locate_passage, remove_curator_cover
+from knowledge.prompt_registry import load_prompt
 from knowledge.reconciliation import reconcile_claim
 from knowledge.run_log import record_event
 from knowledge.zotero import import_sources
@@ -82,9 +84,16 @@ def validate_extraction(extraction: ArticleExtraction, pages: list[str], supplie
             extraction.warnings.append(f"Corrected PDF page {claimed_page} to {claim.page}")
 
 
-def extract_document(pages: list[str], run_directory: Path) -> list[ArticleExtraction]:
+def extract_document(
+    pages: list[str],
+    run_directory: Path,
+    *,
+    instructions: str | None = None,
+    configuration: ModelConfiguration | None = None,
+    cancelled: Callable[[], bool] | None = None,
+) -> list[ArticleExtraction]:
     """Extract one inspectable contribution per complete page chunk."""
-    prompt = Path(__file__).with_name("prompts") / "import.md"
+    prompt = instructions if instructions is not None else load_prompt("import")
     proposals = []
     for chunk in page_chunks(pages):
         packet = json.dumps(
@@ -97,11 +106,13 @@ def extract_document(pages: list[str], run_directory: Path) -> list[ArticleExtra
             ensure_ascii=False,
         )
         proposal = generate(
-            prompt.read_text(),
+            prompt,
             packet,
             ArticleExtraction,
             run_directory / "proposals",
             lambda result, supplied=chunk: validate_extraction(result, pages, supplied),
+            configuration=configuration,
+            cancelled=cancelled,
         )
         record_event(
             run_directory,

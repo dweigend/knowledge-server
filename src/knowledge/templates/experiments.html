@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Experiments · Knowledge server</title><link rel="stylesheet" href="/static/experiments.css"></head>
+<body>
+<p><a href="/">Knowledge database</a> · <a href="/experiments">Experiments</a></p>
+<h1>Disposable experiments</h1>
+<p>Each step is started manually. Reading this page never calls a model.</p>
+{% if not experiment %}
+<form method="post" action="/experiments" enctype="multipart/form-data">
+  <label>PDF source <input type="file" name="source" accept="application/pdf" required></label>
+  <button>Start isolated experiment</button>
+</form>
+<h2>Runs</h2>
+<ul>{% for run in runs %}<li><a href="/experiments/{{ run.id }}">{{ run.filename }}</a> · {{ run.id }}</li>{% endfor %}</ul>
+{% else %}
+<p><strong>{{ experiment.filename }}</strong> · {{ experiment.id }}</p>
+<form method="post" action="/experiments/{{ experiment.id }}/delete"><button>Delete experiment data</button></form>
+<div class="experiment-columns">
+{% for step, label in steps.items() %}
+<section class="experiment-step">
+<h2>{{ loop.index }}. {{ label }}</h2>
+<p>Status: {{ experiment.steps.get(step, {}).get('status', 'not started') }}</p>
+<form method="post" action="/experiments/{{ experiment.id }}/steps/{{ step }}">
+{% if step == 'segment_blocks' %}<label>Max block characters <input type="number" name="max_characters" value="2000" min="1" max="120000"></label>{% endif %}
+<button>Run this step</button>
+</form>
+{% if outputs.get(step) %}<details><summary>Result</summary><pre>{{ outputs[step] | tojson(indent=2) }}</pre></details>{% endif %}
+</section>
+{% endfor %}
+</div>
+<h2>Execution log</h2>
+{% for event in events %}<details><summary>{{ event.time }} · {{ event.event }}</summary><pre>{{ event | tojson(indent=2) }}</pre></details>{% endfor %}
+{% endif %}
+</body>
+</html>

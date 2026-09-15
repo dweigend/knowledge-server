@@ -5,6 +5,7 @@ from pathlib import Path
 
 from knowledge.contracts import Claim, Contract, Evidence, ExtractedClaim, Source, Text
 from knowledge.generation import generate
+from knowledge.prompt_registry import load_prompt
 from knowledge.run_log import record_event
 
 
@@ -34,8 +35,8 @@ def check_passage(
         },
         ensure_ascii=False,
     )
-    prompt = Path(__file__).with_name("prompts") / "grounding.md"
-    result = generate(prompt.read_text(), packet, PassageCheck, run_directory / "proposals")
+    prompt = load_prompt("grounding")
+    result = generate(prompt, packet, PassageCheck, run_directory / "proposals")
     record_event(
         run_directory,
         "passage_check",
