@@ -106,7 +106,7 @@ OUTPUT_CONTRACTS: dict[str, type[Contract]] = {
     "draft_text": WritingDraft,
 }
 OUTPUT_SCHEMAS = {
-    "extract_text": "extraction.v2",
+    "extract_text": "extraction.v3",
     "segment_blocks": "blocks.v1",
     "formulate_claims": "claims.v1",
     "find_knowledge": "retrieval.v1",
@@ -116,7 +116,7 @@ OUTPUT_SCHEMAS = {
     "draft_text": "draft.v1",
 }
 STEP_PARAMETERS = {
-    "extract_text": {"document_provider", "service_url"},
+    "extract_text": {"document_provider", "service_url", "literature_provider"},
     "segment_blocks": {"mode", "max_characters"},
     "formulate_claims": set(),
     "find_knowledge": {"query", "limit"},

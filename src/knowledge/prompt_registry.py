@@ -68,7 +68,11 @@ PROMPT_SEEDS = {
     ),
 }
 STEP_DEFAULTS: dict[Step, tuple[str, str, dict[str, JsonValue]]] = {
-    "extract_text": ("extract", "extraction.v2", {"document_provider": "grobid"}),
+    "extract_text": (
+        "extract",
+        "extraction.v3",
+        {"document_provider": "grobid", "literature_provider": "crossref"},
+    ),
     "segment_blocks": ("segment", "blocks.v1", {"mode": "model", "max_characters": 2000}),
     "formulate_claims": ("import", "claims.v1", {}),
     "find_knowledge": ("retrieval", "retrieval.v1", {}),

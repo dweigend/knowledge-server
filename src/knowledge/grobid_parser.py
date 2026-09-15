@@ -95,12 +95,15 @@ def paper_citations(root: ET.Element, references: list[PaperReference]) -> list[
     reference_counts = Counter(reference.id for reference in references)
     known_ids = {reference_id for reference_id, count in reference_counts.items() if count == 1}
     citations = []
+    parents = {child: parent for parent in root.iter() for child in parent}
     for marker in root.findall(".//tei:text//tei:ref[@type='bibr']", NS):
         targets = marker.get("target", "").split()
         target_ids = [target.removeprefix("#") for target in targets]
         citations.append(
             PaperCitation(
                 marker=element_text(marker),
+                context=citation_context(marker, parents),
+                section=citation_section(marker, parents),
                 target_ids=target_ids,
                 resolved=bool(targets)
                 and all(target.startswith("#") and target[1:] in known_ids for target in targets),
@@ -108,6 +111,48 @@ def paper_citations(root: ET.Element, references: list[PaperReference]) -> list[
             )
         )
     return citations
+
+
+def citation_context(marker: ET.Element, parents: dict[ET.Element, ET.Element]) -> str:
+    """Retain the surrounding paragraph excerpt for the specific citation occurrence."""
+    container = marker
+    while container in parents:
+        container = parents[container]
+        if container.tag.rsplit("}", 1)[-1] in {"p", "note", "item", "cell", "figDesc"}:
+            break
+        if container.tag.endswith("}div"):
+            break
+    text = element_text(container)
+    before, _ = text_before_marker(container, marker)
+    position = len(" ".join(before.split()))
+    start = max(0, position - 400)
+    end = min(len(text), position + len(element_text(marker)) + 400)
+    return ("…" if start else "") + text[start:end] + ("…" if end < len(text) else "")
+
+
+def text_before_marker(container: ET.Element, marker: ET.Element) -> tuple[str, bool]:
+    """Collect mixed text before an exact XML element, including repeated markers."""
+    if container is marker:
+        return "", True
+    text = container.text or ""
+    for child in container:
+        prefix, found = text_before_marker(child, marker)
+        text += prefix
+        if found:
+            return text, True
+        text += child.tail or ""
+    return text, False
+
+
+def citation_section(marker: ET.Element, parents: dict[ET.Element, ET.Element]) -> str | None:
+    """Find the nearest containing section heading without inventing a page number."""
+    container = marker
+    while container in parents:
+        container = parents[container]
+        head = container.find("tei:head", NS)
+        if head is not None:
+            return element_text(head) or None
+    return None
 
 
 def table_markdown(element: ET.Element) -> str:

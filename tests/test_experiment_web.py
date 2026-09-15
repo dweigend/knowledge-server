@@ -314,15 +314,79 @@ def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeyp
             **step_form(token, "extract_text"),
             "document_provider": "grobid",
             "service_url": "http://localhost:8070",
+            "literature_provider": "none",
         },
     )
     assert response.status_code == 200, response.text
     attempt = experiments.read_attempts(root, run_id)[0]
     assert attempt["status"] == "completed", attempt["error"]
-    assert attempt["recipe"]["payload"]["output_schema"] == "extraction.v2"
+    assert attempt["recipe"]["payload"]["output_schema"] == "extraction.v3"
     assert "Ada Lovelace" in response.text
-    assert "References ·" in response.text
-    assert "Citation markers ·" in response.text
+    assert "Run this step with Crossref matching" in response.text
     assert "<h1>A paper</h1>" in response.text
-    assert "Original page text" in response.text
+    assert "Original page text" not in response.text
+    assert "PDF page 1" not in response.text
     assert get_default("recipe", "extract_text") == previous
+
+
+def test_source_records_link_context_and_export_network_without_queries_on_read(
+    workbench, monkeypatch
+):
+    from test_grobid import TEI
+
+    from knowledge.literature_contracts import Candidate, LiteratureMetadata
+
+    client, root, token = workbench
+    run_id = source(client, token)
+    monkeypatch.setattr(
+        "knowledge.grobid_client.request_tei", lambda *args: TEI.encode() + b"\n200"
+    )
+    requests = []
+
+    def lookup(reference, *args):
+        requests.append(reference.title)
+        if reference.title != "A paper":
+            return []
+        return [
+            Candidate(
+                metadata=LiteratureMetadata(
+                    title="A paper", authors=["Ada Lovelace"], year="2024", doi="10.1234/paper"
+                ),
+                provider="crossref",
+                provider_id="10.1234/paper",
+                method="bibliographic",
+            )
+        ]
+
+    monkeypatch.setattr("knowledge.literature_resolution.lookup_crossref", lookup)
+    response = client.post(
+        f"/experiments/{run_id}/steps/extract_text",
+        data={
+            **step_form(token, "extract_text"),
+            "document_provider": "grobid",
+            "service_url": "http://localhost:8070",
+            "literature_provider": "crossref",
+        },
+    )
+    assert response.status_code == 200, response.text
+    attempt = experiments.read_attempts(root, run_id)[0]
+    assert attempt["status"] == "completed", attempt["error"]
+    assert "Cited sources" in response.text
+    assert "Text before [1] after." in response.text
+    assert "PDF page 1" not in response.text
+    request_count = len(requests)
+    assert request_count > 0
+    for url in ("/experiments/literature", "/experiments/literature?work_id=doi:10.1234/paper"):
+        page = client.get(url)
+        assert page.status_code == 200
+        assert "Ada Lovelace" in page.text
+    exported = client.get("/experiments/literature/export").json()
+    assert exported["schema"] == "literature-network.v1"
+    works = exported["works"]
+    assert any(work["record"]["id"] == "doi:10.1234/paper" for work in works)
+    occurrences = [
+        o for work in works for doc in work["documents"] for o in doc["record"]["occurrences"]
+    ]
+    assert len(occurrences) == 2
+    assert {occurrence["section"] for occurrence in occurrences} == {"Introduction", "Details"}
+    assert len(requests) == request_count

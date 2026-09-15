@@ -28,6 +28,8 @@ class PaperCitation(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     marker: str
+    context: str = ""
+    section: str | None = None
     target_ids: list[str] = Field(default_factory=list)
     resolved: bool = False
     coordinates: str | None = None

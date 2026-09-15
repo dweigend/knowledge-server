@@ -10,9 +10,10 @@ render the application.
 
 Step 1 supports GROBID document analysis and an explicit Poppler-only baseline.
 New registries start with GROBID. Existing recipes remain immutable; saving the
-step creates an `extraction.v2` recipe. Old results stay readable, and downstream
+step creates an `extraction.v3` recipe. Old results stay readable, and downstream
 results become stale only after a successful rerun.
 
+The UI shows continuous document content, without individual page panels.
 GROBID processes the complete PDF and returns original document structure as
 Markdown, paper metadata, bibliography entries and citation-target mappings.
 Missing fields and unresolved references stay visible. This is document
@@ -34,17 +35,53 @@ Configure `KNOWLEDGE_GROBID_URL` before creating a new registry, or set the serv
 URL in the step form. The selected URL is pinned in each recipe. See
 [service setup](../deploy/README.md#optional-scientific-pdf-service).
 Extraction failure fails the attempt rather than silently substituting raw-text
-success. The HTTP
-client honors cancellation and the overall step deadline; remote computation
-may continue after its connection is closed. Crossref and other external
-consolidation are disabled. Reads never contact GROBID.
+success. The HTTP client honors cancellation and the overall step deadline;
+remote computation
+may continue after its connection is closed.
+GROBID consolidation is disabled. A separate Crossref adapter now reconciles
+paper metadata and bibliography when `literature_provider` is `crossref` (the
+new default). Only bibliographic fields and identifiers are sent to Crossref;
+PDF content and citation contexts stay in the private experiment. Reads contact
+neither service.
 
 A live check with the CPU GROBID 0.9.1 service processed a complete public paper
 and returned 40 bibliography records and 58 linked citation markers. A German
 book chapter also completed, but exposed author/editor confusion, missing
 metadata, incomplete bibliography detection and reading-order problems. These
 are visible provider-quality limitations, not accepted extraction accuracy.
-Both Markdown and original page text remain available for comparison.
+Markdown and the original PDF remain available for comparison.
+
+## Literature records and citation network
+
+Each enriched extraction contains one normalized record per confidently
+identified work, including the uploaded paper itself. `literature_contracts.py`
+defines bibliographic metadata, resolution provenance and observed citations.
+`crossref_client.py` owns network access; `literature_resolution.py` owns
+matching and deduplication. External candidates and original extraction remain
+available alongside the accepted metadata. Missing fields are explicit.
+
+An exact DOI still requires compatible title evidence. Bibliographic searches
+require strong title, author and publication-year agreement. Ambiguous matches
+and service errors never become confirmed work identities. Repeated citations
+retain separate occurrence indexes, context excerpts, section headings and
+available PDF coordinates. Unknown citation targets and duplicate bibliography
+identifiers remain document-scoped review records rather than guessed edges.
+Context describes the source's wording; no support/criticism label is inferred.
+
+The Literature view groups records by stable identity across the latest
+successful extraction of each current experiment. Its JSON export includes work
+records, document hashes, attempt IDs and directed citation observations.
+Historical attempts retain their own metadata snapshots. Removing an experiment
+also removes its observations from this view; nothing is silently accepted into
+the permanent knowledge database. The reusable contracts provide the foundation
+for that later integration without a separate persistent graph database.
+
+Crossref requests are sequential, cached within the run, individually bounded to
+15 seconds and subject to the overall step budget. HTTP 429 stops further lookup
+requests in that run. A failed lookup remains visible on its source record.
+Crossref coverage and GROBID reference extraction are incomplete, particularly
+for older books: the interface does not claim all records are complete simply
+because execution finished.
 
 ## Shared operations and boundaries
 

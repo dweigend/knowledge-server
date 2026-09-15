@@ -264,3 +264,24 @@ def test_unstructured_bibliography_is_retained_in_markdown():
     assert paper.references[-1].id == "b9"
     assert paper.references[-1].raw == "An unparsed reference string."
     assert "An unparsed reference string." in paper.markdown
+
+
+def test_citation_context_and_nearest_section_are_retained():
+    paper = parse_paper_tei(TEI)
+    assert paper.citations[0].context == "Text before [1] after."
+    assert paper.citations[0].section == "Introduction"
+    assert paper.citations[1].context == "Another paragraph [2]."
+    assert paper.citations[1].section == "Details"
+
+
+def test_repeated_marker_context_tracks_its_actual_occurrence():
+    repeated = '<p>First context <ref type="bibr" target="#b0">[1]</ref>'
+    repeated += " filler " * 200
+    repeated += ' second context <ref type="bibr" target="#b0">[1]</ref> ending.</p>'
+    start = TEI.index("<p>Text before")
+    end = TEI.index("</p>", start) + len("</p>")
+    paper = parse_paper_tei(TEI[:start] + repeated + TEI[end:])
+    assert "First context" in paper.citations[0].context
+    assert "second context" not in paper.citations[0].context
+    assert "second context" in paper.citations[1].context
+    assert "First context" not in paper.citations[1].context

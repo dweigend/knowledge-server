@@ -93,3 +93,8 @@ td button { font-size: 11px; padding: 6px 9px; }
 .paper-metadata h3 { font-size: 16px; }
 .paper-metadata p { font-size: 12px; }
 .paper-source { max-height: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.literature-record { padding: 14px 0; border-bottom: 1px solid #e7ece3; overflow-wrap: anywhere; }
+.literature-record h3 { font-size: 15px; margin-bottom: 8px; }
+.literature-record p, .literature-record a { font-size: 12px; }
+.citation-occurrence { border-left: 2px solid #d7dfd5; margin: 12px 0; padding-left: 10px; }

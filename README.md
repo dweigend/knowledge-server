@@ -30,6 +30,8 @@ and processing choices, then discard the test environment. The first shared
 runner connects eight manually started steps, from PDF extraction through
 source-grounded blocks and knowledge proposals to cited prose. Attempts retain
 their inputs and configuration; a separate view compares step variants.
+Step 1 includes Crossref source matching and a literature view with observed
+citation contexts across experiments.
 This is working development tooling, not accepted synthesis quality. The tooling
 deserves as much attention as the application code. See [#1][issue-1] and the
 [workbench guide](docs/experimentation-workbench.md) for boundaries and evidence.

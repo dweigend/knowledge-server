@@ -12,6 +12,7 @@ from pydantic import ConfigDict, Field, model_validator
 from knowledge.contracts import Contract
 from knowledge.generation import ModelConfiguration, generate
 from knowledge.ingestion import extract_pdf_pages
+from knowledge.literature_contracts import LiteratureRecord
 from knowledge.paper_contracts import PaperDocument
 from knowledge.run_log import record_event
 
@@ -36,6 +37,7 @@ class TextExtraction(Contract):
     pages: tuple[str, ...] = Field(min_length=1)
     method: str = Field(min_length=1)
     paper: PaperDocument | None = None
+    literature: list[LiteratureRecord] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_revision(self) -> Self:

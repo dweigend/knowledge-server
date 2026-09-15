@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from knowledge.grobid_client import extract_paper
 from knowledge.information_blocks import TextExtraction, extract_text
+from knowledge.literature_resolution import enrich_paper
 from knowledge.paper_contracts import PaperDocument
 
 
@@ -30,10 +31,15 @@ class PaperAnalyzer(Protocol):
 
 def validate_paper_parameters(parameters: dict) -> None:
     """Reject unsupported analyzers and malformed service locations before execution."""
+    literature = parameters.get("literature_provider", "none")
+    if not isinstance(literature, str) or literature not in {"none", "crossref"}:
+        raise ValueError("literature_provider must be crossref or none")
     provider = parameters.get("document_provider", "poppler")
     if not isinstance(provider, str) or provider not in {"poppler", "grobid"}:
         raise ValueError("document_provider must be grobid or poppler")
     if provider == "poppler":
+        if literature != "none":
+            raise ValueError("Literature matching requires structured document extraction")
         if "service_url" in parameters:
             raise ValueError("service_url is only supported for grobid")
         return
@@ -74,10 +80,28 @@ def extract_paper_document(
         raise InterruptedError("Paper extraction cancelled")
     if hashlib.sha256(pdf.read_bytes()).hexdigest() != extraction.pdf_sha256:
         raise ValueError("PDF changed during paper analysis")
+    save_paper_artifacts(paper, output_directory)
+    records = []
+    if parameters.get("literature_provider") == "crossref":
+        records = enrich_paper(
+            paper,
+            extraction.pdf_sha256,
+            timeout_seconds=max(0.1, timeout_seconds - (monotonic() - started) - 1),
+            cancelled=cancelled,
+        )
+    return extraction.model_copy(
+        update={
+            "paper": paper.model_copy(update={"raw_document": None}),
+            "literature": records,
+        }
+    )
+
+
+def save_paper_artifacts(paper: PaperDocument, output_directory: Path) -> None:
+    """Retain provider output and Markdown inside the owned attempt trace."""
     output_directory.mkdir(parents=True, exist_ok=True)
     if paper.raw_document is not None:
         (output_directory / "provider-response.txt").write_text(
             paper.raw_document, encoding="utf-8"
         )
     (output_directory / "document.md").write_text(paper.markdown, encoding="utf-8")
-    return extraction.model_copy(update={"paper": paper.model_copy(update={"raw_document": None})})

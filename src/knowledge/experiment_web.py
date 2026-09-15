@@ -14,6 +14,7 @@ from knowledge import experimentation as experiments
 from knowledge.config import Settings
 from knowledge.contracts import Record
 from knowledge.generation import ModelConfiguration
+from knowledge.literature_catalog import literature_catalog
 from knowledge.paper_view import render_paper_markdown
 from knowledge.pipeline_steps import OUTPUT_SCHEMAS, validate_step_parameters
 from knowledge.prompt_registry import (
@@ -110,6 +111,7 @@ def save_step_configuration(step: str, form: FormData) -> ConfigRevision:
         parameters = {"document_provider": required_text(form, "document_provider")}
         if parameters["document_provider"] == "grobid":
             parameters["service_url"] = required_text(form, "service_url")
+            parameters["literature_provider"] = str(form.get("literature_provider", "crossref"))
     rules_name = str(form.get("author_rules_name", "")) or None
     rules_revision = int(required_text(form, "author_rules_revision")) if rules_name else None
     updated = Recipe(
@@ -328,6 +330,34 @@ def experiment_router(  # noqa: C901
         for run_id, identifier in prepared:
             background.add_task(experiments.execute_attempt, root, run_id, identifier)
         return RedirectResponse(f"/experiments/compare?step={recipe.payload['step']}", 303)
+
+    @router.get("/literature", response_class=HTMLResponse)
+    def literature(request: Request, work_id: str | None = None) -> HTMLResponse:
+        """Inspect source records and their observed citation contexts without network requests."""
+        entries = literature_catalog(root)
+        if work_id is not None:
+            entries = [entry for entry in entries if entry["record"].id == work_id]
+        return render(request, "experiment_literature.html", entries=entries, work_id=work_id)
+
+    @router.get("/literature/export")
+    def export_literature() -> JSONResponse:
+        """Export work identities and document-scoped citation edges for network analysis."""
+        entries = literature_catalog(root)
+        return JSONResponse(
+            {
+                "schema": "literature-network.v1",
+                "works": [
+                    {
+                        "record": entry["record"].model_dump(mode="json"),
+                        "documents": [
+                            {**document, "record": document["record"].model_dump(mode="json")}
+                            for document in entry["documents"]
+                        ],
+                    }
+                    for entry in entries
+                ],
+            }
+        )
 
     @router.get("/{run_id}", response_class=HTMLResponse)
     def detail(request: Request, run_id: str) -> HTMLResponse:
