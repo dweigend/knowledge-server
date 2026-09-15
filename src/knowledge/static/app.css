@@ -84,3 +84,12 @@ td button { font-size: 11px; padding: 6px 9px; }
   .experiment-step { flex-basis: min(330px, 87vw); }
   footer { padding: 16px; gap: 12px; flex-wrap: wrap; }
 }
+
+.paper-document { font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
+.paper-document h1 { font-size: 20px; }
+.paper-document h2 { font-size: 17px; margin-top: 22px; }
+.paper-document h3 { font-size: 15px; margin-top: 18px; }
+.paper-metadata { border-bottom: 1px solid #e7ece3; padding-bottom: 12px; }
+.paper-metadata h3 { font-size: 16px; }
+.paper-metadata p { font-size: 12px; }
+.paper-source { max-height: none; white-space: pre-wrap; overflow-wrap: anywhere; }

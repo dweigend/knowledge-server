@@ -69,8 +69,10 @@ implementation status when a feature actually works.
 ### Minimal local setup
 
 Use Python 3.13+, uv, PostgreSQL and Zotero Desktop with its local API enabled.
-PDF processing also needs Poppler. Configure a development database and a
-separate test database, then:
+PDF processing also needs Poppler. Workbench document analysis uses a separate
+GROBID service; see
+[service setup](deploy/README.md#optional-scientific-pdf-service).
+Configure a development database and a separate test database, then:
 
 ```sh
 uv sync --locked

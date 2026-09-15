@@ -14,6 +14,7 @@ from knowledge import experimentation as experiments
 from knowledge.config import Settings
 from knowledge.contracts import Record
 from knowledge.generation import ModelConfiguration
+from knowledge.paper_view import render_paper_markdown
 from knowledge.pipeline_steps import OUTPUT_SCHEMAS, validate_step_parameters
 from knowledge.prompt_registry import (
     AuthorRules,
@@ -105,6 +106,10 @@ def save_step_configuration(step: str, form: FormData) -> ConfigRevision:
         allowed_tools=json.loads(str(form.get("allowed_tools", "[]"))),
     )
     parameters = json.loads(str(form.get("parameters", "{}")))
+    if step == "extract_text" and "document_provider" in form:
+        parameters = {"document_provider": required_text(form, "document_provider")}
+        if parameters["document_provider"] == "grobid":
+            parameters["service_url"] = required_text(form, "service_url")
     rules_name = str(form.get("author_rules_name", "")) or None
     rules_revision = int(required_text(form, "author_rules_revision")) if rules_name else None
     updated = Recipe(
@@ -113,7 +118,7 @@ def save_step_configuration(step: str, form: FormData) -> ConfigRevision:
         prompt_revision=recipe.prompt_revision,
         model=configuration,
         parameters=parameters,
-        output_schema=recipe.output_schema,
+        output_schema=OUTPUT_SCHEMAS[step],
         author_rules_name=rules_name,
         author_rules_revision=rules_revision,
     )
@@ -198,6 +203,7 @@ def experiment_router(  # noqa: C901
     """Register thin experiment routes using the existing application's form protection."""
     router = APIRouter(prefix="/experiments")
     root = settings.archive_root
+    templates.env.filters["paper_markdown"] = render_paper_markdown
     seed_defaults()
 
     def render(request: Request, name: str, **context: object) -> HTMLResponse:

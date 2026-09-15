@@ -12,6 +12,7 @@ from pydantic import ConfigDict, Field, model_validator
 from knowledge.contracts import Contract
 from knowledge.generation import ModelConfiguration, generate
 from knowledge.ingestion import extract_pdf_pages
+from knowledge.paper_contracts import PaperDocument
 from knowledge.run_log import record_event
 
 EXTRACTION_METHOD = "pdftotext reading-order; v3"
@@ -34,6 +35,7 @@ class TextExtraction(Contract):
     revision: str = Field(pattern=r"^[0-9a-f]{64}$")
     pages: tuple[str, ...] = Field(min_length=1)
     method: str = Field(min_length=1)
+    paper: PaperDocument | None = None
 
     @model_validator(mode="after")
     def validate_revision(self) -> Self:

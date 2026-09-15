@@ -68,7 +68,7 @@ PROMPT_SEEDS = {
     ),
 }
 STEP_DEFAULTS: dict[Step, tuple[str, str, dict[str, JsonValue]]] = {
-    "extract_text": ("extract", "extraction.v1", {}),
+    "extract_text": ("extract", "extraction.v2", {"document_provider": "grobid"}),
     "segment_blocks": ("segment", "blocks.v1", {"mode": "model", "max_characters": 2000}),
     "formulate_claims": ("import", "claims.v1", {}),
     "find_knowledge": ("retrieval", "retrieval.v1", {}),
@@ -402,6 +402,10 @@ def seed_defaults() -> None:
         for step, (prompt_name, schema, parameters) in STEP_DEFAULTS.items():
             prompt_directory = configuration_directory(root, "prompt", prompt_name)
             parameters = parameters.copy()
+            if step == "extract_text" and parameters.get("document_provider") == "grobid":
+                parameters["service_url"] = os.environ.get(
+                    "KNOWLEDGE_GROBID_URL", "http://127.0.0.1:8070"
+                )
             note_name = parameters.get("note_prompt_name")
             if isinstance(note_name, str):
                 parameters["note_prompt_revision"] = active_revision(

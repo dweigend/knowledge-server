@@ -1,7 +1,6 @@
 {% if result %}
   {% if step == 'extract_text' %}
-    <p class="caption">{{ result.pages|length }} pages · {{ result.method }}</p>
-    {% for page in result.pages %}<details {% if loop.first %}open{% endif %}><summary>Page {{ loop.index }}</summary><pre class="source-text">{{ page }}</pre></details>{% endfor %}
+    {% include 'paper_result.html' %}
   {% elif step == 'segment_blocks' %}
     {% for block in result.blocks %}<article class="information-block">
       <p class="caption">Block {{ loop.index }} · {{ block.wording }}</p>

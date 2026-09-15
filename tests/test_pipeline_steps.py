@@ -58,6 +58,9 @@ def proposal():
     )
 
 
+pytestmark = pytest.mark.usefixtures("poppler_extraction")
+
+
 def claim_record(number, text):
     return Record(
         entity_id=UUID(int=number),

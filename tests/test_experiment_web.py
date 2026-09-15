@@ -26,6 +26,9 @@ def workbench(tmp_path, monkeypatch):
         yield client, root, token
 
 
+pytestmark = pytest.mark.usefixtures("poppler_extraction")
+
+
 def source(client, token):
     response = client.post(
         "/experiments",
@@ -286,3 +289,40 @@ def test_partial_cleanup_remains_visible_and_retriable_in_dashboard(workbench, m
     assert client.get(f"/experiments/{run_id}/export").status_code == 409
     assert client.post(f"/experiments/{run_id}/delete", data={"csrf": token}).status_code == 200
     assert experiments.list_experiments(root) == []
+
+
+def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeypatch):
+    from test_grobid import TEI
+
+    from knowledge.prompt_registry import save_revision
+
+    client, root, token = workbench
+    run_id = source(client, token)
+    previous = get_revision("recipe", "extract_text")
+    save_revision(
+        "recipe",
+        "extract_text",
+        {**previous.payload, "output_schema": "extraction.v1", "parameters": {}},
+        previous.revision,
+    )
+    monkeypatch.setattr(
+        "knowledge.grobid_client.request_tei", lambda *args: TEI.encode() + b"\n200"
+    )
+    response = client.post(
+        f"/experiments/{run_id}/steps/extract_text",
+        data={
+            **step_form(token, "extract_text"),
+            "document_provider": "grobid",
+            "service_url": "http://localhost:8070",
+        },
+    )
+    assert response.status_code == 200, response.text
+    attempt = experiments.read_attempts(root, run_id)[0]
+    assert attempt["status"] == "completed", attempt["error"]
+    assert attempt["recipe"]["payload"]["output_schema"] == "extraction.v2"
+    assert "Ada Lovelace" in response.text
+    assert "References ·" in response.text
+    assert "Citation markers ·" in response.text
+    assert "<h1>A paper</h1>" in response.text
+    assert "Original page text" in response.text
+    assert get_default("recipe", "extract_text") == previous

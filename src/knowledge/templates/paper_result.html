@@ -1,0 +1,23 @@
+{% if result.paper %}
+{% set paper = result.paper %}
+<article class="paper-metadata">
+<p class="caption">Extracted metadata · review against the PDF</p>
+<h3>{{ paper.metadata.title or 'Title not identified' }}</h3>
+<p>{{ paper.metadata.authors|join(', ') or 'Authors not identified' }}</p>
+<p class="caption">{{ paper.metadata.year or 'Year unknown' }} · {{ paper.metadata.venue or 'Venue unknown' }}</p>
+{% if paper.metadata.doi %}<p>DOI: {{ paper.metadata.doi }}</p>{% endif %}
+<p class="caption">{{ paper.provider }} {{ paper.provider_version or '' }} · {{ result.pages|length }} PDF pages</p>
+</article>
+{% for warning in paper.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
+<details><summary>References · {{ paper.references|length }}</summary>
+{% for reference in paper.references %}<article class="information-block"><p><strong>{{ reference.id }}</strong> · {{ reference.title or 'Title unknown' }}</p><p>{{ reference.authors|join(', ') }}{% if reference.year %} · {{ reference.year }}{% endif %}</p><p class="caption">{{ reference.venue or '' }}{% if reference.doi %} · DOI: {{ reference.doi }}{% endif %}</p><blockquote>{{ reference.raw or 'Original reference text unavailable' }}</blockquote></article>{% else %}<p>No references identified.</p>{% endfor %}
+</details>
+<details><summary>Citation markers · {{ paper.citations|length }}</summary><ul>{% for citation in paper.citations %}<li>{{ citation.marker }} → {{ citation.target_ids|join(', ') or 'No reference matched' }}{% if not citation.resolved %} · unresolved{% endif %}</li>{% endfor %}</ul></details>
+<details open><summary>Document</summary><div class="paper-document">{{ paper.markdown|paper_markdown }}</div></details>
+<details><summary>Markdown source</summary><pre class="paper-source">{{ paper.markdown }}</pre></details>
+{% else %}
+<p class="caption">{{ result.pages|length }} pages · {{ result.method }}</p>
+<p class="notice">Raw text only. Run GROBID to extract document structure and references.</p>
+<pre class="paper-source">{{ result.pages|join('\n\n') }}</pre>
+{% endif %}
+<details><summary>Original page text · citation verification</summary>{% for page in result.pages %}<details><summary>PDF page {{ loop.index }}</summary><pre class="source-text">{{ page }}</pre></details>{% endfor %}</details>

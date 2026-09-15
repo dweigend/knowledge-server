@@ -15,6 +15,8 @@ from knowledge.experiment_store import experiment_lock
 from knowledge.prompt_registry import activate_revision, get_default, save_revision, seed_defaults
 from knowledge.storage import Conflict
 
+pytestmark = pytest.mark.usefixtures("poppler_extraction")
+
 
 def fixture_pdf() -> bytes:
     writer = PdfWriter()

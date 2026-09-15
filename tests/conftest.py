@@ -62,3 +62,14 @@ def article():
         limitations="Small sample",
     )
     return SeedArticle(source=source, claim=claim)
+
+
+@pytest.fixture
+def poppler_extraction(monkeypatch):
+    """Use explicit offline extraction for tests of unrelated pipeline behavior."""
+    from knowledge.prompt_registry import STEP_DEFAULTS
+
+    prompt, schema, _ = STEP_DEFAULTS["extract_text"]
+    monkeypatch.setitem(
+        STEP_DEFAULTS, "extract_text", (prompt, schema, {"document_provider": "poppler"})
+    )

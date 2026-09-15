@@ -6,29 +6,51 @@ compare attempts. Ordinary reads never start model work. The HTML interface is
 served by FastAPI at `/experiments`; opening a template with `file://` cannot
 render the application.
 
-## Requested next iteration: document extraction
+## Document extraction
 
-This is pending work, not a description of the current implementation.
+Step 1 supports GROBID document analysis and an explicit Poppler-only baseline.
+New registries start with GROBID. Existing recipes remain immutable; saving the
+step creates an `extraction.v2` recipe. Old results stay readable, and downstream
+results become stale only after a successful rerun.
 
-- Present the extracted document as continuous readable text or Markdown while
-  retaining original PDF page references and exact evidence text internally.
-- Capture the paper's own bibliographic metadata: title, authors, publication
-  year, publication venue and DOI when available. Mark missing or uncertain
-  fields explicitly rather than inventing them.
-- Capture the bibliography as individual references and preserve in-text
-  citation markers, linking them to references where the mapping is reliable.
-  Distinguish cited works from the uploaded paper itself.
-- Preserve headings and document sections where extraction supports them.
-  Decide how section extraction relates to information blocks before adding
-  another semantic model pass; these are different outputs.
-- Evaluate scientific PDF-to-Markdown tools and bibliographic extraction before
-  choosing an implementation. Keep provenance and extraction quality inspectable.
+GROBID processes the complete PDF and returns original document structure as
+Markdown, paper metadata, bibliography entries and citation-target mappings.
+Missing fields and unresolved references stay visible. This is document
+conversion, not a semantic summary or a completeness guarantee. Original Poppler
+page text and its revision remain the authority for exact quotation validation;
+GROBID's normalized Markdown is a separate representation. Information blocks
+can use that structure as context but must cite the original page text.
+
+The boundary is split into `paper_contracts.py` (provider-neutral results),
+`grobid_client.py` (HTTP and cancellation), `grobid_parser.py` (TEI conversion),
+`paper_extraction.py` (shared orchestration) and `paper_view.py` (safe rendering).
+An analyzer with the same callable contract can replace GROBID without changing
+source-span validation or UI contracts. The original provider response and
+Markdown are retained in the attempt's private trace directory; the export
+contains the normalized paper result. The exact-text revision identifies only
+the Poppler text; the attempt output hash covers the enriched result as well.
+
+Configure `KNOWLEDGE_GROBID_URL` before creating a new registry, or set the service
+URL in the step form. The selected URL is pinned in each recipe. See
+[service setup](../deploy/README.md#optional-scientific-pdf-service).
+Extraction failure fails the attempt rather than silently substituting raw-text
+success. The HTTP
+client honors cancellation and the overall step deadline; remote computation
+may continue after its connection is closed. Crossref and other external
+consolidation are disabled. Reads never contact GROBID.
+
+A live check with the CPU GROBID 0.9.1 service processed a complete public paper
+and returned 40 bibliography records and 58 linked citation markers. A German
+book chapter also completed, but exposed author/editor confusion, missing
+metadata, incomplete bibliography detection and reading-order problems. These
+are visible provider-quality limitations, not accepted extraction accuracy.
+Both Markdown and original page text remain available for comparison.
 
 ## Shared operations and boundaries
 
 | Step | Shared operation |
 | --- | --- |
-| PDF text | `ingestion.extract_pdf_pages` |
+| PDF text | `paper_extraction.extract_paper_document` |
 | Information blocks | `information_blocks` |
 | Claims and evidence | `import_workflow.extract_document` |
 | Find knowledge | `knowledge_selection.retrieve_knowledge` |

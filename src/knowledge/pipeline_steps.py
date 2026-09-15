@@ -14,7 +14,6 @@ from knowledge.information_blocks import (
     InformationBlocks,
     SourceSpan,
     TextExtraction,
-    extract_text,
     segment_information,
     segment_verbatim,
     validate_blocks,
@@ -26,6 +25,7 @@ from knowledge.knowledge_selection import (
     select_knowledge,
     validate_selection,
 )
+from knowledge.paper_extraction import extract_paper_document, validate_paper_parameters
 from knowledge.prompt_registry import Recipe, get_revision
 from knowledge.reconciliation import ClaimDecision, propose_matching
 from knowledge.writing import WritingDraft, WritingPoints, draft_prose, prepare_writing_points
@@ -106,7 +106,7 @@ OUTPUT_CONTRACTS: dict[str, type[Contract]] = {
     "draft_text": WritingDraft,
 }
 OUTPUT_SCHEMAS = {
-    "extract_text": "extraction.v1",
+    "extract_text": "extraction.v2",
     "segment_blocks": "blocks.v1",
     "formulate_claims": "claims.v1",
     "find_knowledge": "retrieval.v1",
@@ -116,7 +116,7 @@ OUTPUT_SCHEMAS = {
     "draft_text": "draft.v1",
 }
 STEP_PARAMETERS = {
-    "extract_text": set(),
+    "extract_text": {"document_provider", "service_url"},
     "segment_blocks": {"mode", "max_characters"},
     "formulate_claims": set(),
     "find_knowledge": {"query", "limit"},
@@ -132,6 +132,8 @@ def validate_step_parameters(recipe: Recipe) -> None:
     unknown = set(recipe.parameters) - STEP_PARAMETERS[recipe.step]
     if unknown:
         raise ValueError(f"Unsupported parameters for {recipe.step}: {', '.join(sorted(unknown))}")
+    if recipe.step == "extract_text":
+        validate_paper_parameters(recipe.parameters)
     for name in ("query", "goal"):
         if name in recipe.parameters and not isinstance(recipe.parameters[name], str):
             raise ValueError(f"{name} must be text")
@@ -322,7 +324,13 @@ def execute_step(
         raise ValueError("Step is missing required input revisions")
     check_cancelled(cancelled)
     if step == "extract_text":
-        return extract_text(pdf, cancelled=cancelled, timeout_seconds=recipe.model.timeout_seconds)
+        return extract_paper_document(
+            pdf,
+            recipe.parameters,
+            output_directory,
+            cancelled=cancelled,
+            timeout_seconds=recipe.model.timeout_seconds,
+        )
     if step in {"find_knowledge", "select_entries", "propose_changes"}:
         return execute_knowledge_step(step, inputs, knowledge, recipe, output_directory, cancelled)
     extraction = TextExtraction.model_validate(inputs["extract_text"])

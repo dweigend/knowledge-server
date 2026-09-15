@@ -1,0 +1,13 @@
+name: knowledge-grobid
+
+services:
+  grobid:
+    image: grobid/grobid:0.9.1-crf
+    platform: linux/amd64
+    init: true
+    ports:
+      - "127.0.0.1:8070:8070"
+    mem_limit: 4g
+    cpus: 2
+    ulimits:
+      core: 0

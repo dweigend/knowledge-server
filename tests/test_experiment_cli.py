@@ -7,6 +7,8 @@ from knowledge.experiment_cli import main
 from knowledge.experimentation import prepare_attempt
 from knowledge.prompt_registry import get_revision, save_revision
 
+pytestmark = pytest.mark.usefixtures("poppler_extraction")
+
 
 def invoke(capsys, root, *arguments):
     status = main(["--archive-root", str(root), *arguments])
