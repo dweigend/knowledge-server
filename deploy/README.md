@@ -12,6 +12,13 @@ and permissions `0600`. Install the required templates in
 Enable the web service with `systemctl --user enable --now knowledge-web`.
 Start PostgreSQL and Zotero before using the app.
 
+## Planned Zotero WebDAV storage
+
+An [own WebDAV file server](../docs/knowledge-webdav-sync.md) is the binding
+target for personal-library attachments and iPad access. This is not provisioned
+by the current service templates. Follow the decision document for transport,
+annotation intake, backup coverage and verified migration requirements.
+
 ## Optional extraction worker
 
 The worker currently targets Linux with systemd user services and CPU inference.

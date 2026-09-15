@@ -8,6 +8,10 @@ PDFs; the knowledge database stores references, source passages and derived work
 exist. Structured document extraction and source views are being integrated;
 full corpus acceptance and the newer modular design are not complete.
 
+The binding storage target is an [own Zotero WebDAV file server](docs/knowledge-webdav-sync.md)
+for personal-library PDFs, with Zotero.org data sync and official iPad support.
+Deployment and migration are pending.
+
 ## What it does
 
 - Track claims, supporting or contradicting evidence, and explicit assessments.
