@@ -152,8 +152,8 @@ twice because the model guessed character offsets. The revised scaffolding asks
 for exact page/quote selections and resolves unique offsets deterministically;
 it produced three blocks with five valid source spans on its first live attempt.
 Seven actual model responses were used in total, with effective
-`gpt-5.6-luna` / `openai-codex` recorded. Failed and successful attempts remain in
-the private exported verification report. This does not evaluate the author's
+`gpt-5.6-luna` / `openai-codex` recorded. Failed and successful attempts remain
+in the private exported verification report. This does not evaluate the author's
 voice, populated-corpus selection, or useful canonical note acceptance.
 
 The final rebuild checks passed 225 tests, Ruff lint/format, ty (with the
