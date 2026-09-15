@@ -37,6 +37,7 @@ torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [project.scripts]
 knowledge = "knowledge.cli:main"
+knowledge-experiment = "knowledge.experiment_cli:main"
 
 [build-system]
 requires = ["hatchling"]

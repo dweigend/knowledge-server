@@ -12,11 +12,13 @@ from knowledge.application import Knowledge
 from knowledge.contracts import Claim, Contract, Evidence, ExtractedClaim, Record, Reference, Source
 from knowledge.generation import ModelConfiguration, generate
 from knowledge.grounding import check_passage
-from knowledge.prompt_registry import load_prompt
+from knowledge.knowledge_selection import retrieve_knowledge
+from knowledge.prompt_registry import operation_configuration
 from knowledge.run_log import record_event
 from knowledge.storage import Ledger
 
 CANDIDATE_LIMIT = 40
+RECONCILE_ACTOR = "hermes:reconcile-v1"
 
 
 class ClaimDecision(Contract):
@@ -37,12 +39,16 @@ class ReconcileClaim(Contract):
     decision: ClaimDecision
 
 
-def claim_candidates(application: Knowledge, batch_id: str) -> list[Record]:
-    """Supply every claim in the bounded pilot instead of guessing lexical equivalence."""
+def claim_candidates(
+    application: Knowledge, batch_id: str, query: str | None = None
+) -> list[Record]:
+    """Retrieve bounded claim candidates with the same lexical operation as the workbench."""
     with application.database.transaction() as ledger:
         candidates = ledger.list(batch_id, "claim")
+    if query is not None:
+        return [hit.record for hit in retrieve_knowledge(query, candidates, CANDIDATE_LIMIT).hits]
     if len(candidates) > CANDIDATE_LIMIT:
-        raise ValueError("Pilot exceeds the claim candidate budget; add bounded retrieval first")
+        raise ValueError("Supply a retrieval query when the claim candidate budget exceeds 40")
     return candidates
 
 
@@ -65,12 +71,14 @@ def reconcile_claim(
     run_directory: Path,
     request_id: str,
 ) -> list[Reference]:
-    """Ask Luna for one matching decision and apply its validated result once."""
+    """Request one matching decision and apply its validated result once."""
     with application.database.transaction() as ledger:
         receipt = ledger.get_receipt(request_id)
     if receipt:
         return [Reference.model_validate(reference) for reference in receipt["result"]]
-    decision = propose_matching(proposal, claim_candidates(application, batch_id), run_directory)
+    query = f"{proposal.proposition} {proposal.scope}"
+    candidates = claim_candidates(application, batch_id, query)
+    decision = propose_matching(proposal, candidates, run_directory)
     matching_decision = decision.model_dump(mode="json")
     decision = check_claim_grounding(application, source, proposal, decision, run_directory)
     command = ReconcileClaim(source=source, proposal=proposal, decision=decision)
@@ -95,7 +103,10 @@ def propose_matching(
             "candidates": [record.model_dump(mode="json") for record in candidates],
         }
     )
-    prompt = instructions if instructions is not None else load_prompt("reconcile")
+    if instructions is None:
+        instructions, default_configuration = operation_configuration("propose_changes")
+        configuration = configuration or default_configuration
+    prompt = instructions
     return generate(
         prompt,
         packet,
@@ -121,7 +132,7 @@ def accept_claim_decision(
         batch_id,
         "reconcile",
         command,
-        "hermes:gpt-5.6-luna:reconcile-v1",
+        RECONCILE_ACTOR,
         lambda ledger: apply_claim_decision(ledger, batch_id, command),
     )
     record_event(
@@ -144,7 +155,7 @@ def apply_claim_decision(ledger: Ledger, batch_id: str, command: ReconcileClaim)
     validate_decision(decision, ledger.list(batch_id, "claim"))
     if decision.action == "skip":
         return []
-    actor = "hermes:gpt-5.6-luna:reconcile-v1"
+    actor = RECONCILE_ACTOR
     target = decision.target
     if target is None:
         claim = Claim.model_validate(

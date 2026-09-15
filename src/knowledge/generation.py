@@ -78,6 +78,7 @@ def generate[T: Contract](
     accepted = directory / "validated.json"
     cached = load_cached_proposal(accepted, contract, validate)
     if cached is not None:
+        record_event(directory, "model_cache_reused", contract=contract.__name__)
         return cached
     return generate_attempts(request, directory, contract, validate, configuration, cancelled)
 
@@ -95,9 +96,21 @@ def generate_attempts[T: Contract](
     for attempt in range(configuration.max_attempts):
         check_cancelled(cancelled)
         started = monotonic()
-        response = request_response(request, directory, attempt, cancelled=cancelled)
-        check_cancelled(cancelled)
-        proposal = validate_response(response, request, contract, validate)
+        try:
+            response = request_response(request, directory, attempt, cancelled=cancelled)
+            check_cancelled(cancelled)
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
+            record_event(
+                directory,
+                "model_attempt_failed",
+                attempt=attempt + 1,
+                status="cancelled" if isinstance(error, InterruptedError) else "failed",
+                error_type=type(error).__name__,
+                elapsed_seconds=round(monotonic() - started, 2),
+            )
+            raise
+        errors: list[str] = []
+        proposal = validate_response(response, request, contract, validate, errors=errors)
         record_event(
             directory,
             "model_attempt",
@@ -105,6 +118,7 @@ def generate_attempts[T: Contract](
             status="rejected" if proposal is None else "validated",
             elapsed_seconds=round(monotonic() - started, 2),
             contract=contract.__name__,
+            validation_errors=errors,
         )
         if proposal is None:
             continue
@@ -118,6 +132,8 @@ def validate_response[T: Contract](
     request: dict[str, str],
     contract: type[T],
     validate: Callable[[T], None] | None,
+    *,
+    errors: list[str] | None = None,
 ) -> T | None:
     """Validate a response or add its errors to the request for the repair attempt."""
     try:
@@ -125,6 +141,8 @@ def validate_response[T: Contract](
         validate_proposal(proposal, validate)
         return proposal
     except ValueError as error:
+        if errors is not None:
+            errors.append(str(error))
         if isinstance(error, ValidationError) and error.errors()[0]["type"] == "json_invalid":
             request["input"] = "SCHEMA:\n" + json.dumps(contract.model_json_schema())
         request["input"] += (
@@ -231,13 +249,33 @@ def request_response(
         request_path = directory / f"request-{attempt}-{suffix}.json"
         response_path = directory / f"response-{attempt}-{suffix}.json"
     request_path.write_text(json.dumps(request, ensure_ascii=False))
-    if not response_path.exists():
+    cached = response_path.exists()
+    record_event(
+        directory,
+        "model_request",
+        attempt=attempt + 1,
+        request_file=request_path.name,
+        response_file=response_path.name,
+        execution="cached" if cached else "live",
+    )
+    if not cached:
         log_path = directory / f"hermes-{attempt}.log"
         if cancelled is None:
             run_hermes(request_path, response_path, log_path)
         else:
             run_hermes(request_path, response_path, log_path, cancelled=cancelled)
-    response = json.loads(response_path.read_text())["response"].strip()
+    recorded = json.loads(response_path.read_text())
+    record_event(
+        directory,
+        "model_response",
+        attempt=attempt + 1,
+        response_file=response_path.name,
+        execution="cached" if cached else "live",
+        response_origin=recorded.get("execution", "unverified"),
+        model=recorded.get("model"),
+        provider=recorded.get("provider"),
+    )
+    response = recorded["response"].strip()
     if response.startswith("```json") and response.endswith("```"):
         response = response[7:-3].strip()
     return response

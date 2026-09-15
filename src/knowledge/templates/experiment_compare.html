@@ -1,0 +1,24 @@
+{% extends 'experiment_base.html' %}{% block title %}Compare{% endblock %}{% block content %}
+<div class="page-heading"><div><p class="eyebrow">COMPARISON</p><h1>Same evidence. Different choices.</h1><p class="muted">Compare one step across sources. Rerun variants with each baseline's exact input revisions.</p></div></div>
+<form method="get" class="source-bar"><label>Step<select name="step">{% for key, label in step_labels.items() %}<option value="{{ key }}" {% if step == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><button class="secondary">Show attempts</button></form>
+<form method="post" action="/experiments/compare">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if rows %}<section class="source-bar"><label>Variant recipe<select name="recipe_name">{% for recipe in recipes %}<option value="{{ recipe.name }}">{{ recipe.name }}</option>{% endfor %}</select></label><label>Saved revision<input type="number" name="recipe_revision" min="1" value="{{ recipes[0].revision if recipes else 1 }}"></label><button>Run variant on selected baselines</button></section>{% endif %}
+  {% for row in rows %}
+  <section class="comparison-row"><h2>{{ row.run.filename }}</h2><p class="caption">Knowledge snapshot <code>{{ row.run.knowledge_hash }}</code></p>
+    <div class="experiment-columns">
+      {% for attempt in row.attempts %}
+      <article class="experiment-step">
+        <label><input type="checkbox" name="attempts" value="{{ row.run.id }}:{{ attempt.id }}">Use as baseline</label>
+        <p><a href="/experiments/{{ row.run.id }}/attempts/{{ attempt.id }}">{{ attempt.id[:8] }}</a> · {{ attempt.status }}{% if attempt.stale %} · stale{% endif %}</p>
+        <details><summary>Input revisions & configuration</summary><pre>{{ attempt.inputs|tojson(indent=2) }}</pre><pre>{{ attempt.recipe|tojson(indent=2) }}</pre></details>
+        {% if attempt.error %}<p class="error">{{ attempt.error }}</p>{% endif %}
+        <div class="step-result">{% set result = attempt.output %}{% include 'experiment_result.html' %}</div>
+        {% if attempt.reviews %}<h3>Human assessment</h3><dl>{% for name, rating in attempt.reviews[-1].ratings.items() %}<dt>{{ name }}</dt><dd>{{ rating }}</dd>{% endfor %}</dl><p>{{ attempt.reviews[-1].comment }}</p>{% else %}<p class="caption">Not assessed. Record human judgments in the attempt inspector.</p>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% else %}<section class="panel empty"><h2>No attempts yet</h2><p>Run this step on a source, then return here to compare its revisions.</p><a href="/experiments">Open pipeline →</a></section>{% endfor %}
+</form>
+{% endblock %}

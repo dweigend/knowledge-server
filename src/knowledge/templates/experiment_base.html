@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Workbench{% endblock %} · Knowledge Server</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="workbench">
+  <header class="app-header">
+    <a class="brand" href="/experiments"><span class="brand-mark">K</span> Knowledge Server <span class="badge">WORKBENCH</span></a>
+    <nav aria-label="Workbench"><a href="/experiments">Pipeline</a><a href="/experiments/compare">Compare</a><a href="/experiments/settings">Settings & history</a></nav>
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+  <footer>Personal research, inspectable by design. <a href="/">Open knowledge database</a></footer>
+</body>
+</html>

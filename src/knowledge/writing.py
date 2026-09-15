@@ -1,0 +1,132 @@
+"""Draft source-cited points and prose without accepting generated knowledge."""
+
+import json
+import re
+from collections.abc import Callable
+from pathlib import Path
+
+from pydantic import Field
+
+from knowledge.contracts import Contract
+from knowledge.generation import ModelConfiguration, generate
+from knowledge.information_blocks import InformationBlocks, TextExtraction, validate_blocks
+
+MAX_WRITING_CHARACTERS = 120000
+BLOCK_CITATION = re.compile(r"\[block:(\d+)\]")
+
+
+class WritingPoint(Contract):
+    """Pair one proposed writing point with its original information-block citations."""
+
+    text: str = Field(min_length=1)
+    block_indexes: list[int] = Field(min_length=1)
+
+
+class WritingPoints(Contract):
+    """Pin a writing goal and cited points for a later prose proposal."""
+
+    goal: str = Field(min_length=1)
+    points: list[WritingPoint] = Field(min_length=1, max_length=100)
+
+
+class WritingDraft(Contract):
+    """Keep proposed prose separate from source checks and a human's tone evaluation."""
+
+    text: str = Field(min_length=1, max_length=30000)
+    block_indexes: list[int] = Field(min_length=1)
+
+
+def validate_block_citations(text: str, indexes: list[int], allowed: set[int]) -> None:
+    """Require exact one-based block tokens and reject absent or invented references."""
+    cited = {int(match) for match in BLOCK_CITATION.findall(text)}
+    declared = set(indexes)
+    if not cited or cited != declared or not declared <= allowed:
+        raise ValueError("Text must cite exactly its declared, supplied [block:N] references")
+    if len(indexes) != len(declared):
+        raise ValueError("Block references must not repeat")
+
+
+def validate_writing_points(points: WritingPoints, blocks: InformationBlocks, goal: str) -> None:
+    """Preserve the requested goal and verify every point's original source references."""
+    if points.goal != goal:
+        raise ValueError("Writing output changed the requested goal")
+    allowed = set(range(1, len(blocks.blocks) + 1))
+    for point in points.points:
+        validate_block_citations(point.text, point.block_indexes, allowed)
+
+
+def prepare_writing_points(
+    goal: str,
+    extraction: TextExtraction,
+    blocks: InformationBlocks,
+    context: dict,
+    instructions: str,
+    output_directory: Path,
+    configuration: ModelConfiguration,
+    cancelled: Callable[[], bool],
+) -> WritingPoints:
+    """Compose points against original spans and explicit upstream proposal context."""
+    if not goal.strip():
+        raise ValueError("Set a writing goal before preparing cited points")
+    validate_blocks(blocks, extraction)
+    packet = bounded_writing_packet(
+        {"goal": goal, "blocks": blocks.model_dump(mode="json"), "context": context}
+    )
+    return generate(
+        instructions,
+        packet,
+        WritingPoints,
+        output_directory,
+        lambda result: validate_writing_points(result, blocks, goal),
+        configuration=configuration,
+        cancelled=cancelled,
+    )
+
+
+def draft_prose(
+    points: WritingPoints,
+    extraction: TextExtraction,
+    blocks: InformationBlocks,
+    author_rules: dict,
+    instructions: str,
+    output_directory: Path,
+    configuration: ModelConfiguration,
+    cancelled: Callable[[], bool],
+) -> WritingDraft:
+    """Apply explicit private author rules while retaining inspectable original citations."""
+    if not author_rules:
+        raise ValueError("Save and select private author rules before drafting prose")
+    validate_blocks(blocks, extraction)
+    validate_writing_points(points, blocks, points.goal)
+    allowed = {index for point in points.points for index in point.block_indexes}
+    packet = bounded_writing_packet(
+        {
+            "points": points.model_dump(mode="json"),
+            "blocks": blocks.model_dump(mode="json"),
+            "author_rules": author_rules,
+        }
+    )
+    return generate(
+        instructions,
+        packet,
+        WritingDraft,
+        output_directory,
+        lambda result: validate_block_citations(result.text, result.block_indexes, allowed),
+        configuration=configuration,
+        cancelled=cancelled,
+    )
+
+
+def bounded_writing_packet(content: dict) -> str:
+    """Reject oversized writing context rather than silently truncating source evidence."""
+    packet = json.dumps(
+        {
+            "citation_format": "Use [block:N] inline, where N is the one-based blocks list index. "
+            "Declare those N values in block_indexes. Every factual point requires a token.",
+            **content,
+        },
+        ensure_ascii=False,
+    )
+    if len(packet) > MAX_WRITING_CHARACTERS:
+        raise ValueError("Writing context exceeds the 120000-character budget")
+    return packet

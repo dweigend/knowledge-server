@@ -12,6 +12,7 @@ from pydantic import ConfigDict, Field, model_validator
 from knowledge.contracts import Contract
 from knowledge.generation import ModelConfiguration, generate
 from knowledge.ingestion import extract_pdf_pages
+from knowledge.run_log import record_event
 
 EXTRACTION_METHOD = "pdftotext reading-order; v3"
 MAX_INPUT_CHARACTERS = 120000
@@ -68,10 +69,80 @@ class InformationBlocks(Contract):
     blocks: list[InformationBlock] = Field(max_length=MAX_BLOCKS)
 
 
-def extract_text(pdf: Path) -> TextExtraction:
+class QuoteReference(Contract):
+    """Select an original page and exact wording; the resolver supplies offsets and revision."""
+
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=False)
+
+    page: int = Field(ge=1)
+    quote: str = Field(min_length=1)
+
+
+class BlockProposal(Contract):
+    """Propose block wording and quotation selections without guessing character positions."""
+
+    bullets: list[str] = Field(min_length=1, max_length=30)
+    sources: list[QuoteReference] = Field(min_length=1, max_length=50)
+    wording: Literal["paraphrase", "verbatim"]
+
+
+class BlockSegmentation(Contract):
+    """Select source-grounded blocks for deterministic resolution into exact public spans."""
+
+    blocks: list[BlockProposal] = Field(max_length=MAX_BLOCKS)
+
+
+def resolve_source_quote(reference: QuoteReference, extraction: TextExtraction) -> SourceSpan:
+    """Locate a unique, unchanged quote on its declared original PDF page."""
+    if reference.page > len(extraction.pages):
+        raise ValueError("Source quote cites a missing original PDF page")
+    page = extraction.pages[reference.page - 1]
+    quote = reference.quote
+    start = page.find(quote)
+    if not quote.strip() or start < 0 or page.find(quote, start + 1) >= 0:
+        raise ValueError("Quote must have one exact wording match on its declared source page")
+    return SourceSpan(
+        extraction_revision=extraction.revision,
+        page=reference.page,
+        start=start,
+        end=start + len(quote),
+        quote=quote,
+    )
+
+
+def resolve_segmentation(
+    proposal: BlockSegmentation, extraction: TextExtraction, max_characters: int | None = None
+) -> InformationBlocks:
+    """Produce exact source spans while preserving model paraphrases as separate wording."""
+    blocks = InformationBlocks(
+        blocks=[
+            InformationBlock(
+                bullets=block.bullets,
+                sources=[
+                    resolve_source_quote(reference, extraction) for reference in block.sources
+                ],
+                wording=block.wording,
+            )
+            for block in proposal.blocks
+        ]
+    )
+    validate_segment_budget(blocks, extraction, max_characters)
+    return blocks
+
+
+def extract_text(
+    pdf: Path,
+    *,
+    cancelled: Callable[[], bool] | None = None,
+    timeout_seconds: float = 120,
+) -> TextExtraction:
     """Use the production PDF extraction and reject input changes during extraction."""
     before = hashlib.sha256(pdf.read_bytes()).hexdigest()
-    pages = tuple(extract_pdf_pages(pdf))
+    pages = tuple(
+        extract_pdf_pages(pdf, cancelled=cancelled, timeout_seconds=timeout_seconds)
+        if cancelled is not None or timeout_seconds != 120
+        else extract_pdf_pages(pdf)
+    )
     if hashlib.sha256(pdf.read_bytes()).hexdigest() != before:
         raise ValueError("PDF changed during extraction")
     return TextExtraction(
@@ -144,17 +215,50 @@ def segment_information(
     output_directory: Path,
     configuration: ModelConfiguration | None = None,
     cancelled: Callable[[], bool] | None = None,
+    max_characters: int | None = None,
 ) -> InformationBlocks:
     """Generate bounded information blocks through the shared validated model adapter."""
     if sum(map(len, extraction.pages)) > MAX_INPUT_CHARACTERS:
         raise ValueError("Information segmentation exceeds the 120000-character input budget")
-    packet = extraction.model_dump_json()
-    return generate(
+    if max_characters is not None and not 1 <= max_characters <= MAX_INPUT_CHARACTERS:
+        raise ValueError("Block source character budget must be between 1 and 120000")
+    packet = json.dumps(
+        {
+            "extraction": extraction.model_dump(mode="json"),
+            "max_source_characters_per_block": max_characters,
+        },
+        ensure_ascii=False,
+    )
+
+    def validate(proposal: BlockSegmentation) -> None:
+        resolve_segmentation(proposal, extraction, max_characters)
+
+    proposal = generate(
         instructions,
         packet,
-        InformationBlocks,
+        BlockSegmentation,
         output_directory,
-        lambda result: validate_blocks(result, extraction),
+        validate,
         configuration=configuration,
         cancelled=cancelled,
     )
+    result = resolve_segmentation(proposal, extraction, max_characters)
+    record_event(
+        output_directory,
+        "source_spans_resolved",
+        extraction_revision=extraction.revision,
+        sources=[span.model_dump(mode="json") for block in result.blocks for span in block.sources],
+    )
+    return result
+
+
+def validate_segment_budget(
+    blocks: InformationBlocks, extraction: TextExtraction, max_characters: int | None
+) -> None:
+    """Check exact provenance and the explicitly requested total source text per block."""
+    validate_blocks(blocks, extraction)
+    if max_characters is not None and any(
+        sum(len(source.quote) for source in block.sources) > max_characters
+        for block in blocks.blocks
+    ):
+        raise ValueError("Information block exceeds max_source_characters_per_block")

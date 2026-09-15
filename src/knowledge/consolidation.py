@@ -4,6 +4,7 @@ import difflib
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -13,12 +14,13 @@ from knowledge import notes, review
 from knowledge.application import AssessmentCommand, Knowledge
 from knowledge.contracts import Assessment, Contract, Evidence, Note, Record, Reference, Review
 from knowledge.evidence import records_for_claim
-from knowledge.generation import generate
-from knowledge.prompt_registry import load_prompt
+from knowledge.generation import ModelConfiguration, generate
+from knowledge.prompt_registry import load_prompt, operation_configuration
 from knowledge.run_log import record_event
 from knowledge.storage import Ledger
 
 MAX_PACKET_CHARACTERS = 120000
+CONSOLIDATION_ACTOR = "hermes:consolidate-v1"
 
 
 class NoteRevision(Contract):
@@ -105,7 +107,7 @@ def apply_note_revision(ledger: Ledger, batch_id: str, command: ConsolidateNote)
             ledger,
             batch_id,
             command.proposal.note,
-            "hermes:gpt-5.6-luna:consolidate-v1",
+            CONSOLIDATION_ACTOR,
             command.target,
         )
     ]
@@ -134,18 +136,31 @@ def consolidate_note(
 
 
 def propose_note_revision(
-    target: Record, records: list[Record], run_directory: Path
+    target: Record,
+    records: list[Record],
+    run_directory: Path,
+    *,
+    instructions: str | None = None,
+    configuration: ModelConfiguration | None = None,
+    cancelled: Callable[[], bool] | None = None,
 ) -> ConsolidateNote:
-    """Generate a validated proposal with the exact context revisions supplied to Luna."""
+    """Generate a validated proposal with the exact supplied context revisions."""
     supplied = note_context(target, records)
     packet = note_packet(target, supplied, records)
-    prompt = load_prompt("consolidate")
+    if instructions is None:
+        instructions, default_configuration = operation_configuration(
+            "propose_changes", secondary_prompt=True
+        )
+        configuration = configuration or default_configuration
+    prompt = instructions
     proposal = generate(
         prompt,
         packet,
         NoteRevision,
         run_directory / "proposals",
         lambda result: validate_note_revision(result, target, supplied),
+        **({"configuration": configuration} if configuration is not None else {}),
+        **({"cancelled": cancelled} if cancelled is not None else {}),
     )
     return ConsolidateNote(
         target=target.reference(),
@@ -242,7 +257,7 @@ def write_note_proposal(
         batch_id,
         "consolidate",
         command,
-        "hermes:gpt-5.6-luna:consolidate-v1",
+        CONSOLIDATION_ACTOR,
         lambda ledger: apply_note_revision(ledger, batch_id, command),
     )
     record_event(
@@ -310,9 +325,7 @@ def reassess_claim(
         assessment=assessment, expected=existing.reference() if existing else None
     )
     identity = hashlib.sha256(command.model_dump_json().encode()).hexdigest()
-    application.assess(
-        f"reassess:{identity}", batch_id, command, "hermes:gpt-5.6-luna:consolidate-assess-v1"
-    )
+    application.assess(f"reassess:{identity}", batch_id, command, "hermes:consolidate-assess-v1")
     record_event(
         run_directory,
         "assessment",

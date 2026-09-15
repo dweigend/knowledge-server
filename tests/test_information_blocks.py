@@ -7,15 +7,21 @@ import pytest
 from pydantic import ValidationError
 
 from knowledge.information_blocks import (
+    BlockProposal,
+    BlockSegmentation,
     InformationBlock,
     InformationBlocks,
+    QuoteReference,
     SourceSpan,
     TextExtraction,
     extract_text,
+    resolve_segmentation,
+    resolve_source_quote,
     segment_information,
     segment_verbatim,
     text_revision,
     validate_blocks,
+    validate_segment_budget,
 )
 
 
@@ -84,13 +90,23 @@ def test_verbatim_cannot_disguise_paraphrases():
     validate_blocks(result, document)
 
 
-def test_pdf_operation_preserves_shared_extraction_qa(tmp_path, monkeypatch):
+def test_pdf_operation_accepts_readable_single_page(tmp_path, monkeypatch):
     pdf = tmp_path / "source.pdf"
     pdf.write_bytes(b"PDF fixture boundary")
 
     monkeypatch.setattr(
         "knowledge.ingestion.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(stdout=b"A short page.\f"),
+    )
+    assert extract_text(pdf).pages == ("A short page.",)
+
+
+def test_pdf_operation_rejects_empty_text(tmp_path, monkeypatch):
+    pdf = tmp_path / "source.pdf"
+    pdf.write_bytes(b"PDF fixture boundary")
+    monkeypatch.setattr(
+        "knowledge.ingestion.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=b"\f"),
     )
     with pytest.raises(ValueError, match="manual extraction QA"):
         extract_text(pdf)
@@ -103,6 +119,10 @@ def test_model_segmentation_uses_shared_adapter_and_domain_validation(tmp_path, 
     def respond(arguments, **kwargs):
         requests.append(json.loads(Path(arguments[-2]).read_text()))
         result = segment_verbatim(document).model_dump()
+        for block in result["blocks"]:
+            block["sources"] = [
+                {"page": source["page"], "quote": source["quote"]} for source in block["sources"]
+            ]
         if len(requests) == 1:
             result["blocks"][0]["sources"][0]["quote"] = "Fabricated quotation"
         Path(arguments[-1]).write_text(json.dumps({"response": json.dumps(result)}))
@@ -113,9 +133,63 @@ def test_model_segmentation_uses_shared_adapter_and_domain_validation(tmp_path, 
     assert len(requests) == 2
     assert requests[0]["instructions"] == "Group observations"
     assert document.revision in requests[0]["input"]
-    assert "exact page offsets" in requests[1]["input"]
+    assert "exact wording match" in requests[1]["input"]
+    schema = json.loads(requests[0]["input"].removeprefix("SCHEMA:\n").split("\n\nINPUT:")[0])
+    assert set(schema["$defs"]["QuoteReference"]["properties"]) == {"page", "quote"}
 
 
 def test_deterministic_segmentation_rejects_unbounded_result():
     with pytest.raises(ValueError, match="500 blocks"):
         segment_verbatim(extraction(("x" * 501,)), max_characters=1)
+
+
+def test_model_segmentation_source_budget_is_an_enforced_constraint():
+    document = extraction(("First observation.",))
+    blocks = segment_verbatim(document)
+    validate_segment_budget(blocks, document, 18)
+    with pytest.raises(ValueError, match="max_source_characters"):
+        validate_segment_budget(blocks, document, 17)
+
+
+def test_quote_resolver_computes_offsets_without_changing_pdf_typography():
+    document = extraction(("Heading\n\nA  ﬁnding\nspans lines.\nEnd.",))
+    span = resolve_source_quote(QuoteReference(page=1, quote="A  ﬁnding\nspans lines."), document)
+    assert (span.start, span.end) == (9, 31)
+    assert span.quote == "A  ﬁnding\nspans lines."
+    assert span.extraction_revision == document.revision
+    assert document.pages[0][span.start : span.end] == span.quote
+
+
+@pytest.mark.parametrize(
+    "pages,page,quote",
+    [
+        (("Same finding. Same finding.",), 1, "Same finding."),
+        (("A finding.", "A different page."), 2, "A finding."),
+        (("A finding.",), 2, "A finding."),
+        (("A finding.",), 1, "Another finding."),
+        (("A finding.",), 1, "a finding."),
+        (("A  ﬁnding\nspans lines.",), 1, "A finding spans lines."),
+    ],
+)
+def test_quote_resolver_rejects_ambiguity_wrong_page_and_changed_wording(pages, page, quote):
+    with pytest.raises(ValueError):
+        resolve_source_quote(QuoteReference(page=page, quote=quote), extraction(pages))
+
+
+def test_segmentation_resolver_retains_paraphrases_without_calling_them_quotes():
+    document = extraction(("A finding.",))
+    proposal = BlockSegmentation(
+        blocks=[
+            BlockProposal(
+                bullets=["A concise interpretation."],
+                sources=[QuoteReference(page=1, quote="A finding.")],
+                wording="paraphrase",
+            )
+        ]
+    )
+    blocks = resolve_segmentation(proposal, document)
+    assert blocks.blocks[0].bullets == ["A concise interpretation."]
+    assert blocks.blocks[0].sources[0].quote == "A finding."
+    proposal.blocks[0].wording = "verbatim"
+    with pytest.raises(ValueError, match="Verbatim bullets"):
+        resolve_segmentation(proposal, document)

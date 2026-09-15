@@ -1,114 +1,535 @@
-"""Run disposable, manually advanced experiments through shared operations."""
+"""Run manual experiments with pinned inputs, isolated data and inspectable history."""
 
+import hashlib
 import json
+import os
 import shutil
-from datetime import UTC, datetime
+import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
 from uuid import uuid4
 
-from knowledge.information_blocks import TextExtraction, extract_text, segment_verbatim
-from knowledge.run_log import record_event
+from knowledge.contracts import Record
+from knowledge.experiment_contracts import (
+    AttemptInputs,
+    AttemptResult,
+    AttemptState,
+    ExperimentManifest,
+    HumanReview,
+)
+from knowledge.experiment_store import (
+    LOADED_CODE,
+    append_result,
+    attempt_directory,
+    code_fingerprint,
+    content_hash,
+    experiment_directory,
+    experiment_lock,
+    experiments_root,
+    now,
+    read_attempt,
+    read_experiment,
+    validate_id,
+)
+from knowledge.pipeline_steps import STEP_LABELS as STEP_LABELS
+from knowledge.prompt_registry import ConfigRevision, atomic_json, payload_hash
+from knowledge.storage import Conflict
 
-ExperimentStep = Literal[
-    "extract_text",
-    "segment_blocks",
-    "formulate_claims",
-    "find_knowledge",
-    "select_entries",
-    "propose_changes",
-    "prepare_writing",
-    "draft_text",
-]
-
-STEP_LABELS: dict[ExperimentStep, str] = {
-    "extract_text": "Extract PDF text",
-    "segment_blocks": "Segment information blocks",
-    "formulate_claims": "Formulate general claims",
-    "find_knowledge": "Find existing knowledge",
-    "select_entries": "Select relevant entries",
-    "propose_changes": "Propose grounded changes",
-    "prepare_writing": "Prepare cited writing points",
-    "draft_text": "Draft text in David's voice",
-}
-
-
-def experiments_root(archive_root: Path) -> Path:
-    """Resolve the disposable experiment directory beside the archive."""
-    return archive_root.parent / "experiments"
+MAX_PDF_BYTES = 64 * 1024 * 1024
 
 
-def create_experiment(archive_root: Path, filename: str, content: bytes) -> str:
-    """Create an isolated experiment and retain only its private source copy."""
-    if not filename.lower().endswith(".pdf"):
-        raise ValueError("Experiment sources must be PDF files")
-    if not content:
-        raise ValueError("Experiment source is empty")
+def create_experiment(
+    archive_root: Path, filename: str, content: bytes, seed_records: list[Record] | None = None
+) -> str:
+    """Copy one PDF and explicitly supplied knowledge into a private experiment."""
+    if not filename.lower().endswith(".pdf") or not content.startswith(b"%PDF-"):
+        raise ValueError("Experiment sources must contain a PDF header and use a .pdf filename")
+    if len(content) > MAX_PDF_BYTES:
+        raise ValueError("Experiment PDFs must not exceed 64 MiB")
+    records = [record.model_dump(mode="json") for record in seed_records or []]
     experiment_id = uuid4().hex
-    directory = experiments_root(archive_root) / experiment_id
-    directory.mkdir(parents=True, mode=0o700)
-    (directory / "source.pdf").write_bytes(content)
-    manifest = {
-        "id": experiment_id,
-        "filename": Path(filename).name,
-        "created_at": datetime.now(UTC).isoformat(),
-        "status": "created",
-        "steps": {},
-    }
-    (directory / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    record_event(directory, "experiment_created", filename=Path(filename).name)
+    with experiment_lock(archive_root, experiment_id):
+        directory = experiments_root(archive_root) / experiment_id
+        directory.mkdir(mode=0o700)
+        (directory / "source.pdf").write_bytes(content)
+        manifest = ExperimentManifest(
+            id=experiment_id,
+            filename=Path(filename).name,
+            created_at=now(),
+            source_hash=hashlib.sha256(content).hexdigest(),
+            knowledge_hash=content_hash(records),
+        )
+        atomic_json(directory / "knowledge.json", {"records": records})
+        atomic_json(directory / "manifest.json", manifest.model_dump(mode="json"))
     return experiment_id
 
 
-def experiment_directory(archive_root: Path, experiment_id: str) -> Path:
-    """Resolve one experiment without allowing path traversal."""
-    if not experiment_id.isalnum() or len(experiment_id) != 32:
-        raise ValueError("Invalid experiment id")
-    root = experiments_root(archive_root).resolve()
-    directory = (root / experiment_id).resolve()
-    if directory.parent != root or not directory.is_dir():
-        raise FileNotFoundError("Experiment does not exist")
-    return directory
+def read_attempts(archive_root: Path, experiment_id: str) -> list[dict]:
+    """Read history and derive stale inputs against the latest successful attempts."""
+    if _cleanup_path(archive_root, experiment_id).exists():
+        return []
+    directory = experiment_directory(archive_root, experiment_id)
+    read_experiment(directory)
+    attempts = sorted(
+        (read_attempt(path.parent) for path in (directory / "attempts").glob("*/inputs.json")),
+        key=lambda attempt: (attempt["created_at"], attempt["id"]),
+    )
+    latest = {
+        attempt["step"]: attempt["id"] for attempt in attempts if attempt["status"] == "completed"
+    }
+    indexed = {attempt["id"]: attempt for attempt in attempts}
+    for attempt in attempts:
+        reasons = []
+        for step, identifier in attempt["inputs"].items():
+            parent = indexed.get(identifier)
+            if parent is None or parent["status"] != "completed":
+                reasons.append(f"Missing successful input for {step}")
+            elif latest.get(step) != identifier or parent.get("stale", False):
+                reasons.append(f"Newer successful input available for {step}")
+        attempt["stale"] = bool(reasons)
+        attempt["stale_reason"] = "; ".join(reasons)
+        path = attempt_directory(directory, attempt["id"])
+        attempt["reviews"] = [
+            json.loads(file.read_text())
+            for file in sorted((path / "reviews").glob("*.json"), key=lambda file: int(file.stem))
+        ]
+    return attempts
 
 
 def read_manifest(archive_root: Path, experiment_id: str) -> dict:
-    """Read an experiment manifest without running any model operation."""
-    path = experiment_directory(archive_root, experiment_id) / "manifest.json"
-    return json.loads(path.read_text())
+    """Read the source and latest step statuses, retaining legacy metadata access."""
+    cleanup = _cleanup_path(archive_root, experiment_id)
+    if cleanup.exists():
+        return json.loads(cleanup.read_text())
+    directory = experiment_directory(archive_root, experiment_id)
+    payload = json.loads((directory / "manifest.json").read_text())
+    if payload.get("version") != 2:
+        return {**payload, "legacy": True, "status": "legacy", "steps": payload.get("steps", {})}
+    manifest = ExperimentManifest.model_validate(payload).model_dump(mode="json")
+    attempts = read_attempts(archive_root, experiment_id)
+    manifest["steps"] = {attempt["step"]: attempt for attempt in attempts}
+    manifest["status"] = attempts[-1]["status"] if attempts else "created"
+    manifest["legacy"] = False
+    return manifest
+
+
+def list_experiments(archive_root: Path) -> list[dict]:
+    """List private sources with their latest manually requested step status."""
+    root = experiments_root(archive_root)
+    if not root.exists():
+        return []
+    manifests = [
+        read_manifest(archive_root, path.name)
+        for path in root.iterdir()
+        if not path.name.startswith(".")
+        and not path.is_symlink()
+        and path.is_dir()
+        and (path / "manifest.json").exists()
+    ]
+    listed = {manifest["id"] for manifest in manifests}
+    manifests.extend(
+        json.loads(path.read_text())
+        for path in (root / ".cleanup").glob("*.json")
+        if path.stem not in listed
+    )
+    return sorted(
+        manifests,
+        key=lambda manifest: manifest["created_at"],
+        reverse=True,
+    )
+
+
+def _select_inputs(
+    attempts: list[dict], dependencies: tuple[str, ...], supplied: dict[str, str] | None
+) -> tuple[dict[str, str], dict[str, str]]:
+    selected = (
+        supplied
+        if supplied is not None
+        else {
+            attempt["step"]: attempt["id"]
+            for attempt in attempts
+            if attempt["status"] == "completed"
+        }
+    )
+    if supplied is not None and set(supplied) != set(dependencies):
+        raise ValueError("Explicit input attempts must match the step's required dependencies")
+    indexed = {attempt["id"]: attempt for attempt in attempts}
+    pins, hashes = {}, {}
+    for step in dependencies:
+        attempt = indexed.get(selected.get(step, ""))
+        if attempt is None or attempt["step"] != step or attempt["status"] != "completed":
+            raise ValueError(f"Run {step} successfully before starting this step")
+        if attempt["stale"] and supplied is None:
+            raise Conflict(
+                f"Input {step} is stale; rerun it or explicitly select comparison inputs"
+            )
+        pins[step], hashes[step] = attempt["id"], attempt["output_hash"]
+    _validate_input_lineage(pins, indexed)
+    return pins, hashes
+
+
+def _validate_input_lineage(pins: dict[str, str], indexed: dict[str, dict]) -> None:
+    lineage: dict[str, str] = {}
+    pending = list(pins.items())
+    while pending:
+        step, identifier = pending.pop()
+        if step in lineage:
+            if lineage[step] != identifier:
+                raise ValueError(f"Selected input attempts disagree on the revision of {step}")
+            continue
+        lineage[step] = identifier
+        attempt = indexed.get(identifier)
+        if attempt is None or attempt["status"] != "completed":
+            raise ValueError(f"Selected input lineage has no successful result for {step}")
+        pending.extend(attempt["inputs"].items())
+
+
+def prepare_attempt(
+    archive_root: Path,
+    experiment_id: str,
+    step: str,
+    recipe: ConfigRevision,
+    input_attempts: dict[str, str] | None = None,
+) -> str:
+    """Pin a manual attempt without making model requests or advancing dependencies."""
+    from knowledge.pipeline_steps import (
+        OUTPUT_CONTRACTS,
+        OUTPUT_SCHEMAS,
+        STEP_DEPENDENCIES,
+        validate_step_parameters,
+    )
+    from knowledge.prompt_registry import Recipe, resolve_recipe
+
+    if step not in STEP_LABELS:
+        raise ValueError("Unknown experiment step")
+    if recipe.kind != "recipe" or recipe.hash != payload_hash(recipe.payload):
+        raise ValueError("Attempt requires an intact saved recipe revision")
+    parsed = Recipe.model_validate(recipe.payload)
+    validate_step_parameters(parsed)
+    fingerprint = code_fingerprint()
+    if fingerprint.hash != LOADED_CODE.hash:
+        raise Conflict("Application files changed; restart the server before preparing an attempt")
+    if parsed.step != step:
+        raise ValueError("Recipe belongs to a different pipeline step")
+    if parsed.output_schema != OUTPUT_SCHEMAS[step]:
+        raise ValueError("Recipe output format does not match this pipeline step")
+    saved, _, prompt, author_rules = resolve_recipe(recipe.name, recipe.revision)
+    if saved != recipe:
+        raise ValueError("Recipe differs from its saved immutable revision")
+    with experiment_lock(archive_root, experiment_id):
+        directory = experiment_directory(archive_root, experiment_id)
+        if _cleanup_path(archive_root, experiment_id).exists():
+            raise Conflict("Experiment cleanup is pending; retry deletion")
+        manifest = read_experiment(directory)
+        attempts = read_attempts(archive_root, experiment_id)
+        if any(attempt["status"] in {"queued", "running"} for attempt in attempts):
+            raise Conflict("Finish, cancel or recover the pending attempt before preparing another")
+        pins, hashes = _select_inputs(attempts, STEP_DEPENDENCIES[step], input_attempts)
+        schema = OUTPUT_CONTRACTS[step].model_json_schema()
+        specification = AttemptInputs(
+            id=uuid4().hex,
+            step=step,
+            created_at=now(),
+            recipe=recipe,
+            prompt=prompt,
+            author_rules=author_rules,
+            inputs=pins,
+            input_hashes=hashes,
+            explicit_inputs=input_attempts is not None,
+            source_hash=manifest.source_hash,
+            knowledge_hash=manifest.knowledge_hash,
+            code=fingerprint,
+            output_schema=schema,
+            output_schema_hash=content_hash(schema),
+        )
+        atomic_json(
+            directory / "attempts" / specification.id / "inputs.json",
+            specification.model_dump(mode="json"),
+        )
+    return specification.id
+
+
+def _execution_inputs(directory: Path, specification: AttemptInputs) -> tuple[dict, list[Record]]:
+    source_hash = hashlib.sha256((directory / "source.pdf").read_bytes()).hexdigest()
+    records = json.loads((directory / "knowledge.json").read_text())["records"]
+    if (
+        source_hash != specification.source_hash
+        or content_hash(records) != specification.knowledge_hash
+    ):
+        raise ValueError("Experiment source or knowledge snapshot changed after it was pinned")
+    inputs = {}
+    for step, identifier in specification.inputs.items():
+        attempt = read_attempt(attempt_directory(directory, identifier))
+        if (
+            attempt["status"] != "completed"
+            or attempt["output_hash"] != specification.input_hashes[step]
+        ):
+            raise ValueError(f"Pinned {step} output changed or is no longer available")
+        inputs[step] = attempt["output"]
+    return inputs, [Record.model_validate(record) for record in records]
+
+
+def _attempt_cancellation(path: Path, started: float, timeout_seconds: float) -> Callable[[], bool]:
+    def cancelled() -> bool:
+        if time.monotonic() - started >= timeout_seconds:
+            raise TimeoutError("Experiment step exceeded its total wall-clock time limit")
+        return (path / "cancel.json").exists()
+
+    return cancelled
+
+
+def _perform_attempt(
+    directory: Path, path: Path, specification: AttemptInputs, started: float
+) -> dict:
+    from knowledge.pipeline_steps import OUTPUT_CONTRACTS, execute_step
+    from knowledge.prompt_registry import Recipe, resolve_recipe
+
+    recipe = Recipe.model_validate(specification.recipe.payload)
+    cancelled = _attempt_cancellation(path, started, recipe.model.timeout_seconds)
+    if cancelled():
+        raise InterruptedError("Attempt cancelled before execution")
+    if (
+        specification.code.hash != code_fingerprint().hash
+        or specification.code.hash != LOADED_CODE.hash
+    ):
+        raise ValueError("Application code changed; prepare a new attempt with the current code")
+    contract = OUTPUT_CONTRACTS[specification.step]
+    if specification.output_schema_hash != content_hash(contract.model_json_schema()):
+        raise ValueError("Output schema changed; prepare a new attempt")
+    saved, _, prompt, rules = resolve_recipe(
+        specification.recipe.name, specification.recipe.revision
+    )
+    if (
+        saved != specification.recipe
+        or prompt != specification.prompt
+        or rules != specification.author_rules
+    ):
+        raise ValueError("Pinned configuration no longer matches the immutable registry")
+    inputs, knowledge = _execution_inputs(directory, specification)
+    result = execute_step(
+        specification.step,
+        pdf=directory / "source.pdf",
+        inputs=inputs,
+        knowledge=knowledge,
+        recipe=recipe,
+        output_directory=path / "trace",
+        cancelled=cancelled,
+    )
+    if cancelled():
+        raise InterruptedError("Attempt cancelled; generated result was not accepted")
+    return contract.model_validate(result.model_dump()).model_dump(mode="json")
+
+
+def execute_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> dict:
+    """Execute one pinned attempt while excluding concurrent workers and deletion."""
+    with experiment_lock(archive_root, experiment_id):
+        directory = experiment_directory(archive_root, experiment_id)
+        if _cleanup_path(archive_root, experiment_id).exists():
+            raise Conflict("Experiment cleanup is pending; retry deletion")
+        path = attempt_directory(directory, attempt_id)
+        if (path / "result.json").exists():
+            return read_attempt(path)
+        if (path / "state.json").exists():
+            raise Conflict("Interrupted attempt must be recovered before another execution")
+        specification = AttemptInputs.model_validate_json((path / "inputs.json").read_text())
+        state = AttemptState(started_at=now(), worker_pid=os.getpid())
+        atomic_json(path / "state.json", state.model_dump(mode="json"))
+        started = time.monotonic()
+        output, error, status = None, None, "failed"
+        try:
+            output = _perform_attempt(directory, path, specification, started)
+            status = "completed"
+        except InterruptedError as failure:
+            status, error = "cancelled", str(failure)
+        except Exception as failure:
+            status, error = "failed", str(failure)
+        terminal = AttemptResult(
+            status=status,
+            started_at=state.started_at,
+            finished_at=now(),
+            duration_seconds=time.monotonic() - started,
+            output=output,
+            output_hash=content_hash(output) if output is not None else None,
+            error=error,
+        )
+        append_result(path, terminal)
+        return read_attempt(path)
 
 
 def run_step(
     archive_root: Path,
     experiment_id: str,
-    step: ExperimentStep,
-    *,
-    max_characters: int = 2000,
+    step: str,
+    recipe: ConfigRevision,
+    input_attempts: dict[str, str] | None = None,
 ) -> dict:
-    """Run exactly one manually requested step and persist its inspectable output."""
+    """Prepare and synchronously execute the same operation used by the dashboard."""
+    attempt_id = prepare_attempt(archive_root, experiment_id, step, recipe, input_attempts)
+    return execute_attempt(archive_root, experiment_id, attempt_id)
+
+
+def request_cancel(archive_root: Path, experiment_id: str, attempt_id: str) -> None:
+    """Signal a worker through an independent marker without waiting on its lock."""
     directory = experiment_directory(archive_root, experiment_id)
-    manifest = read_manifest(archive_root, experiment_id)
-    if step == "extract_text":
-        result = extract_text(directory / "source.pdf")
-        output = result.model_dump(mode="json")
-        (directory / "extraction.json").write_text(json.dumps(output, indent=2, ensure_ascii=False))
-    elif step == "segment_blocks":
-        extraction = TextExtraction.model_validate_json((directory / "extraction.json").read_text())
-        result = segment_verbatim(extraction, max_characters=max_characters)
-        output = result.model_dump(mode="json")
-        (directory / "blocks.json").write_text(json.dumps(output, indent=2, ensure_ascii=False))
-    else:
-        output = {
-            "status": "unavailable",
-            "reason": "This shared operation is not wired into the experiment runner yet.",
-        }
-    status = "completed" if output.get("status") != "unavailable" else "unavailable"
-    manifest["steps"][step] = {"status": status}
-    manifest["status"] = "active"
-    (directory / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False))
-    record_event(directory, "step_finished", step=step, output=output)
-    return output
+    path = attempt_directory(directory, attempt_id)
+    if (path / "result.json").exists():
+        raise Conflict("Completed attempts cannot be cancelled")
+    # Exclusive creation never recreates a directory concurrently removed by cleanup.
+    try:
+        with (path / "cancel.json").open("x") as stream:
+            json.dump({"requested_at": now()}, stream)
+    except FileExistsError:
+        pass
+
+
+def recover_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> dict:
+    """Mark interruption only after a worker released the operating-system lock."""
+    with experiment_lock(archive_root, experiment_id):
+        directory = experiment_directory(archive_root, experiment_id)
+        path = attempt_directory(directory, attempt_id)
+        attempt = read_attempt(path)
+        if attempt["status"] not in {"queued", "running"}:
+            return attempt
+        cancelled = (path / "cancel.json").exists()
+        append_result(
+            path,
+            AttemptResult(
+                status="cancelled" if cancelled else "abandoned",
+                started_at=attempt.get("started_at"),
+                finished_at=now(),
+                duration_seconds=0,
+                error="Worker interrupted; prepare a new attempt with the same pinned inputs",
+            ),
+        )
+        return read_attempt(path)
 
 
 def delete_experiment(archive_root: Path, experiment_id: str) -> None:
-    """Delete only one disposable experiment directory and report cleanup failures."""
-    shutil.rmtree(experiment_directory(archive_root, experiment_id))
+    """Remove only this run's files and allow cleanup retries after a filesystem error."""
+    validate_id(experiment_id)
+    with experiment_lock(archive_root, experiment_id):
+        directory = experiments_root(archive_root) / experiment_id
+        marker = _cleanup_path(archive_root, experiment_id)
+        if not directory.exists():
+            marker.unlink(missing_ok=True)
+            return
+        directory = experiment_directory(archive_root, experiment_id)
+        manifest = read_manifest(archive_root, experiment_id)
+        cleanup = {
+            "id": experiment_id,
+            "filename": manifest["filename"],
+            "created_at": manifest.get("created_at", now()),
+            "legacy": False,
+            "cleanup_pending": True,
+            "status": "cleanup_pending",
+            "steps": {},
+        }
+        atomic_json(marker, cleanup)
+        try:
+            shutil.rmtree(directory)
+        except OSError as failure:
+            atomic_json(marker, {**cleanup, "status": "cleanup_failed", "error": str(failure)})
+            raise ValueError(
+                f"Experiment cleanup incomplete; retry deletion: {failure}"
+            ) from failure
+        marker.unlink()
+
+
+def _cleanup_path(archive_root: Path, experiment_id: str) -> Path:
+    validate_id(experiment_id)
+    return experiments_root(archive_root) / ".cleanup" / f"{experiment_id}.json"
+
+
+def save_review(
+    archive_root: Path,
+    experiment_id: str,
+    attempt_id: str,
+    ratings: dict[str, str],
+    comment: str,
+    expected_revision: int = 0,
+) -> dict:
+    """Append human evaluation independently of output and automated validation."""
+    with experiment_lock(archive_root, experiment_id):
+        directory = experiment_directory(archive_root, experiment_id)
+        path = attempt_directory(directory, attempt_id) / "reviews"
+        current = max((int(file.stem) for file in path.glob("*.json")), default=0)
+        if current != expected_revision:
+            raise Conflict("Human review changed; reload before saving another revision")
+        review = HumanReview(
+            revision=current + 1, created_at=now(), ratings=ratings, comment=comment
+        )
+        atomic_json(path / f"{review.revision}.json", review.model_dump(mode="json"))
+        return review.model_dump(mode="json")
+
+
+def read_attempt_trace(archive_root: Path, experiment_id: str, attempt_id: str) -> list[dict]:
+    """Read structured execution events without exposing raw process transcripts."""
+    path = attempt_directory(experiment_directory(archive_root, experiment_id), attempt_id)
+    attempt = read_attempt(path)
+    events = [
+        {"time": attempt["created_at"], "event": "attempt_prepared", "attempt_id": attempt_id}
+    ]
+    if attempt.get("started_at"):
+        events.append(
+            {
+                "time": attempt["started_at"],
+                "event": "attempt_started",
+                "worker_pid": attempt["worker_pid"],
+            }
+        )
+    for file in sorted(path.rglob("events.jsonl")):
+        content = file.read_text()
+        lines = content.split("\n")[:-1]
+        for line in lines:
+            if line.strip():
+                events.append(_trace_event(file.parent, json.loads(line)))
+    if attempt.get("finished_at"):
+        events.append(
+            {
+                "time": attempt["finished_at"],
+                "event": "attempt_finished",
+                "status": attempt["status"],
+                "error": attempt["error"],
+                "duration_seconds": attempt["duration_seconds"],
+            }
+        )
+    return sorted(events, key=lambda event: event.get("time", ""))
+
+
+def _trace_event(directory: Path, event: dict) -> dict:
+    fields = {
+        "request_file": ("instructions", "input", "configuration"),
+        "response_file": ("response", "model", "provider", "execution"),
+    }
+    for reference, allowed in fields.items():
+        filename = event.get(reference)
+        if not isinstance(filename, str) or Path(filename).name != filename:
+            continue
+        path = directory / filename
+        if path.is_symlink() or not path.is_file():
+            continue
+        try:
+            payload = json.loads(path.read_text())
+        except json.JSONDecodeError:
+            continue
+        event[reference.removesuffix("_file")] = {
+            key: payload[key] for key in allowed if key in payload
+        }
+    return event
+
+
+def export_experiment(archive_root: Path, experiment_id: str) -> dict:
+    """Return an explicitly requested private report without writing repository files."""
+    directory = experiment_directory(archive_root, experiment_id)
+    manifest = read_manifest(archive_root, experiment_id)
+    if manifest["legacy"]:
+        return {
+            "manifest": manifest,
+            "legacy_files": {
+                path.name: json.loads(path.read_text()) for path in directory.glob("*.json")
+            },
+        }
+    attempts = read_attempts(archive_root, experiment_id)
+    for attempt in attempts:
+        attempt["events"] = read_attempt_trace(archive_root, experiment_id, attempt["id"])
+    return {"manifest": manifest, "attempts": attempts}

@@ -2,7 +2,9 @@
 
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from time import monotonic
 
 from pypdf import PdfReader, PdfWriter
 
@@ -50,19 +52,58 @@ def locate_passage(pages: list[str], page: int, quote: str) -> tuple[int, str]:
     return matches[0]
 
 
-def extract_pdf_pages(pdf_path: Path) -> list[str]:
-    """Extract reading-order page text and reject PDFs needing manual preparation."""
-    extracted = subprocess.run(
-        ["pdftotext", str(pdf_path), "-"],
-        check=True,
-        capture_output=True,
-    ).stdout.decode("utf-8")
+def extract_pdf_pages(
+    pdf_path: Path,
+    *,
+    timeout_seconds: float = 120,
+    cancelled: Callable[[], bool] | None = None,
+) -> list[str]:
+    """Extract readable pages with bounded execution, including short documents."""
+    if not 0 < timeout_seconds <= 240:
+        raise ValueError("PDF extraction timeout must be between 0 and 240 seconds")
+    arguments = ["pdftotext", str(pdf_path), "-"]
+    if cancelled is None:
+        content = subprocess.run(
+            arguments, check=True, capture_output=True, timeout=timeout_seconds
+        ).stdout
+    else:
+        content = cancellable_pdf_text(arguments, timeout_seconds, cancelled)
+    extracted = content.decode("utf-8")
     pages = extracted.split("\f")
     if not pages[-1].strip():
         pages.pop()
-    if len(pages) < 3 or sum(map(len, pages[1:])) < 2000:
+    if not any(page.strip() for page in pages):
         raise ValueError("PDF needs manual extraction QA or OCR")
     return pages
+
+
+def cancellable_pdf_text(
+    arguments: list[str], timeout_seconds: float, cancelled: Callable[[], bool]
+) -> bytes:
+    """Drain subprocess output while checking cancellation and the extraction deadline."""
+    if cancelled():
+        raise InterruptedError("PDF extraction cancelled")
+    deadline = monotonic() + timeout_seconds
+    with subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        try:
+            while True:
+                if cancelled():
+                    raise InterruptedError("PDF extraction cancelled")
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("PDF extraction exceeded its time limit")
+                try:
+                    stdout, stderr = process.communicate(timeout=min(0.2, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if process.returncode:
+                raise subprocess.CalledProcessError(process.returncode, arguments, stdout, stderr)
+            return stdout
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.communicate()
 
 
 def remove_curator_cover(archived: Path, clean: Path) -> None:

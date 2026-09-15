@@ -27,10 +27,12 @@ they are not a substitute for useful synthesis.
 The first priority is an **isolated experimentation dashboard**: run a PDF
 through the real workflow, inspect every intermediate result, compare prompts
 and processing choices, then discard the test environment. The first shared
-runner now covers manual PDF extraction and source-grounded information blocks;
-the later knowledge and writing steps are deliberately marked as pending until
-their existing operations are connected. The tooling deserves as much
-attention as the application code. See [#1][issue-1].
+runner connects eight manually started steps, from PDF extraction through
+source-grounded blocks and knowledge proposals to cited prose. Attempts retain
+their inputs and configuration; a separate view compares step variants.
+This is working development tooling, not accepted synthesis quality. The tooling
+deserves as much attention as the application code. See [#1][issue-1] and the
+[workbench guide](docs/experimentation-workbench.md) for boundaries and evidence.
 
 ## Working model
 
@@ -89,8 +91,8 @@ separate Hermes installation; the current adapter uses `gpt-5.6-luna` through
 and backup requirements. The disposable experiment dashboard is available at
 `/experiments`. It stores private run data beside the archive, advances one
 step at a time, never calls a model while reading, and can delete a run on
-request. The remaining steps show their implementation status instead of
-pretending that a UI card is a working pipeline.
+request. Open the server URL, not the Jinja template as a local file.
+`uv run knowledge-experiment --help` exposes the same runner for scripts.
 
 ### Shared execution boundaries
 
@@ -112,6 +114,8 @@ flowchart LR
 
 Every column is a manually started operation. The dashboard reads pinned JSON
 and JSONL files; it does not start follow-up work implicitly.
+Source references are checked structurally. Model usefulness, accurate synthesis
+and personal writing style still need human evaluation.
 
 ```mermaid
 sequenceDiagram

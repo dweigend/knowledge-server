@@ -31,6 +31,8 @@ client migration and end-to-end acceptance are pending.
 
 ## Reading order
 
+- [Experimentation workbench](experimentation-workbench.md): manual execution,
+  immutable attempts, shared operations, configuration and current limitations.
 - [MVP](knowledge-mvp.md): product scope and incremental priorities.
 - [Contracts](knowledge-contracts.md): records, citation integrity and assessment
   rules; historical compatibility requirements remain explicit.

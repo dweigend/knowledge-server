@@ -61,8 +61,9 @@ def run_request(agent: "AIAgent", request: dict[str, str], model: str, provider:
         system_message=request["instructions"],
     )
     return {
-        "model": getattr(agent, "model", model),
-        "provider": getattr(agent, "provider", provider),
+        "execution": "live",
+        "model": getattr(agent, "model", None),
+        "provider": getattr(agent, "provider", None),
         "requested_model": model,
         "requested_provider": provider,
         "response": result["final_response"],

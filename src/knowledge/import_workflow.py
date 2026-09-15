@@ -21,13 +21,13 @@ from knowledge.contracts import (
 )
 from knowledge.generation import ModelConfiguration, generate
 from knowledge.ingestion import extract_pdf_pages, locate_passage, remove_curator_cover
-from knowledge.prompt_registry import load_prompt
+from knowledge.prompt_registry import operation_configuration
 from knowledge.reconciliation import reconcile_claim
 from knowledge.run_log import record_event
 from knowledge.zotero import import_sources
 
 PAGE_BUDGET = 65000
-IMPORT_ACTOR = "hermes:gpt-5.6-luna:import-v2"
+IMPORT_ACTOR = "hermes:import-v2"
 
 
 class ArticleExtraction(Contract):
@@ -84,6 +84,18 @@ def validate_extraction(extraction: ArticleExtraction, pages: list[str], supplie
             extraction.warnings.append(f"Corrected PDF page {claimed_page} to {claim.page}")
 
 
+def validate_import_proposal(
+    proposal: ArticleExtraction,
+    pages: list[str],
+    supplied: dict,
+    validate: Callable[[ArticleExtraction], None] | None,
+) -> None:
+    """Apply exact import citation checks and optional additional source-boundary checks."""
+    validate_extraction(proposal, pages, supplied)
+    if validate is not None:
+        validate(proposal)
+
+
 def extract_document(
     pages: list[str],
     run_directory: Path,
@@ -91,9 +103,14 @@ def extract_document(
     instructions: str | None = None,
     configuration: ModelConfiguration | None = None,
     cancelled: Callable[[], bool] | None = None,
+    blocks_packet: dict | None = None,
+    validate: Callable[[ArticleExtraction], None] | None = None,
 ) -> list[ArticleExtraction]:
     """Extract one inspectable contribution per complete page chunk."""
-    prompt = instructions if instructions is not None else load_prompt("import")
+    if instructions is None:
+        instructions, default_configuration = operation_configuration("formulate_claims")
+        configuration = configuration or default_configuration
+    prompt = instructions
     proposals = []
     for chunk in page_chunks(pages):
         packet = json.dumps(
@@ -102,6 +119,7 @@ def extract_document(
                 "known_bibliography": proposals[0].bibliography.model_dump(mode="json")
                 if proposals
                 else None,
+                **({"information_blocks": blocks_packet} if blocks_packet is not None else {}),
             },
             ensure_ascii=False,
         )
@@ -110,7 +128,9 @@ def extract_document(
             packet,
             ArticleExtraction,
             run_directory / "proposals",
-            lambda result, supplied=chunk: validate_extraction(result, pages, supplied),
+            lambda result, supplied=chunk: validate_import_proposal(
+                result, pages, supplied, validate
+            ),
             configuration=configuration,
             cancelled=cancelled,
         )

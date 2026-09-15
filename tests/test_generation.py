@@ -132,3 +132,72 @@ def test_running_hermes_is_terminated_on_cancellation():
         wait_for_hermes(process, 30, lambda: True)
     process.terminate.assert_called_once()
     process.wait.assert_called_once_with(timeout=2)
+
+
+def test_provider_failure_records_inspectable_event_without_credentials(tmp_path, monkeypatch):
+    import subprocess
+
+    import pytest
+
+    def fail(arguments, **kwargs):
+        raise subprocess.CalledProcessError(1, arguments, stderr="SECRET_PROVIDER_TOKEN")
+
+    monkeypatch.setattr("knowledge.generation.subprocess.run", fail)
+    with pytest.raises(subprocess.CalledProcessError):
+        generate("Instructions", "Source", Proposal, tmp_path)
+    events = [
+        json.loads(line)
+        for path in tmp_path.glob("*/events.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    failure = next(event for event in events if event["event"] == "model_attempt_failed")
+    assert failure["error_type"] == "CalledProcessError"
+    assert failure["status"] == "failed"
+    assert failure["elapsed_seconds"] >= 0
+    assert "SECRET_PROVIDER_TOKEN" not in json.dumps(events)
+
+
+def test_reused_response_preserves_files_and_records_effective_provider(tmp_path, monkeypatch):
+    def respond(arguments, **kwargs):
+        Path(arguments[-1]).write_text(
+            json.dumps(
+                {
+                    "model": "actual-model",
+                    "provider": "actual-provider",
+                    "execution": "simulated",
+                    "response": '{"quote": "exact"}',
+                }
+            )
+        )
+
+    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    generate("Instructions", "Source", Proposal, tmp_path)
+    responses = {path: path.read_bytes() for path in tmp_path.glob("*/response-*.json")}
+    generate("Instructions", "Source", Proposal, tmp_path)
+    assert {path: path.read_bytes() for path in responses} == responses
+    events = [
+        json.loads(line)
+        for path in tmp_path.glob("*/events.jsonl")
+        for line in path.read_text().splitlines()
+    ]
+    result = next(event for event in events if event["event"] == "model_response")
+    assert result["model"] == "actual-model"
+    assert result["provider"] == "actual-provider"
+    assert result["response_origin"] == "simulated"
+    assert events[-1]["event"] == "model_cache_reused"
+
+
+def test_bridge_does_not_report_requested_model_as_verified_runtime():
+    from types import SimpleNamespace
+
+    from knowledge.hermes_bridge import run_request
+
+    agent = SimpleNamespace(
+        session_id="test-session",
+        run_conversation=lambda **kwargs: {"final_response": "{}"},
+    )
+    response = run_request(agent, {"input": "fixture", "instructions": "fixture"}, "a", "b")
+    assert response["model"] is None
+    assert response["provider"] is None
+    assert response["requested_model"] == "a"
+    assert response["requested_provider"] == "b"

@@ -13,6 +13,11 @@ from knowledge.contracts import Bibliography, ExtractedClaim, LegacySource
 from knowledge.storage import Database
 
 
+@pytest.fixture(autouse=True)
+def isolated_configuration(tmp_path, monkeypatch):
+    monkeypatch.setenv("KNOWLEDGE_CONFIGURATION_ROOT", str(tmp_path / "configuration"))
+
+
 @pytest.fixture
 def application():
     database_url = os.environ["KNOWLEDGE_TEST_DATABASE_URL"]

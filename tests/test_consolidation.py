@@ -311,7 +311,7 @@ def test_generation_cannot_cite_undelivered_evidence(
         records = ledger.list("pilot")
         target = ledger.get(imported["zettel"].entity_id)
 
-    def generate(instructions, packet, contract, output_directory, validate):
+    def generate(instructions, packet, contract, output_directory, validate, **kwargs):
         note = target.payload.model_copy(deep=True)
         note.references.append(other[2])
         note.body += f" Unsupported [{other[2].entity_id}@1]."
