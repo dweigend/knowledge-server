@@ -26,6 +26,8 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Install PDF rendering tools
+        run: sudo apt-get update && sudo apt-get install --yes poppler-utils
       - run: uv sync --locked
       - run: uv run --locked ruff check .
       - run: uv run --locked ruff format --check .

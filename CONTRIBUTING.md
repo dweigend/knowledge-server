@@ -4,6 +4,7 @@ Use Python 3.13 and `uv sync --locked`. Follow [AGENTS.md](AGENTS.md): short
 functions, explicit names, flat control flow and one responsibility per module.
 Reuse existing code before introducing dependencies or abstractions.
 
+Install Poppler (`pdftoppm`) for the synthetic PDF page-mapping tests.
 Configure an isolated PostgreSQL database through
 `KNOWLEDGE_TEST_DATABASE_URL`. Run the checks in the README before submitting
 a change. Keep source quotations, stored contracts and revision semantics
