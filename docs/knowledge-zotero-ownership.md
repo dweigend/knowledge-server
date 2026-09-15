@@ -10,6 +10,11 @@ to maintain editable paper summaries in the knowledge database. The
 [source-view contract](knowledge-source-view.md) still owns presentation, and
 the [extraction contract](knowledge-extraction.md) owns technical derivations.
 
+The [binding WebDAV decision](knowledge-webdav-sync.md) defines our own file
+server, continued Zotero.org data sync and official iPad access. WebDAV and local
+Zotero replicas implement storage and synchronization under this same ownership;
+they are not additional literature managers. Deployment remains pending.
+
 ## Zotero as a reference model
 
 Adopt Zotero's useful structural principles rather than copying its internal
