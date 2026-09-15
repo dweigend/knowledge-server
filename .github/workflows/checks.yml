@@ -1,0 +1,35 @@
+name: Checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: knowledge
+          POSTGRES_PASSWORD: test-only
+          POSTGRES_DB: knowledge_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      KNOWLEDGE_TEST_DATABASE_URL: "dbname=knowledge_test host=127.0.0.1 port=5432 user=knowledge password=test-only"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked ty check --exclude src/knowledge/hermes_bridge.py
+      - run: uv run --locked pytest
+      - run: uv build
+      - run: npx --yes markdownlint-cli2@0.22.0 '*.md' 'docs/**/*.md' 'deploy/*.md' 'skills/**/*.md'

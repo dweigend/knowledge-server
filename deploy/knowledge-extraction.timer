@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the knowledge document extraction queue
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=1min
+Unit=knowledge-extraction.service
+
+[Install]
+WantedBy=timers.target

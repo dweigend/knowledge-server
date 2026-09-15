@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Testprotokolle</title></head>
+<body>
+<p><a href="/">Wissensdatenbank</a> · <a href="/runs">Alle Testläufe</a></p>
+<h1>{{ name or "Testprotokolle" }}</h1>
+{% for run in runs %}<p><a href="/runs/{{ run }}">{{ run }}</a></p>{% endfor %}
+{% for event in events %}
+<article>
+<h2>{{ event.event }}</h2>
+<p>{{ event.time }}</p>
+<pre>{{ event | tojson(indent=2) }}</pre>
+</article>
+{% endfor %}
+</body>
+</html>

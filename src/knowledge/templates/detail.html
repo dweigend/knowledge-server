@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<title>{{ record.kind }} · Wissen</title>
+<p><a href="/?batch={{ record.batch_id }}">Übersicht</a></p>
+<h1>{{ record.kind }} · {{ status }}</h1>
+<p>Revision {{ record.revision }} · {{ record.actor }} · {{ record.created_at }}</p>
+{% if record.kind == 'note' %}
+  <h2>{{ payload.title }}</h2>
+  {% for paragraph in payload.body.split('\n\n') %}
+    {% if paragraph.startswith('## ') %}
+      <h3>{{ paragraph[3:] }}</h3>
+    {% else %}
+      <p>{{ paragraph | citation_links }}</p>
+    {% endif %}
+  {% endfor %}
+{% elif record.kind == 'claim' %}
+  <h2>{{ payload.proposition }}</h2>
+  <p>{{ payload.scope }}</p>
+  <p>{{ payload.qualifications }}</p>
+{% elif record.kind == 'evidence' %}
+  <h2>{{ payload.relation }}</h2>
+  <blockquote>
+    <pre>{{ payload.quote }}</pre>
+  </blockquote>
+  <p>Originalseite {{ payload.page }}</p>
+  {% if payload.extraction_revision %}<p><a href="/records/{{ payload.source.entity_id }}?revision={{ payload.source.revision }}&amp;extraction_revision={{ payload.extraction_revision }}#block-{{ payload.block_id }}">Zitierter Dokumentabschnitt</a></p>{% endif %}
+  <p>{{ payload.rationale }}</p>
+  <p>{{ payload.methodology }}</p>
+  <p>{{ payload.limitations }}</p>
+{% elif record.kind == 'assessment' %}
+  <h2>{{ payload.balance }} · {{ payload.confidence }}</h2>
+  <p>{{ payload.rationale }}</p>
+  <h3>Abdeckung</h3>
+  <p>{{ payload.coverage }}</p>
+  <h3>Grenzen</h3>
+  <p>{{ payload.limitations }}</p>
+{% endif %}
+<h2>Belege und Abhängigkeiten</h2>
+<ul>
+  {% for dependency in dependencies %}
+    <li>
+      <a href="/records/{{ dependency.entity_id }}?revision={{ dependency.revision }}">
+        {% if dependency.kind == 'source' %}
+          {{ literature[dependency.entity_id|string].title }}
+        {% elif dependency.kind == 'claim' %}
+          {{ dependency.payload.proposition }}
+        {% elif dependency.kind == 'evidence' %}
+          {{ dependency.payload.quote[:120] }}
+        {% elif dependency.kind == 'note' %}
+          {{ dependency.payload.title }}
+        {% else %}
+          Bewertung: {{ dependency.payload.rationale[:120] }}
+        {% endif %}
+        · Revision {{ dependency.revision }}
+      </a>
+      {% if dependency.kind == 'evidence' %}
+        · {{ dependency.payload.relation }} · Originalseite {{ dependency.payload.page }}
+      {% endif %}
+    </li>
+  {% endfor %}
+</ul>
+{% if related %}
+  <h2>Bewertungen und sämtliche Belegrelationen</h2>
+  <ul>
+    {% for candidate in related %}
+      <li>
+        <a href="/records/{{ candidate.entity_id }}">{{ candidate.kind }} · {{ candidate.entity_id }}</a>
+      </li>
+    {% endfor %}
+  </ul>
+{% endif %}
+<details>
+  <summary>Vollständiger Datensatz</summary>
+  <pre>{{ payload_json }}</pre>
+</details>
+{% if record.kind != 'review' %}
+  <h2>Qualität prüfen</h2>
+  <form method="post" action="/records/{{ record.entity_id }}/review">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="request_id" value="review:{{ request_id }}">
+    <input type="hidden" name="revision" value="{{ record.revision }}">
+    <label>Entscheidung
+      <select name="verdict">
+        <option value="revise">Überarbeiten</option>
+        <option value="reviewed">Geprüft</option>
+        <option value="rejected">Ablehnen</option>
+      </select>
+    </label>
+    <p><label>Begründung / Qualitätsfeedback<br><textarea name="comment" rows="4" cols="85" required></textarea></label></p>
+    <button>Prüfung speichern</button>
+  </form>
+{% endif %}
+{% if record.kind in ['note', 'assessment'] %}
+  <details>
+    <summary>Vorschlag bearbeiten (JSON)</summary>
+    <form method="post" action="/records/{{ record.entity_id }}/edit">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="request_id" value="edit:{{ request_id }}">
+      <input type="hidden" name="revision" value="{{ record.revision }}">
+      <textarea name="content" rows="22" cols="100" required>{{ payload_json }}</textarea>
+      <p><button>Neue Revision speichern</button></p>
+    </form>
+  </details>
+{% endif %}
+<h2>Prüfverlauf</h2>
+<ul>
+  {% for decision in decisions %}
+    <li>{{ decision.created_at }} · {{ decision.actor }} · {{ decision.payload.verdict }}: {{ decision.payload.comment }}</li>
+  {% endfor %}
+</ul>
+<h2>Revisionen</h2>
+<ul>
+  {% for version in history %}
+    <li>
+      <a href="/records/{{ record.entity_id }}?revision={{ version.revision }}">Revision {{ version.revision }}</a> · {{ version.created_at }}
+    </li>
+  {% endfor %}
+</ul>
+</html>

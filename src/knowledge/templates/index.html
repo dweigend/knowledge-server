@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<title>Wissensdatenbank · Test</title>
+<h1>Wissensdatenbank · Test</h1>
+<p><a href="/runs">Testprotokolle</a></p>
+<p>Luna-Vorschläge aus einem begrenzten Quellenkorpus. Geprüft bedeutet nicht wahr.</p>
+<form method="get">
+  <label>Testlauf
+    <select name="batch">
+      {% for entry in batches %}
+        <option value="{{ entry.batch_id }}" {% if entry.batch_id == batch %}selected{% endif %}>{{ entry.title }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Suche <input name="q" value="{{ q }}"></label>
+  <button>Suchen</button>
+</form>
+{% for kind, label in [('source','Quellen und PDFs'),('note','Zettel und Wiki'),('claim','Behauptungen'),('evidence','Belege'),('assessment','Bewertungen')] %}
+  <h2>{{ label }}</h2>
+  <ul>
+    {% for entry in entries if entry.record.kind == kind %}
+      {% set payload = entry.record.payload %}
+      <li>
+        <a href="/records/{{ entry.record.entity_id }}">
+          {% if kind == 'source' %}
+            {{ literature[entry.record.entity_id|string].title }}
+          {% elif kind == 'note' %}
+            [{{ payload.kind }}] {{ payload.title }}
+          {% elif kind == 'claim' %}
+            {{ payload.proposition }}
+          {% elif kind == 'evidence' %}
+            [{{ payload.relation }}] {{ payload.quote[:150] }}
+          {% else %}
+            {{ payload.balance }} · {{ payload.confidence }} · {{ payload.rationale[:150] }}
+          {% endif %}
+        </a> — {{ entry.status }}
+      </li>
+    {% endfor %}
+  </ul>
+{% endfor %}
+</html>

@@ -1,0 +1,65 @@
+[project]
+name = "hermes-knowledge"
+version = "0.1.0"
+description = "A self-hosted, revisioned knowledge system with Zotero sources and evidence review"
+readme = "README.md"
+license = "MIT"
+authors = [{name = "David Weigend"}]
+classifiers = ["Development Status :: 3 - Alpha", "Programming Language :: Python :: 3"]
+
+requires-python = ">=3.13"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "uvicorn>=0.35,<1",
+  "pydantic>=2.11,<3",
+  "psycopg[binary]>=3.2,<4",
+  "jinja2>=3.1,<4",
+  "pypdf>=6.0,<7",
+  "python-multipart>=0.0.20,<1",
+]
+
+[project.urls]
+Repository = "https://github.com/dweigend/knowledge-server"
+Issues = "https://github.com/dweigend/knowledge-server/issues"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.12", "ty>=0.0.1"]
+extraction = ["docling==2.127.0", "marker-pdf==2.0.0", "torch", "torchvision"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[project.scripts]
+knowledge = "knowledge.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/knowledge"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+  "E", "F", "I", "UP", "B", "C901",
+  "D100", "D101", "D102", "D103", "D107", "D200", "D205", "D209", "D400",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["D100", "D101", "D102", "D103", "D107"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

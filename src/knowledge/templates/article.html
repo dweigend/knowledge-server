@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ citation.title }} · Wissen</title>
+<p><a href="/?batch={{ record.batch_id }}">Übersicht</a></p>
+{% macro cell_content(cell) %}
+  {% if cell.runs|default([]) %}
+    {% for run in cell.runs %}{% if run.script == 'sup' %}<sup>{{ run.text }}</sup>{% elif run.script == 'sub' %}<sub>{{ run.text }}</sub>{% else %}{{ run.text }}{% endif %}{% endfor %}
+  {% else %}{{ cell.text }}{% endif %}
+{% endmacro %}
+<article>
+<header>
+  <h1>{{ citation.title }}</h1>
+  {% if citation.error %}<p role="alert">Zotero-Angaben nicht verfügbar: {{ citation.error }}. Die gespeicherten Quellenstellen bleiben lesbar.</p>{% endif %}
+  <p>{{ citation.authors|default([])|join(', ') or 'Autoren in Zotero nicht angegeben' }}</p>
+  <p>{{ citation.year or 'Datum nicht angegeben' }} · {{ citation.venue or 'Publikationsort nicht angegeben' }}</p>
+  <p>Dokumentversion: {{ citation.version or 'In Zotero nicht bezeichnet' }}. Angezeigt wird die hinterlegte PDF-Fassung.</p>
+  <p><a href="/sources/{{ record.entity_id }}/original/view?revision={{ record.revision }}">Original-PDF lesen</a> · <a href="/sources/{{ record.entity_id }}/clean/view?revision={{ record.revision }}">Bereinigtes PDF lesen</a>{% if zotero_url %} · <a href="{{ zotero_url }}">In Zotero öffnen</a>{% endif %}</p>
+</header>
+<section aria-labelledby="citation-heading">
+  <h2 id="citation-heading">Zitieren</h2>
+  <p>Aktuelle Angaben aus Zotero; sie können von einer früher zitierten Dokumentfassung abweichen.</p>
+  {% if citation.text %}
+    <p id="citation-text">{{ citation.text }}</p>
+    <button type="button" id="copy-citation">Zitation kopieren</button>
+    <span id="copy-result" role="status"></span>
+  {% else %}<p>Zitationsformat nicht verfügbar.</p>{% endif %}
+  <p>{% if citation.doi_url %}<a href="{{ citation.doi_url }}">DOI</a>{% endif %} {% if citation.publisher_url %}<a href="{{ citation.publisher_url }}">Veröffentlichungsseite</a>{% endif %}</p>
+  <details><summary>BibTeX aus Zotero</summary><pre>{{ citation.bibtex or 'BibTeX nicht verfügbar.' }}</pre></details>
+</section>
+{% if processing and processing.state == 'failed' %}
+  <p role="alert">Die letzte Extraktion ist fehlgeschlagen. Vorhandene frühere Inhalte bleiben lesbar; Details unten.</p>
+{% elif processing and processing.state in ['queued', 'running'] %}
+  <p>Dokumentaufbereitung {{ 'läuft' if processing.state == 'running' else 'wartet auf Verarbeitung' }}.</p>
+{% endif %}
+{% if not snapshot %}
+  <p role="alert">Noch nicht strukturiert extrahiert. Abstract, Tabellen, Abbildungen und Referenzen sind noch nicht aufbereitet; bitte das PDF lesen.</p>
+{% else %}
+  {% for issue in snapshot.issues %}<p role="alert">{{ issue }}</p>{% endfor %}
+{% endif %}
+<section aria-labelledby="abstract-heading">
+  <h2 id="abstract-heading">Originalabstract</h2>
+  {% for entry in blocks if entry.block.kind == 'abstract' %}
+    <div id="block-{{ entry.block.id }}">{% for issue in entry.block.issues %}<p role="alert">{{ issue }}</p>{% endfor %}<p>{{ entry.html_text }}</p>{% if entry.pdf_url %}<a href="{{ entry.pdf_url }}">Originalseite {{ entry.block.page }}</a>{% endif %}</div>
+  {% else %}<p>Kein gesondert extrahiertes Originalabstract verfügbar.</p>{% endfor %}
+</section>
+<section aria-labelledby="overview-heading">
+  <h2 id="overview-heading">Geprüfte KI-Kurzfassung</h2>
+  {% for entry in knowledge if entry.overview %}
+    {% for paragraph in entry.record.payload.body.split('\n\n') %}<p>{{ paragraph|citation_links }}</p>{% endfor %}
+    <p><a href="/records/{{ entry.record.entity_id }}?revision={{ entry.record.revision }}">Kurzfassung und Prüfverlauf</a></p>
+  {% else %}<p>Noch keine geprüfte Kurzfassung mit absatzweisen Quellenbelegen vorhanden.</p>{% endfor %}
+</section>
+<section aria-labelledby="authors-heading">
+  <h2 id="authors-heading">Autoren und Affiliationen im Dokument</h2>
+  {% for entry in relationships if entry.relationship.kind == 'affiliation' %}
+    <p>{% if entry.origin %}<a href="#block-{{ entry.origin.id }}">{{ entry.relationship.origin_text or entry.origin.text }}</a>{% else %}Autorenzuordnung offen{% endif %} → {% if entry.target %}<a href="#block-{{ entry.target.id }}">{{ entry.relationship.target_text or entry.target.text }}</a>{% else %}Institution nicht zugeordnet{% endif %}{% if not entry.relationship.verified %} · Zuordnung ungeprüft{% endif %}</p>
+  {% else %}<p>Autor-zu-Institution-Zuordnung noch nicht verlässlich extrahiert.</p>{% endfor %}
+</section>
+<nav aria-label="Dokumentgliederung">
+  <h2>Gliederung</h2>
+  {% if outline %}
+    <ul>
+    {% for entry in outline recursive %}
+      <li>
+        <a href="#block-{{ entry.block.id }}">{{ entry.block.text }}</a>
+        {% if entry.children %}<ul>{{ loop(entry.children) }}</ul>{% endif %}
+      </li>
+    {% endfor %}
+    </ul>
+  {% else %}<p>Keine verlässliche Gliederung extrahiert.</p>{% endif %}
+</nav>
+<section aria-labelledby="content-heading">
+  <h2 id="content-heading">Dokumentinhalt</h2>
+  {% for entry in blocks if entry.block.kind not in ['abstract', 'reference', 'furniture'] %}
+    {% set block = entry.block %}
+    <section id="block-{{ block.id }}">
+      {% for issue in block.issues %}<p role="alert">{{ issue }}</p>{% endfor %}
+      {% if block.kind in ['heading', 'section_header'] %}
+        <h{{ entry.heading_level }}>{{ block.text }}</h{{ entry.heading_level }}>
+      {% elif block.kind in ['table', 'figure', 'picture'] %}
+        <figure>
+          <figcaption>{{ block.label or ('Tabelle' if block.kind == 'table' else 'Abbildung') }}{% if block.caption %}: {{ block.caption }}{% endif %}</figcaption>
+          {% if block.page %}<a href="{{ entry.pdf_url }}"><img src="/sources/{{ record.entity_id }}/previews/{{ block.id }}?revision={{ record.revision }}&amp;extraction_revision={{ snapshot.revision }}" alt="Originalausschnitt: {{ block.label or block.kind }}" loading="lazy" width="600"></a>{% else %}<p>Originalvorschau ohne verlässliche Seitenposition nicht verfügbar.</p>{% endif %}
+          {% if block.kind == 'table' and block.cells %}
+            <table>
+              <caption>{{ block.caption or block.label }}</caption>
+              {% for row in entry.table_rows %}<tr>{% for cell in row %}{% if cell.header or cell.row_header %}<th rowspan="{{ cell.row_span }}" colspan="{{ cell.column_span }}" scope="{{ 'row' if cell.row_header else 'col' }}">{{ cell_content(cell) }}</th>{% else %}<td rowspan="{{ cell.row_span }}" colspan="{{ cell.column_span }}">{{ cell_content(cell) }}</td>{% endif %}{% endfor %}</tr>{% endfor %}
+            </table>
+          {% elif block.kind == 'table' %}<p role="alert">Tabellenstruktur nicht verfügbar. Werte bitte im Original prüfen.</p>{% endif %}
+          {% for caption_id in block.caption_ids %}<p><a href="#block-{{ caption_id }}">Originalbeschriftung</a></p>{% endfor %}
+          {% for footnote_id in block.footnote_ids %}<p><a href="#block-{{ footnote_id }}">Tabellenfußnote</a></p>{% endfor %}
+        </figure>
+      {% else %}
+        {% for paragraph in entry.html_text.split('\n\n') %}<p>{{ paragraph }}</p>{% endfor %}
+      {% endif %}
+      {% if entry.pdf_url %}<p><a href="{{ entry.pdf_url }}">Originalseite {{ block.page }}</a>{% if entry.clean_url %} · <a href="{{ entry.clean_url }}">Dieselbe Stelle im bereinigten PDF</a>{% endif %}</p>{% else %}<p>Quellenposition nicht zuverlässig bestimmt.</p>{% endif %}
+      {% if entry.locations|length > 1 %}<p>Weitere Quellenausschnitte: {% for location in entry.locations %}<a href="{{ location.url }}">Originalseite {{ location.page }}</a> {% endfor %}</p>{% endif %}
+      {% for link in relationships if link.relationship.kind == 'citation' and link.relationship.from_id == block.id and not link.relationship.verified %}<p>Literaturverweis nicht sicher aufgelöst: {{ link.relationship.text }}</p>{% endfor %}
+    </section>
+  {% endfor %}
+</section>
+<section aria-labelledby="references-heading">
+  <h2 id="references-heading">Literaturverzeichnis des Dokuments</h2>
+  <ol>
+    {% for entry in blocks if entry.block.kind == 'reference' %}
+      <li id="block-{{ entry.block.id }}">
+        <p>{{ entry.html_text }}</p>
+        {% for issue in entry.block.issues %}<p role="alert">{{ issue }}</p>{% endfor %}
+        {% if entry.pdf_url %}<a href="{{ entry.pdf_url }}">Originalseite {{ entry.block.page }}</a>{% else %}Quellenposition nicht zuverlässig bestimmt.{% endif %}
+      </li>
+    {% else %}<li>Referenzeinträge noch nicht zuverlässig extrahiert.</li>{% endfor %}
+  </ol>
+</section>
+<section aria-labelledby="knowledge-heading">
+  <h2 id="knowledge-heading">Verknüpftes Wissen</h2>
+  <ul>{% for entry in knowledge %}<li><a href="/records/{{ entry.record.entity_id }}?revision={{ entry.record.revision }}">{{ entry.title }}</a>{% if entry.record.payload.kind is defined and entry.record.payload.kind == 'source' and not entry.overview %} · Kurzfassung muss auf Quellenbelege geprüft werden{% endif %}</li>{% else %}<li>Noch keine verknüpften Wissenseinträge.</li>{% endfor %}</ul>
+</section>
+<details>
+  <summary>Technische Details und historische Zitattexte</summary>
+  {% if processing %}<p>Verarbeitung: {{ processing.state }}</p>{% if processing.error %}<pre>{{ processing.error }}</pre>{% endif %}{% endif %}
+  <p>Quellenrevision {{ record.revision }} · {{ record.actor }} · {{ record.created_at }}</p>
+  {% if snapshot %}<p>Extraktionsrevision {{ snapshot.revision }} · {{ snapshot.method }}</p><pre>{{ snapshot.model_dump_json(indent=2) }}</pre>{% endif %}
+  {% if record.payload.bibliography is defined %}<details><summary>Historische Literaturangaben (unveränderlich)</summary><pre>{{ record.payload.bibliography.model_dump_json(indent=2) }}</pre></details>{% endif %}
+  <p>Die folgenden alten Seitentexte bleiben ausschließlich zur Nachvollziehbarkeit vorhandener Zitate erhalten.</p>
+  {% for page in record.payload.pages %}<details><summary>Historischer Zitattext: Originalseite {{ loop.index }}</summary><pre>{{ page }}</pre></details>{% endfor %}
+  <p>Quellenrevisionen: {% for revision in history %}<a href="/records/{{ record.entity_id }}?revision={{ revision }}">{{ revision }}</a> {% endfor %}</p>
+</details>
+</article>
+<script>
+const copyButton = document.getElementById('copy-citation');
+copyButton?.addEventListener('click', async () => {
+  const result = document.getElementById('copy-result');
+  try {
+    await navigator.clipboard.writeText(document.getElementById('citation-text').textContent);
+    result.textContent = 'Kopiert.';
+  } catch {
+    result.textContent = 'Bitte den Zitationstext markieren und kopieren.';
+  }
+});
+</script>
+</html>

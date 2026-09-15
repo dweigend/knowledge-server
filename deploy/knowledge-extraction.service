@@ -1,0 +1,13 @@
+[Unit]
+Description=Knowledge document extraction queue
+
+[Service]
+EnvironmentFile=%h/.config/knowledge-server/environment
+Type=simple
+WorkingDirectory=%h/projects/knowledge-server
+Environment=KNOWLEDGE_EXTRACTION_UNIT=knowledge-extraction.service
+ExecStart=%h/projects/knowledge-server/.venv/bin/knowledge extract-worker
+TimeoutStartSec=infinity
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true

@@ -1,0 +1,2 @@
+# Preserve the official distribution, including whitespace in upstream licenses.
+** -whitespace linguist-vendored=true

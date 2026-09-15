@@ -1,0 +1,9 @@
+Mozilla PDF.js 6.3.289, prebuilt legacy distribution.
+Source: https://github.com/mozilla/pdf.js/releases/tag/v6.3.289
+Archive: pdfjs-6.3.289-legacy-dist.zip
+SHA-256: 51683fac4aff7dd31ed91e9ab735a2098a78d50899d1ec529aed6dc8aa19400d
+License: Apache-2.0; see LICENSE and notices in bundled files.
+
+Source maps and the demonstration PDF are omitted. Runtime files are unchanged.
+The application supplies its own source navigation and pinned PDF URL wrapper.
+This directory contains viewer code and fonts, never user literature or PDFs.

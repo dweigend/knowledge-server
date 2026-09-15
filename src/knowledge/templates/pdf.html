@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="de">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF · Wissen</title>
+<p>
+  <a href="/records/{{ record.entity_id }}?revision={{ record.revision }}{% if extraction_revision %}&amp;extraction_revision={{ extraction_revision }}{% endif %}">Zur Quelle</a>
+  · <a href="{{ pdf_url }}" download="source-{{ record.entity_id }}.pdf">PDF herunterladen</a>
+</p>
+<iframe
+  title="PDF-Vorschau"
+  src="/pdf-viewer/web/viewer.html?file={{ encoded_pdf_url }}#page={{ page }}"
+  width="100%"
+  height="900"
+></iframe>
+<noscript>Die PDF-Vorschau benötigt JavaScript. Alternativ kannst du das PDF herunterladen.</noscript>
