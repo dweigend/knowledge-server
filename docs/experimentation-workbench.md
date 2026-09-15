@@ -98,12 +98,16 @@ because execution finished.
 
 Extraction records Poppler pages and source revisions, including readable short
 PDFs. Segmentation offers model and deterministic paragraph modes, both with
-exact spans. Selection retains inclusion/exclusion rationale and retrieved
+exact spans. Paragraph mode is a literal technical baseline: it ignores the
+model prompt and splits text at paragraphs and the configured character limit.
+It does not identify logical units or filter page numbers, running headers and
+other document furniture. These outputs are not semantic information blocks.
+Selection retains inclusion/exclusion rationale and retrieved
 revisions; proposed changes use existing claim and note contracts. Writing
 retains block citations and requires explicit author rules for prose.
 
 `pipeline_steps.py` assembles these functions and validates typed step results.
-`experimentation.py` owns attempt lifecycle, dependency resolution and reviews;
+`experimentation.py` owns attempt lifecycle and dependency resolution;
 `experiment_store.py` owns private files, locks and hashes. `experiment_web.py`
 and `experiment_cli.py` are entry points to the same runner. `generation.py`
 and `hermes_bridge.py` remain the model/runtime boundary. No second agent loop
@@ -164,7 +168,7 @@ sequenceDiagram
   end
   Domain-->>Runner: Validated result or validation error
   Runner-->>UI: Persist immutable terminal record and trace
-  Human->>UI: Refresh, inspect, assess or rerun
+  Human->>UI: Refresh, inspect or rerun
 ```
 
 The adapter supports tool-free Hermes requests. Unsupported tools and monetary
@@ -202,6 +206,10 @@ written outside the run directory also survive. Cleanup only removes owned
 files, records partial failure separately and permits retry. Legacy first-slice
 runs can be exported/deleted; recreate a source to use immutable attempts.
 
+The MVP has no human-rating form or review API. Earlier private review files
+remain untouched until their experiment is deleted; new attempt views and
+exports omit them. Previously exported reports remain unchanged.
+
 Attempt records pin source, knowledge and input hashes, recipe/prompt/rules,
 output schema, Git commit and dirty source hash. The runner rejects disk code
 changes when they no longer match the loaded process; restart the development
@@ -212,7 +220,7 @@ forms to obtain a fresh form token.
 
 Automated coverage includes exact spans, tampered inputs/results, coherent
 dependency lineage, stale propagation, actual subprocess cancellation/timeouts,
-recovery, cleanup retries, optimistic configuration/review revisions, form
+recovery, cleanup retries, optimistic configuration revisions, form
 protection and shared main/workbench domain calls. Database tests require the
 isolated test database described in `AGENTS.md`; fixtures isolate the private
 configuration registry too. Model test doubles validate integration, not quality.

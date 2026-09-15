@@ -14,7 +14,6 @@
         <details><summary>Input revisions & configuration</summary><pre>{{ attempt.inputs|tojson(indent=2) }}</pre><pre>{{ attempt.recipe|tojson(indent=2) }}</pre></details>
         {% if attempt.error %}<p class="error">{{ attempt.error }}</p>{% endif %}
         <div class="step-result">{% set result = attempt.output %}{% include 'experiment_result.html' %}</div>
-        {% if attempt.reviews %}<h3>Human assessment</h3><dl>{% for name, rating in attempt.reviews[-1].ratings.items() %}<dt>{{ name }}</dt><dd>{{ rating }}</dd>{% endfor %}</dl><p>{{ attempt.reviews[-1].comment }}</p>{% else %}<p class="caption">Not assessed. Record human judgments in the attempt inspector.</p>{% endif %}
       </article>
       {% endfor %}
     </div>

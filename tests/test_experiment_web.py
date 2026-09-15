@@ -68,7 +68,7 @@ def test_pages_render_without_template_syntax_or_model_requests(workbench):
     assert token
 
 
-def test_manual_pdf_blocks_history_comparison_review_and_cleanup(workbench):
+def test_manual_pdf_blocks_history_comparison_and_cleanup(workbench):
     client, root, token = workbench
     run_id = source(client, token)
     base = f"/experiments/{run_id}"
@@ -84,18 +84,6 @@ def test_manual_pdf_blocks_history_comparison_review_and_cleanup(workbench):
     inspect = f"{base}/attempts/{blocks['id']}"
     assert client.get(inspect).status_code == 200
     assert client.get("/experiments/compare?step=segment_blocks").status_code == 200
-    reviewed = client.post(
-        f"{inspect}/review",
-        data={
-            "csrf": token,
-            "expected_revision": "0",
-            "usefulness": "good",
-            "faithfulness": "good",
-            "tone": "not_applicable",
-            "comment": "Independently checked exact fixture text.",
-        },
-    )
-    assert reviewed.status_code == 200, reviewed.text
     report = client.get(f"{base}/export").json()
     assert report
     saved_before = get_revision("recipe", "segment_blocks")
@@ -239,16 +227,6 @@ def test_invalid_model_recipe_or_parameters_do_not_leave_prompt_drafts(workbench
     assert response.status_code in {404, 422}, response.text
     assert get_revision("recipe", "extract_text") == before
     assert get_revision("prompt", recipe.prompt_name) == prompt_before
-
-
-def test_missing_review_fields_return_validation_error(workbench):
-    client, _, token = workbench
-    run_id = source(client, token)
-    response = client.post(
-        f"/experiments/{run_id}/attempts/{'0' * 32}/review", data={"csrf": token}
-    )
-    assert response.status_code == 422
-    assert "Missing required form field: usefulness" in response.text
 
 
 def test_legacy_source_remains_readable_and_does_not_break_comparison(workbench):

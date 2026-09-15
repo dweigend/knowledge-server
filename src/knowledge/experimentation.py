@@ -15,7 +15,6 @@ from knowledge.experiment_contracts import (
     AttemptResult,
     AttemptState,
     ExperimentManifest,
-    HumanReview,
 )
 from knowledge.experiment_store import (
     LOADED_CODE,
@@ -88,11 +87,6 @@ def read_attempts(archive_root: Path, experiment_id: str) -> list[dict]:
                 reasons.append(f"Newer successful input available for {step}")
         attempt["stale"] = bool(reasons)
         attempt["stale_reason"] = "; ".join(reasons)
-        path = attempt_directory(directory, attempt["id"])
-        attempt["reviews"] = [
-            json.loads(file.read_text())
-            for file in sorted((path / "reviews").glob("*.json"), key=lambda file: int(file.stem))
-        ]
     return attempts
 
 
@@ -438,28 +432,6 @@ def delete_experiment(archive_root: Path, experiment_id: str) -> None:
 def _cleanup_path(archive_root: Path, experiment_id: str) -> Path:
     validate_id(experiment_id)
     return experiments_root(archive_root) / ".cleanup" / f"{experiment_id}.json"
-
-
-def save_review(
-    archive_root: Path,
-    experiment_id: str,
-    attempt_id: str,
-    ratings: dict[str, str],
-    comment: str,
-    expected_revision: int = 0,
-) -> dict:
-    """Append human evaluation independently of output and automated validation."""
-    with experiment_lock(archive_root, experiment_id):
-        directory = experiment_directory(archive_root, experiment_id)
-        path = attempt_directory(directory, attempt_id) / "reviews"
-        current = max((int(file.stem) for file in path.glob("*.json")), default=0)
-        if current != expected_revision:
-            raise Conflict("Human review changed; reload before saving another revision")
-        review = HumanReview(
-            revision=current + 1, created_at=now(), ratings=ratings, comment=comment
-        )
-        atomic_json(path / f"{review.revision}.json", review.model_dump(mode="json"))
-        return review.model_dump(mode="json")
 
 
 def read_attempt_trace(archive_root: Path, experiment_id: str, attempt_id: str) -> list[dict]:

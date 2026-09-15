@@ -421,24 +421,12 @@ def experiment_router(  # noqa: C901
     async def attempt_action(
         request: Request, run_id: str, attempt_id: str, action: str
     ) -> RedirectResponse:
-        """Cancel, recover or review an attempt without approving generated knowledge."""
-        form = await checked_form(request, csrf_token)
+        """Cancel or recover an attempt without approving generated knowledge."""
+        await checked_form(request, csrf_token)
         if action == "cancel":
             experiments.request_cancel(root, run_id, attempt_id)
         elif action == "recover":
             experiments.recover_attempt(root, run_id, attempt_id)
-        elif action == "review":
-            ratings = {
-                name: required_text(form, name) for name in ("usefulness", "faithfulness", "tone")
-            }
-            experiments.save_review(
-                root,
-                run_id,
-                attempt_id,
-                ratings,
-                required_text(form, "comment", allow_empty=True),
-                int(required_text(form, "expected_revision")),
-            )
         else:
             raise ValueError("Unknown attempt action")
         return RedirectResponse(f"/experiments/{run_id}/attempts/{attempt_id}", 303)

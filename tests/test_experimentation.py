@@ -257,19 +257,6 @@ def test_recovery_preserves_abandoned_attempt_and_allows_new_attempt(experiment:
     assert experiments.read_attempts(*experiment)[0]["id"] == attempt_id
 
 
-def test_review_revisions_do_not_modify_results_or_automated_checks(experiment: tuple[Path, str]):
-    result = run(experiment, "extract_text")
-    review = experiments.save_review(
-        *experiment, result["id"], {"source_fidelity": "checked"}, "Manually checked"
-    )
-    assert review["revision"] == 1
-    with pytest.raises(Conflict, match="review changed"):
-        experiments.save_review(*experiment, result["id"], {}, "Outdated submission")
-    updated = experiments.read_attempts(*experiment)[0]
-    assert updated["output"] == result["output"]
-    assert updated["reviews"] == [review]
-
-
 def test_cleanup_is_isolated_idempotent_and_preserves_saved_recipes(experiment: tuple[Path, str]):
     other = experiments.create_experiment(experiment[0], "other.pdf", fixture_pdf())
     result = run(experiment, "extract_text")

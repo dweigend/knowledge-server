@@ -1,4 +1,4 @@
-"""Describe immutable experiment inputs separately from execution and human review."""
+"""Describe immutable experiment inputs and execution outcomes."""
 
 from typing import Literal
 
@@ -69,12 +69,3 @@ class AttemptResult(ExperimentDocument):
     output: dict[str, JsonValue] | None = None
     output_hash: str | None = None
     error: str | None = None
-
-
-class HumanReview(ExperimentDocument):
-    """Keep subjective ratings separate from automated source and schema checks."""
-
-    revision: int = Field(ge=1)
-    created_at: str
-    ratings: dict[str, str]
-    comment: str
