@@ -65,3 +65,16 @@ configuration, and compare output against manually checked source passages,
 tables and footnotes. Do not infer accuracy across a corpus from one successful
 page, tool agreement or schema validation. Published quality claims require
 shareable fixtures and reproducible results.
+
+## Retained pilot records
+
+- [Consolidation experiment](knowledge-consolidation-test.md): observed failures,
+  limited synthesis results and the next useful evaluation.
+- [Source-view implementation record](knowledge-source-view-implementation.md):
+  reuse decisions and the still-incomplete extraction acceptance.
+
+Machine-specific runbooks, intake artifacts and recovery material belong in the
+ignored `.local/migrated-server-state/` directory on the original maintainer's
+checkout. They are not required to install or contribute to this project and
+are not distributed on GitHub. The former server setup repository retains only
+one project pointer.
