@@ -1,5 +1,8 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 import knowledge.model_integration.prompt_registry as prompt_registry
 import knowledge.revision_store.postgresql_revision_store as database
 import knowledge.system_maintenance.backup_and_restore as backup
@@ -9,12 +12,16 @@ from knowledge.runtime_support.environment_settings import Settings
 
 def test_settings_use_configured_locations(tmp_path, monkeypatch):
     monkeypatch.setenv("KNOWLEDGE_DATABASE_URL", "dbname=example")
-    monkeypatch.setenv("KNOWLEDGE_ARCHIVE_ROOT", str(tmp_path / "archive"))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("KNOWLEDGE_ARCHIVE_ROOT", "archive")
 
-    settings = Settings.from_environment()
+    settings = Settings()
 
     assert settings.database_url == "dbname=example"
     assert settings.archive_root == tmp_path / "archive"
+    monkeypatch.delenv("KNOWLEDGE_DATABASE_URL")
+    with pytest.raises(ValidationError, match="database_url"):
+        Settings()
 
 
 def test_postgres_utilities_default_to_path(monkeypatch):
