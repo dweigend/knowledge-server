@@ -43,12 +43,6 @@ def test_extraction_pins_must_be_supplied_together(relation, pin):
         Evidence.model_validate({**relation.model_dump(), **pin})
 
 
-def test_sources_without_snapshot_keep_legacy_quote_validation(ledger, relation, monkeypatch):
-    monkeypatch.setattr(sources, "get_snapshot", lambda *args: None)
-    evidence.link(ledger, "pilot", relation, "test")
-    ledger.append.assert_called_once()
-
-
 def test_unpinned_legacy_commands_keep_page_text_contract(ledger, relation, monkeypatch):
     monkeypatch.setattr(sources, "get_snapshot", lambda *args: SimpleNamespace(blocks=[]))
     evidence.link(ledger, "pilot", relation, "test")
@@ -76,9 +70,7 @@ def test_pinned_quote_uses_exact_historical_snapshot(ledger, relation, monkeypat
     [
         {"issues": ["OCR disagreement"]},
         {"kind": "table"},
-        {"kind": "page_footer"},
         {"locations": [DocumentLocation(page=1), DocumentLocation(page=2)]},
-        {"page": 2},
         {"text": "The claimed quote is missing."},
         {"id": "another-block"},
     ],

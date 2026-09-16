@@ -145,7 +145,8 @@ def validate_response[T: models.Contract](
     """Validate a response or add its errors to the request for the repair attempt."""
     try:
         proposal = contract.model_validate_json(response)
-        validate_proposal(proposal, validate)
+        if validate is not None:
+            validate(proposal)
         return proposal
     except ValueError as error:
         if errors is not None:
@@ -161,15 +162,6 @@ def validate_response[T: models.Contract](
         return None
 
 
-def validate_proposal[T: models.Contract](
-    proposal: T, validate: Callable[[T], None] | None
-) -> None:
-    """Apply optional domain checks after structural contract validation."""
-    if validate is None:
-        return
-    validate(proposal)
-
-
 def load_cached_proposal[T: models.Contract](
     accepted: Path,
     contract: type[T],
@@ -180,7 +172,8 @@ def load_cached_proposal[T: models.Contract](
         return None
     cached = contract.model_validate_json(accepted.read_text())
     try:
-        validate_proposal(cached, validate)
+        if validate is not None:
+            validate(cached)
     except ValueError:
         return None
     return cached
@@ -269,10 +262,7 @@ def request_response(
     )
     if not cached:
         log_path = directory / f"hermes-{attempt}.log"
-        if cancelled is None:
-            run_hermes(request_path, response_path, log_path)
-        else:
-            run_hermes(request_path, response_path, log_path, cancelled=cancelled)
+        run_hermes(request_path, response_path, log_path, cancelled=cancelled)
     recorded = json.loads(response_path.read_text())
     events.record_event(
         directory,

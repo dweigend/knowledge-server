@@ -303,6 +303,8 @@ def _perform_attempt(
             inputs=inputs,
             knowledge=knowledge,
             recipe=recipe,
+            prompt_text=str(prompt.payload["text"]),
+            author_rules=rules.payload if rules is not None else None,
             output_directory=path / "trace",
             cancelled=cancelled,
         )
@@ -352,18 +354,6 @@ def execute_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> 
         )
         experiment_store.append_result(path, terminal)
         return experiment_store.read_attempt(path)
-
-
-def run_step(
-    archive_root: Path,
-    experiment_id: str,
-    step: str,
-    recipe: prompt_registry.ConfigRevision,
-    input_attempts: dict[str, str] | None = None,
-) -> dict:
-    """Prepare and synchronously execute the same operation used by the dashboard."""
-    attempt_id = prepare_attempt(archive_root, experiment_id, step, recipe, input_attempts)
-    return execute_attempt(archive_root, experiment_id, attempt_id)
 
 
 def request_cancel(archive_root: Path, experiment_id: str, attempt_id: str) -> None:

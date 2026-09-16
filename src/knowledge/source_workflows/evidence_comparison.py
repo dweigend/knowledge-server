@@ -101,22 +101,20 @@ def enrich(
     application: knowledge_service.Knowledge,
     batch_id: str,
     batch_root: Path,
-    prompts: Path,
 ) -> None:
     """Compare each claim with the corpus and propose updated assessments."""
     with application.database.transaction() as ledger:
         claims = ledger.list(batch_id, "claim")
         source_records = ledger.list(batch_id, "source")
     for claim in claims:
-        audit = compare_claim(application, batch_id, batch_root, prompts, claim, source_records)
-        assess_compared_claim(application, batch_id, batch_root, prompts, claim, audit)
+        audit = compare_claim(application, batch_id, batch_root, claim, source_records)
+        assess_compared_claim(application, batch_id, batch_root, claim, audit)
 
 
 def compare_claim(
     application: knowledge_service.Knowledge,
     batch_id: str,
     batch_root: Path,
-    prompts: Path,
     claim: models.Record,
     source_records: list[models.Record],
 ) -> Path:
@@ -129,7 +127,7 @@ def compare_claim(
     if audit.exists():
         return audit
     command = prepare_comparison(
-        application, batch_id, batch_root, prompts, claim, current_evidence, source_records
+        application, batch_id, batch_root, claim, current_evidence, source_records
     )
     application.import_comparison(
         f"{batch_id}:compare:{claim.entity_id}",
@@ -152,7 +150,6 @@ def prepare_comparison(
     application: knowledge_service.Knowledge,
     batch_id: str,
     batch_root: Path,
-    prompts: Path,
     claim: models.Record,
     current_evidence: list[models.Record],
     source_records: list[models.Record],
@@ -191,7 +188,6 @@ def assess_compared_claim(
     application: knowledge_service.Knowledge,
     batch_id: str,
     batch_root: Path,
-    prompts: Path,
     claim: models.Record,
     audit: Path,
 ) -> None:

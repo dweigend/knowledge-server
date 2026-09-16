@@ -111,7 +111,6 @@ def apply_claim_decision(
             command.proposal.model_dump(include={"proposition", "scope", "qualifications"})
         )
         target = claim_evidence_records.propose_claim(ledger, batch_id, claim, actor)
-    ledger.next_revision(batch_id, "claim", target)
     relation = models.Evidence(
         claim=target,
         source=command.source,

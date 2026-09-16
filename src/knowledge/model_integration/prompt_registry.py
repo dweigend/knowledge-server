@@ -273,19 +273,6 @@ def get_default(kind: ConfigKind, name: str) -> ConfigRevision:
         return record
 
 
-def list_configurations(kind: ConfigKind | None = None) -> list[ConfigRevision]:
-    """List the latest saved revision of each configuration in name order."""
-    if kind is not None and kind not in KINDS:
-        raise ValueError("Invalid configuration kind")
-    with registry_lock() as root:
-        revisions = []
-        for selected in (kind,) if kind else KINDS:
-            for directory in sorted((root / selected).glob("*")):
-                if directory.is_dir() and latest_revision(directory):
-                    revisions.append(read_revision(directory, latest_revision(directory)))
-        return revisions
-
-
 def validate_payload(root: Path, kind: ConfigKind, payload: dict[str, JsonValue]) -> None:
     """Validate configuration contracts and every immutable recipe reference."""
     if kind == "author_rules":

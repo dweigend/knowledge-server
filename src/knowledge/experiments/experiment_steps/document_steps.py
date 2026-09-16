@@ -4,30 +4,16 @@ The operations share exact source offsets but remain independent of experiment
 storage, production acceptance, Zotero, and database orchestration.
 """
 
+from typing import cast
+
 from knowledge.experiments import pipeline_specification
 from knowledge.experiments.experiment_steps import step_contracts
 from knowledge.knowledge_domain import knowledge_record_models
-from knowledge.model_integration import prompt_registry
 from knowledge.source_workflows import (
     article_claim_extraction,
     information_block_extraction,
     structured_paper_extraction,
 )
-
-
-def recipe_prompt(execution: pipeline_specification.StepExecution) -> str:
-    """Resolve the immutable primary prompt pinned by the recipe."""
-    recipe = execution.recipe
-    revision = prompt_registry.get_revision("prompt", recipe.prompt_name, recipe.prompt_revision)
-    text = revision.payload.get("text")
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("Recipe prompt requires nonempty text")
-    return text
-
-
-def validate_extraction_parameters(parameters: dict) -> None:
-    """Validate the configured document analyzer before running it."""
-    structured_paper_extraction.validate_paper_parameters(parameters)
 
 
 def validate_segmentation_parameters(parameters: dict) -> None:
@@ -61,14 +47,12 @@ def segment_blocks(
         execution.inputs["extract_text"]
     )
     parameters = execution.recipe.parameters
-    maximum = parameters.get("max_characters", 2000)
-    if not isinstance(maximum, int):
-        raise ValueError("max_characters must be an integer")
+    maximum = cast(int, parameters.get("max_characters", 2000))
     if parameters.get("mode", "paragraphs") == "paragraphs":
         return information_block_extraction.segment_verbatim(extraction, maximum)
     return information_block_extraction.segment_information(
         extraction,
-        recipe_prompt(execution),
+        execution.prompt_text,
         execution.output_directory,
         execution.recipe.model,
         execution.cancelled,
@@ -128,7 +112,7 @@ def formulate_claims_from_blocks(
     extractions = article_claim_extraction.extract_document(
         list(extraction.pages),
         execution.output_directory,
-        instructions=recipe_prompt(execution),
+        instructions=execution.prompt_text,
         configuration=execution.recipe.model,
         cancelled=execution.cancelled,
         blocks_packet=blocks.model_dump(mode="json"),

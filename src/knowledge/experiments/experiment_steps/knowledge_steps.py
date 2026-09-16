@@ -5,6 +5,7 @@ operations, so experiments never import production persistence workflows.
 """
 
 import difflib
+from typing import cast
 
 from knowledge.experiments import pipeline_specification
 from knowledge.experiments.experiment_steps import document_steps, step_contracts
@@ -54,9 +55,7 @@ def find_knowledge(
     execution: pipeline_specification.StepExecution,
 ) -> knowledge_candidate_selection.KnowledgeRetrieval:
     """Search the pinned knowledge snapshot deterministically."""
-    limit = execution.recipe.parameters.get("limit", 20)
-    if not isinstance(limit, int):
-        raise ValueError("Retrieval limit must be an integer")
+    limit = cast(int, execution.recipe.parameters.get("limit", 20))
     return knowledge_candidate_selection.retrieve_knowledge(
         _knowledge_query(execution), execution.knowledge, limit
     )
@@ -72,7 +71,7 @@ def select_entries(
     return knowledge_candidate_selection.select_knowledge(
         retrieval,
         _knowledge_query(execution),
-        document_steps.recipe_prompt(execution),
+        execution.prompt_text,
         execution.output_directory,
         execution.recipe.model,
         execution.cancelled,
@@ -137,7 +136,7 @@ def _propose_claim_changes(
             claim.proposal,
             candidates,
             execution.output_directory,
-            instructions=document_steps.recipe_prompt(execution),
+            instructions=execution.prompt_text,
             configuration=execution.recipe.model,
             cancelled=execution.cancelled,
         )
@@ -170,9 +169,8 @@ def _propose_note_change(
     records: list[knowledge_record_models.Record],
     prompt: str,
 ) -> step_contracts.NoteChange:
-    if not isinstance(record.payload, knowledge_record_models.Note):
-        raise ValueError("Note proposal requires a note record")
     structured_generation.check_cancelled(execution.cancelled)
+    note = cast(knowledge_record_models.Note, record.payload)
     command = note_revision_proposals.propose_note_revision(
         record,
         records,
@@ -181,10 +179,10 @@ def _propose_note_change(
         configuration=execution.recipe.model,
         cancelled=execution.cancelled,
     )
-    body = command.proposal.note.body if command.proposal.note else record.payload.body
+    body = command.proposal.note.body if command.proposal.note else note.body
     diff = "\n".join(
         difflib.unified_diff(
-            record.payload.body.splitlines(),
+            note.body.splitlines(),
             body.splitlines(),
             fromfile="before",
             tofile="proposal",

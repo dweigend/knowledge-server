@@ -1,6 +1,7 @@
 """Protect the inward-facing package graph established by the architecture refactor."""
 
 import ast
+from graphlib import TopologicalSorter
 from pathlib import Path
 
 SOURCE_ROOT = Path(__file__).parents[1] / "src" / "knowledge"
@@ -134,23 +135,7 @@ def test_internal_module_graph_is_acyclic() -> None:
     dependencies = {
         module: module_dependencies(module, path, modules) for module, path in modules.items()
     }
-    visited = set()
-    active = []
-
-    def visit(module: str) -> None:
-        if module in active:
-            cycle = " -> ".join([*active[active.index(module) :], module])
-            raise AssertionError(f"Internal import cycle: {cycle}")
-        if module in visited:
-            return
-        active.append(module)
-        for dependency in dependencies[module]:
-            visit(dependency)
-        active.pop()
-        visited.add(module)
-
-    for module in modules:
-        visit(module)
+    TopologicalSorter(dependencies).prepare()
 
 
 def test_proposal_modules_do_not_import_acceptance_or_storage() -> None:

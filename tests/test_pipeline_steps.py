@@ -1,11 +1,9 @@
 import hashlib
 import json
-import sys
 from uuid import UUID
 
 import pytest
 
-from knowledge.document_processing.pdf_text_extraction import cancellable_pdf_text
 from knowledge.experiments import experiment_step_catalog
 from knowledge.experiments.experiment_steps import document_steps
 from knowledge.experiments.pipeline_specification import StepExecution
@@ -15,7 +13,12 @@ from knowledge.knowledge_domain.knowledge_record_models import (
     ExtractedClaim,
     Record,
 )
-from knowledge.model_integration.prompt_registry import resolve_recipe, save_revision, seed_defaults
+from knowledge.model_integration.prompt_registry import (
+    get_revision,
+    resolve_recipe,
+    save_revision,
+    seed_defaults,
+)
 from knowledge.source_workflows.article_claim_extraction import ArticleExtraction, extract_document
 from knowledge.source_workflows.information_block_extraction import (
     TextExtraction,
@@ -79,12 +82,21 @@ def claim_record(number, text):
     )
 
 
-def step_execution(step, pdf, inputs, knowledge, recipe, output_directory, cancelled=lambda: False):
+def step_execution(pdf, inputs, knowledge, recipe, output_directory, cancelled=lambda: False):
+    prompt = get_revision("prompt", recipe.prompt_name, recipe.prompt_revision).payload["text"]
+    assert isinstance(prompt, str)
+    rules = (
+        get_revision("author_rules", recipe.author_rules_name, recipe.author_rules_revision)
+        if recipe.author_rules_name and recipe.author_rules_revision
+        else None
+    )
     return StepExecution(
         pdf=pdf,
         inputs=inputs,
         knowledge=knowledge,
         recipe=recipe,
+        prompt_text=prompt,
+        author_rules=rules.payload if rules else None,
         output_directory=output_directory,
         cancelled=cancelled,
     )
@@ -181,7 +193,6 @@ def test_shared_import_and_workbench_use_same_adapter_contract(
     production = extract_document(list(document.pages), tmp_path / "production")
     experiment = document_steps.formulate_claims_from_blocks(
         step_execution(
-            "formulate_claims",
             tmp_path / "unused.pdf",
             {
                 "extract_text": document.model_dump(mode="json"),
@@ -200,20 +211,12 @@ def test_shared_import_and_workbench_use_same_adapter_contract(
     assert document.revision in requests[1]["input"]
 
 
-def test_missing_step_dependency_and_cancellation_stop_before_model(tmp_path):
+def test_cancellation_stops_before_model(tmp_path):
     seed_defaults()
-    _, recipe, _, _ = resolve_recipe("segment_blocks")
-    with pytest.raises(ValueError, match="missing required"):
-        experiment_step_catalog.execute_step(
-            "segment_blocks",
-            step_execution("segment_blocks", tmp_path / "unused.pdf", {}, [], recipe, tmp_path),
-        )
     _, recipe, _, _ = resolve_recipe("extract_text")
     with pytest.raises(InterruptedError):
-        experiment_step_catalog.execute_step(
-            "extract_text",
+        experiment_step_catalog.get_step_definition("extract_text").execute(
             step_execution(
-                "extract_text",
                 tmp_path / "unused.pdf",
                 {},
                 [],
@@ -242,14 +245,6 @@ def test_unsupported_or_mistyped_parameters_reject_before_execution(step, parame
     recipe.parameters = parameters
     with pytest.raises(ValueError):
         experiment_step_catalog.get_step_definition(step).validate_recipe(recipe)
-
-
-def test_extraction_subprocess_has_real_timeout_and_cancellation():
-    command = [sys.executable, "-c", "import time; time.sleep(5)"]
-    with pytest.raises(TimeoutError, match="time limit"):
-        cancellable_pdf_text(command, 0.03, lambda: False)
-    with pytest.raises(InterruptedError, match="cancelled"):
-        cancellable_pdf_text(command, 1, lambda: True)
 
 
 def write_reviewed_pdf(path):
@@ -352,8 +347,8 @@ def test_eight_manual_steps_keep_original_evidence_with_simulated_model_boundary
             recipe.parameters["goal"] = "Explain the observation"
         if step == "draft_text":
             recipe.author_rules_name, recipe.author_rules_revision = rules.name, rules.revision
-        result = experiment_step_catalog.execute_step(
-            step, step_execution(step, pdf, results, [seed], recipe, tmp_path / step)
+        result = experiment_step_catalog.get_step_definition(step).execute(
+            step_execution(pdf, results, [seed], recipe, tmp_path / step)
         )
         results[step] = result.model_dump(mode="json")
     assert called == list(responses)

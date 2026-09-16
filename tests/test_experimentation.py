@@ -67,8 +67,11 @@ def experiment(tmp_path: Path) -> tuple[Path, str]:
     return root, identifier
 
 
-def run(experiment: tuple[Path, str], step: str, **kwargs):
-    return experiments.run_step(*experiment, step, get_default("recipe", step), **kwargs)
+def run(experiment: tuple[Path, str], step: str, recipe=None, **kwargs):
+    attempt = experiments.prepare_attempt(
+        *experiment, step, recipe or get_default("recipe", step), **kwargs
+    )
+    return experiments.execute_attempt(*experiment, attempt)
 
 
 def test_real_pdf_and_blocks_use_same_shared_operations_and_exact_references(
@@ -150,7 +153,7 @@ def test_failed_rerun_retains_success_without_invalidating_downstream(
     monkeypatch.setattr(
         "knowledge.model_integration.structured_generation.run_hermes", unavailable_provider
     )
-    failed = experiments.run_step(*experiment, "segment_blocks", variant)
+    failed = run(experiment, "segment_blocks", variant)
     assert failed["status"] == "failed"
     assert "Provider unavailable" in failed["error"]
     history = experiments.read_attempts(*experiment)

@@ -149,8 +149,6 @@ def extract_text(
         pdf_text_extraction.extract_pdf_pages(
             pdf, cancelled=cancelled, timeout_seconds=timeout_seconds
         )
-        if cancelled is not None or timeout_seconds != 120
-        else pdf_text_extraction.extract_pdf_pages(pdf)
     )
     if hashlib.sha256(pdf.read_bytes()).hexdigest() != before:
         raise ValueError("PDF changed during extraction")

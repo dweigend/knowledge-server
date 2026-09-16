@@ -13,7 +13,6 @@ from knowledge.command_interfaces import json_command_api
 from knowledge.document_processing import document_models, extraction_store
 from knowledge.knowledge_base import knowledge_service
 from knowledge.knowledge_domain import knowledge_record_models as models
-from knowledge.model_integration import prompt_registry
 from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import environment_settings
 from knowledge.source_workflows import (
@@ -189,7 +188,6 @@ def run_workflow(
         application,
         arguments.batch,
         settings.archive_root / arguments.batch,
-        prompt_registry.PACKAGED_PROMPT_ROOT,
     )
 
 

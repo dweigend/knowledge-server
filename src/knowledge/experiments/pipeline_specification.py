@@ -22,6 +22,8 @@ class StepExecution:
     inputs: dict[str, dict]
     knowledge: list[knowledge_record_models.Record]
     recipe: prompt_registry.Recipe
+    prompt_text: str
+    author_rules: dict[str, JsonValue] | None
     output_directory: Path
     cancelled: Callable[[], bool]
 
@@ -30,23 +32,18 @@ StepExecutor = Callable[[StepExecution], knowledge_record_models.Contract]
 ParameterValidator = Callable[[dict[str, JsonValue]], None]
 
 
-def accept_parameters(parameters: dict[str, JsonValue]) -> None:
-    """Accept parameters after the definition's allow-list check."""
-
-
 @dataclass(frozen=True)
 class StepDefinition:
     """Describe and execute one independently runnable experiment step."""
 
     name: str
-    label: str
     dashboard_label: str
     dependencies: tuple[str, ...]
     output_schema: str
-    allowed_parameters: frozenset[str]
+    allowed_parameters: tuple[str, ...]
     output_contract: type[knowledge_record_models.Contract]
     executor: StepExecutor
-    parameter_validator: ParameterValidator = accept_parameters
+    parameter_validator: ParameterValidator | None = None
 
     def validate_recipe(self, recipe: prompt_registry.Recipe) -> None:
         """Reject recipes that do not exactly match this step's contract."""
@@ -54,11 +51,12 @@ class StepDefinition:
             raise ValueError("Recipe does not match a supported step")
         if recipe.output_schema != self.output_schema:
             raise ValueError("Recipe output schema does not match the step's supported format")
-        unknown = set(recipe.parameters) - self.allowed_parameters
+        unknown = set(recipe.parameters).difference(self.allowed_parameters)
         if unknown:
             names = ", ".join(sorted(unknown))
             raise ValueError(f"Unsupported parameters for {self.name}: {names}")
-        self.parameter_validator(recipe.parameters)
+        if self.parameter_validator is not None:
+            self.parameter_validator(recipe.parameters)
 
     def execute(self, execution: StepExecution) -> knowledge_record_models.Contract:
         """Validate pins and delegate one step to its focused executor."""
