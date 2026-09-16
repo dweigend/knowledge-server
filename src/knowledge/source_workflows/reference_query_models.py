@@ -1,8 +1,8 @@
 """Define grounded query proposals and their typed source evidence."""
 
-from typing import Final
+from typing import Annotated, Final
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field, TypeAdapter
 
 from knowledge.knowledge_domain.knowledge_record_models import Contract
 from knowledge.literature.literature_models import Candidate
@@ -42,7 +42,6 @@ class ReferenceQueryEvidence(BaseModel):
     candidates: list[Candidate] = Field(max_length=MAX_QUERY_CANDIDATES)
 
 
-class ReferenceQueryBatch(RootModel[list[ReferenceQueryEvidence]]):
-    """Bound the evidence sent to one planning call without changing its JSON array format."""
-
-    root: list[ReferenceQueryEvidence] = Field(max_length=MAX_QUERY_REFERENCES)
+QUERY_EVIDENCE: Final[TypeAdapter[list[ReferenceQueryEvidence]]] = TypeAdapter(
+    Annotated[list[ReferenceQueryEvidence], Field(max_length=MAX_QUERY_REFERENCES)]
+)

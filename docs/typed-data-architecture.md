@@ -66,9 +66,9 @@ Ruff enforces annotations (`ANN`), return consistency (`RET`), simplification
 bibliographic evidence and page-range patterns require them. All ty rules are
 errors, including missing generic arguments, unsafe returns and override markers.
 These checks do not establish semantic correctness: the regression suite and
-existing-schema comparison remain necessary. The standalone Hermes bridge has
-its own typed protocol and request/response models; checking its external imports
-still requires the separately installed Hermes runtime.
+existing-schema comparison remain necessary. The standalone Hermes bridge shares configuration and response contracts with
+the application. Its explicit script/package imports support both launch modes;
+checking external Hermes imports still requires the separately installed runtime.
 
 ## Reference discovery
 
@@ -79,13 +79,11 @@ Independent discovery-field rules use Pydantic `AfterValidator` functions.
 
 `ReferenceSearchState` keeps each original reference, internal search identifier,
 candidates, resolution and trace together. Initial and model-refined searches
-share one provider loop. `LookupState` owns per-run pacing and request counters;
-the session remains ordinary Python orchestration with explicit provider and
-cancellation dependencies. Query proposals and their evidence packets reuse
+share one provider loop. The search session owns pacing and request counters directly as typed dataclass
+fields, alongside its explicit provider and cancellation dependencies. Query proposals and their evidence packets reuse
 `PaperReference` and `Candidate` instead of constructing untyped dictionaries.
-`ReferenceQueryBatch` bounds the planning input to 50 references and six candidates
-per reference. Planning receives this model directly, rather than separate reference
-and candidate collections. These limits affect model input only; the source audit
+A Pydantic `TypeAdapter` bounds the planning list to 50 references; each evidence
+entry admits six candidates. Planning receives that typed list directly. These limits affect model input only; the source audit
 retains all collected candidates.
 
 Crossref now shares the bounded HTTP transport with the other discovery providers.
@@ -107,7 +105,7 @@ would change exact evidence. No generic model or cache hierarchy is introduced.
 | --- | --- |
 | 1–2 | Keep settings declarative; separate field validators with early returns. |
 | 3 | Use independent guard clauses when selecting the richest matching candidate. |
-| 4–5 | Centralize mutable counters in `LookupState`; remove repetitive constructor assignments. Executable provider dependencies remain in the session. |
+| 4–5 | Keep mutable counters with their owning session as typed dataclass fields; remove the redundant state envelope and constructor assignments. |
 | 6 | Separate lookup orchestration, cached results and pacing/budget checks. |
 | 7 | Keep request accounting separate from redacted provider failure handling; catch only recoverable transport/validation errors. |
 | 8 | Separate initial identity lookup from the shared fallback provider loop. |
@@ -125,3 +123,29 @@ References: [Pydantic models](https://docs.pydantic.dev/latest/concepts/models/)
 
 Tool guidance: [ty rule configuration](https://docs.astral.sh/ty/rules/),
 [Ruff rules](https://docs.astral.sh/ruff/rules/).
+
+## Model consolidation
+
+The consolidation removes 19 model classes from the complete 157-class inventory
+(including the standalone bridge), leaving 138. The earlier count of 119 described
+only schemas that already existed before the comprehensive typing pass; it was
+not a count of all models after that pass.
+
+- PostgreSQL revisions validate directly as `Record`, including kind-specific
+  payload decoding and datetime normalization. There is no parallel `RevisionRow`.
+- Scalar IDs, revision numbers and optional strings use `TypeAdapter` instead of
+  one-field model classes. No replacement wrapper or `TypedDict` is introduced.
+- Search responses share one typed collection path in the existing HTTP adapter;
+  providers retain their required-versus-optional array rules.
+- The source article reads the actual `ExtractionJob`; a separate presentation
+  state model and its database query are removed.
+- Zotero bibliography and attachment requirements are checked on the existing
+  validated item at the operation that requires them, without specialized subclasses.
+- The application and standalone bridge share `ModelConfiguration` and
+  `GenerationResponse`. Existing prompt configuration schemas remain identical.
+
+Provider work metadata, exact-source evidence, domain records and model-generated
+proposals remain separate where their fields or validation rules differ. Collapsing
+optional nested API objects with `AliasPath` is deliberately limited: treating a
+malformed parent as a missing optional field would weaken validation. A smaller
+class count alone does not justify that change.

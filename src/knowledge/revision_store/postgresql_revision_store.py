@@ -6,7 +6,7 @@ installation, and decoding of stored domain records.
 
 import hashlib
 import json
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
@@ -23,11 +23,9 @@ from knowledge.knowledge_domain import (
 from knowledge.knowledge_domain import (
     knowledge_record_models as models,
 )
-from knowledge.revision_store.storage_models import CommandReceipt, EntityRow, RevisionRow
+from knowledge.revision_store.storage_models import CommandReceipt
 
-_SOURCE_PAYLOAD: Final[TypeAdapter[models.Source | models.LegacySource]] = TypeAdapter(
-    models.Source | models.LegacySource
-)
+_ENTITY_ID: Final[TypeAdapter[UUID]] = TypeAdapter(UUID)
 
 
 class Ledger:
@@ -46,14 +44,7 @@ class Ledger:
         ).fetchone()
         if row is None:
             raise errors.Missing(str(entity_id))
-        stored = RevisionRow.model_validate(row)
-        return models.Record.model_validate(
-            {
-                **stored.model_dump(),
-                "created_at": stored.created_at.isoformat(),
-                "payload": decode_payload(stored.kind, stored.payload),
-            }
-        )
+        return models.Record.model_validate(row)
 
     def list(
         self,
@@ -69,7 +60,7 @@ class Ledger:
             "@@ plainto_tsquery('simple', %s)) ORDER BY kind, created_at, entity_id",
             (batch_id, kind, kind, query, query),
         ).fetchall()
-        return [self.get(EntityRow.model_validate(row).entity_id) for row in rows]
+        return [self.get(_ENTITY_ID.validate_python(row["entity_id"])) for row in rows]
 
     def get_receipt(self, request_id: str) -> CommandReceipt | None:
         """Return a completed command receipt, or None if it has not been accepted."""
@@ -195,10 +186,3 @@ def receipt_references(receipt: CommandReceipt, payload_hash: str) -> list[model
     if receipt.payload_hash != payload_hash:
         raise errors.Conflict("Idempotency key reused with different content")
     return receipt.result
-
-
-def decode_payload(kind: models.Kind, payload: Mapping[str, object]) -> models.Contract:
-    """Decode new sources and immutable legacy sources through their respective contracts."""
-    if kind == "source":
-        return _SOURCE_PAYLOAD.validate_python(payload)
-    return models.PAYLOAD_TYPES[kind].model_validate(payload)

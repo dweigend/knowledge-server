@@ -27,7 +27,6 @@ from knowledge.source_workflows.bibliography_recovery_models import (
     BibliographyRecoveryResult,
 )
 from knowledge.source_workflows.reference_query_models import (
-    ReferenceQueryBatch,
     ReferenceQueryEvidence,
 )
 
@@ -583,7 +582,7 @@ def test_failed_model_planning_is_cached_without_retrying_unchanged_evidence(
     first, second = DiscoveryReport(), DiscoveryReport()
     for report in (first, second):
         plan = planning.plan_reference_queries(
-            ReferenceQueryBatch([ReferenceQueryEvidence(reference=reference(), candidates=[])]),
+            [ReferenceQueryEvidence(reference=reference(), candidates=[])],
             tmp_path,
             settings,
             report,
@@ -755,7 +754,7 @@ def test_pre_refactor_query_cache_preserves_exact_evidence_without_model_calls(
     report = DiscoveryReport()
 
     result = planning.plan_reference_queries(
-        ReferenceQueryBatch([ReferenceQueryEvidence(reference=ref, candidates=[])]),
+        [ReferenceQueryEvidence(reference=ref, candidates=[])],
         tmp_path,
         DiscoverySettings(max_model_calls=0),
         report,
@@ -806,7 +805,7 @@ def test_provider_defects_and_cancellation_are_not_cached_as_missing_sources(
         session.search("crossref", reference(), trace)
 
     assert not list(tmp_path.glob("*.json"))
-    assert session.state.backoff == set()
+    assert session.backoff == set()
 
 
 def test_planning_bounds_model_input_without_discarding_collected_evidence(

@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Final
 from urllib.parse import quote, urlencode
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from knowledge.literature.crossref_client import normalize_doi
 from knowledge.literature.literature_models import Candidate, LiteratureMetadata
@@ -35,10 +35,6 @@ class _Paper(BaseModel):
     publication_types: list[str] | None = Field(default=None, alias="publicationTypes")
 
 
-class _Search(BaseModel):
-    data: list[_Paper]
-
-
 def lookup_semantic_scholar(
     reference: PaperMetadata, timeout_seconds: float, cancelled: Callable[[], bool]
 ) -> list[Candidate]:
@@ -63,15 +59,15 @@ def lookup_semantic_scholar(
             "limit": str(MAX_CANDIDATES),
             "fields": FIELDS,
         }
-        response = request_model(
+        papers = request_model(
             API_URL + "/search?" + urlencode(query),
-            _Search,
+            TypeAdapter(list[_Paper]),
             timeout_seconds,
             cancelled,
             headers=headers,
+            collection_key="data",
         )
-        papers = response.data if response else []
-    return [_candidate(paper, bool(doi)) for paper in papers[:MAX_CANDIDATES]]
+    return [_candidate(paper, bool(doi)) for paper in (papers or [])[:MAX_CANDIDATES]]
 
 
 def _candidate(paper: _Paper, exact_doi: bool) -> Candidate:

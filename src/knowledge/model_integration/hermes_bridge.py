@@ -7,18 +7,14 @@ and returns only the requested structured response.
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 
 from pydantic import BaseModel
 
-
-class BridgeConfiguration(BaseModel):
-    """Read the generation settings consumed inside the standalone Hermes runtime."""
-
-    model: str | None = None
-    provider: str | None = None
-    timeout_seconds: float = 240
-    reasoning_effort: str = "max"
+if __package__:
+    from .generation_models import GenerationResponse, ModelConfiguration
+else:
+    from generation_models import GenerationResponse, ModelConfiguration
 
 
 class BridgeRequest(BaseModel):
@@ -42,18 +38,6 @@ class ConversationResult(BaseModel):
     """Read the final response from a completed Hermes conversation."""
 
     final_response: str
-
-
-class BridgeResponse(BaseModel):
-    """Retain requested and observed generation provenance separately."""
-
-    execution: Literal["live"] = "live"
-    model: str | None
-    provider: str | None
-    requested_model: str
-    requested_provider: str
-    response: str
-    session_id: str
 
 
 class ConversationAgent(Protocol):
@@ -103,7 +87,7 @@ def create_agent(
 def main() -> None:
     """Read one request, persist its response and always close the Hermes agent."""
     request = BridgeRequest.model_validate_json(Path(sys.argv[1]).read_text())
-    configuration = BridgeConfiguration.model_validate_json(request.configuration)
+    configuration = ModelConfiguration.model_validate_json(request.configuration)
     model = configuration.model or "gpt-5.6-luna"
     provider = configuration.provider or "openai-codex"
     agent = create_agent(
@@ -121,13 +105,14 @@ def run_request(
     request: BridgeRequest | Mapping[str, object],
     model: str,
     provider: str,
-) -> BridgeResponse:
+) -> GenerationResponse:
     """Run the supplied prompt and retain the provider and session provenance."""
     request = BridgeRequest.model_validate(request)
     result = ConversationResult.model_validate(
         agent.run_conversation(user_message=request.input, system_message=request.instructions)
     )
-    return BridgeResponse(
+    return GenerationResponse(
+        execution="live",
         model=getattr(agent, "model", None),
         provider=getattr(agent, "provider", None),
         requested_model=model,

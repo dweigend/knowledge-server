@@ -242,3 +242,9 @@ def test_missing_page_collection_is_rejected() -> None:
 def test_missing_node_identity_is_rejected() -> None:
     with pytest.raises(ValueError, match="self_ref"):
         parse_document({"schema_name": "DoclingDocument", "texts": [{"text": "Unidentified"}]})
+
+
+@pytest.mark.parametrize("size", [None, {}, {"width": 600}, {"width": "invalid", "height": 800}])
+def test_page_projection_rejects_missing_or_invalid_dimensions(size: object) -> None:
+    with pytest.raises(ValueError):
+        page_sizes({"schema_name": "DoclingDocument", "pages": {"1": {"size": size}}})

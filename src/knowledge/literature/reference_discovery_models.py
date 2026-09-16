@@ -43,16 +43,6 @@ class DiscoverySettings(BaseModel):
     find_open_access: bool = False
 
 
-class LookupState(BaseModel):
-    """Track provider pacing and consumed per-reference budgets during one run."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    backoff: set[str] = Field(default_factory=set)
-    last_requests: dict[str, float] = Field(default_factory=dict)
-    reference_requests: dict[str, int] = Field(default_factory=dict)
-
-
 class SearchQuery(BaseModel):
     """Record one provider query without credentials or unbounded response bodies."""
 

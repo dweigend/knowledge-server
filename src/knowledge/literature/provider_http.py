@@ -9,7 +9,7 @@ from time import monotonic, sleep
 from typing import BinaryIO, Final
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 MAX_RESPONSE_BYTES: Final[int] = 2_000_000
 MAX_CANDIDATES: Final[int] = 3
@@ -67,21 +67,34 @@ def request_bytes(
         return _response_body(output.read(MAX_RESPONSE_BYTES + 5))
 
 
-def request_model[Response: BaseModel](
+def request_model[Response](
     url: str,
-    response_type: type[Response],
+    response_type: type[Response] | TypeAdapter[Response],
     timeout_seconds: float,
     cancelled: Callable[[], bool],
     *,
     headers: Mapping[str, str] | None = None,
+    collection_key: str | None = None,
+    allow_missing_collection: bool = False,
 ) -> Response | None:
     """Validate a JSON response once and redact untrusted input from errors."""
     body = request_bytes(url, timeout_seconds, cancelled, headers=headers)
     if body is None:
         return None
     try:
-        return response_type.model_validate_json(body)
-    except ValidationError:
+        adapter = (
+            response_type if isinstance(response_type, TypeAdapter) else TypeAdapter(response_type)
+        )
+        if collection_key is None:
+            return adapter.validate_json(body)
+        envelope = TypeAdapter(dict[str, JsonValue]).validate_json(body)
+        entries = (
+            envelope.get(collection_key, [])
+            if allow_missing_collection
+            else envelope[collection_key]
+        )
+        return adapter.validate_python(entries)
+    except (KeyError, ValidationError):
         raise ValueError("Provider returned invalid bibliographic JSON") from None
 
 

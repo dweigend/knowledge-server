@@ -60,7 +60,9 @@ class ReferenceSearchSession:
     deadline: float
     cancelled: Callable[[], bool]
     providers: dict[str, literature_resolution.Lookup]
-    state: models.LookupState = field(default_factory=models.LookupState)
+    backoff: set[str] = field(default_factory=set)
+    last_requests: dict[str, float] = field(default_factory=dict)
+    reference_requests: dict[str, int] = field(default_factory=dict)
 
     def search(
         self, provider: str, reference: PaperReference, trace: models.ReferenceSearch
@@ -103,7 +105,7 @@ class ReferenceSearchSession:
 
         reason = self.wait_for_capacity(provider, reference_id)
         if reason:
-            query.status = "backoff" if provider in self.state.backoff else "budget"
+            query.status = "backoff" if provider in self.backoff else "budget"
             query.message = reason
             return None
 
@@ -122,16 +124,13 @@ class ReferenceSearchSession:
 
     def stop_reason(self, provider: str, reference_id: str) -> str | None:
         """Explain why a fresh request cannot run without caching a synthetic failure."""
-        if provider in self.state.backoff:
+        if provider in self.backoff:
             return "Provider rate limited this run; another provider may still be used."
         if monotonic() >= self.deadline:
             return "Search time budget exhausted."
         if self.report.requests >= self.settings.max_requests:
             return "Search request budget exhausted."
-        if (
-            self.state.reference_requests.get(reference_id, 0)
-            >= self.settings.max_requests_per_reference
-        ):
+        if self.reference_requests.get(reference_id, 0) >= self.settings.max_requests_per_reference:
             return "Per-reference request budget exhausted."
         return None
 
@@ -142,10 +141,8 @@ class ReferenceSearchSession:
         self.check_cancelled()
         remaining = self.deadline - monotonic()
         self.report.requests += 1
-        self.state.reference_requests[reference_id] = (
-            self.state.reference_requests.get(reference_id, 0) + 1
-        )
-        self.state.last_requests[provider] = monotonic()
+        self.reference_requests[reference_id] = self.reference_requests.get(reference_id, 0) + 1
+        self.last_requests[provider] = monotonic()
         checked_at = datetime.now(UTC).isoformat()
         try:
             candidates = self.providers[provider](
@@ -167,13 +164,13 @@ class ReferenceSearchSession:
             return models.CachedLookup(
                 error=f"{provider}: {type(error).__name__}", checked_at=checked_at
             )
-        self.state.backoff.add(provider)
+        self.backoff.add(provider)
         return models.CachedLookup(error=f"{provider}: HTTP 429", checked_at=checked_at)
 
     def wait_for_provider(self, provider: str) -> None:
         """Pace sequential requests while remaining responsive to cancellation."""
         ready = min(
-            self.state.last_requests.get(provider, 0) + MIN_REQUEST_INTERVAL_SECONDS, self.deadline
+            self.last_requests.get(provider, 0) + MIN_REQUEST_INTERVAL_SECONDS, self.deadline
         )
         while monotonic() < ready:
             self.check_cancelled()

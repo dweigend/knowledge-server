@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Final
 from urllib.parse import quote, urlencode
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from knowledge.literature.crossref_client import normalize_doi
 from knowledge.literature.literature_models import Candidate, LiteratureMetadata
@@ -43,10 +43,6 @@ class _Work(BaseModel):
     type: str | None = None
 
 
-class _Search(BaseModel):
-    results: list[_Work]
-
-
 def lookup_openalex(
     reference: PaperMetadata, timeout_seconds: float, cancelled: Callable[[], bool]
 ) -> list[Candidate]:
@@ -69,11 +65,15 @@ def lookup_openalex(
         query = {"search": (reference.title or "")[:500], "per-page": str(MAX_CANDIDATES)}
         if reference.year and reference.year.isdigit():
             query["filter"] = "publication_year:" + reference.year
-        response = request_model(
-            API_URL + "?" + urlencode(query), _Search, timeout_seconds, cancelled, headers=headers
+        works = request_model(
+            API_URL + "?" + urlencode(query),
+            TypeAdapter(list[_Work]),
+            timeout_seconds,
+            cancelled,
+            headers=headers,
+            collection_key="results",
         )
-        works = response.results if response else []
-    return [_candidate(work, bool(doi)) for work in works[:MAX_CANDIDATES]]
+    return [_candidate(work, bool(doi)) for work in (works or [])[:MAX_CANDIDATES]]
 
 
 def _candidate(work: _Work, exact_doi: bool) -> Candidate:

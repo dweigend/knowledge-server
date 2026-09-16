@@ -13,16 +13,16 @@ from knowledge.source_workflows import source_grounded_writing
 
 def validate_writing_parameters(parameters: Mapping[str, object]) -> None:
     """Validate the optional writing goal."""
-    parameter_models.WritingParameters.model_validate(parameters)
+    parameter_models.OPTIONAL_TEXT.validate_python(parameters.get("goal"))
 
 
 def prepare_writing(
     execution: pipeline_specification.StepExecution,
 ) -> source_grounded_writing.WritingPoints:
     """Compose cited points from pinned proposals and source blocks."""
-    parameters = parameter_models.WritingParameters.model_validate(execution.recipe.parameters)
+    goal = parameter_models.OPTIONAL_TEXT.validate_python(execution.recipe.parameters.get("goal"))
     return source_grounded_writing.prepare_writing_points(
-        parameters.goal or "",
+        goal or "",
         execution.inputs["extract_text"],
         execution.inputs["segment_blocks"],
         {

@@ -70,7 +70,8 @@ def get_bibliography(
     else:
         reference = source if isinstance(source, models.ZoteroReference) else source.zotero
         metadata = item_data(reference)
-    metadata = responses.BibliographyData.model_validate(metadata.model_dump(exclude_unset=True))
+    if not {"key", "title"} <= metadata.model_fields_set:
+        raise ValueError("Zotero bibliography requires key and title")
     return models.Bibliography(
         title=metadata.title,
         authors=[
@@ -124,7 +125,10 @@ def matching_attachment(item_key: str, pdf: Path, instance: str) -> str | None:
     expected = hashlib.sha256(pdf.read_bytes()).hexdigest()
     if not isinstance(children, list):
         raise ValueError("Zotero children response is not a list")
-    for child in TypeAdapter(list[responses.AttachmentItem]).validate_python(children):
+    attachments = TypeAdapter(list[responses.Item]).validate_python(children)
+    if any(not attachment.key for attachment in attachments):
+        raise ValueError("Zotero attachment requires a nonempty key")
+    for child in attachments:
         metadata = child.data
         if metadata.contentType != "application/pdf":
             continue

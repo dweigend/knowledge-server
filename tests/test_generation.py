@@ -253,3 +253,38 @@ def test_bridge_passes_pinned_reasoning_effort_to_hermes(monkeypatch: pytest.Mon
     create_agent("gpt-5.6-luna", "openai-codex", reasoning_effort="max")
 
     assert received["reasoning_config"] == {"effort": "max"}
+
+
+def test_standalone_bridge_validates_shared_configuration_before_loading_hermes(
+    tmp_path: Path,
+) -> None:
+    import subprocess
+    import sys
+
+    from knowledge.model_integration import hermes_bridge
+
+    request = tmp_path / "request.json"
+    request.write_text(
+        json.dumps(
+            {
+                "input": "fixture",
+                "instructions": "fixture",
+                "configuration": json.dumps({"allowed_tools": ["shell"]}),
+            }
+        )
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(Path(hermes_bridge.__file__)),
+            str(request),
+            str(tmp_path / "response.json"),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "does not support tool execution" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr
+    assert not (tmp_path / "response.json").exists()

@@ -2,8 +2,6 @@
 
 from typing import Literal, NotRequired, TypedDict
 
-from pydantic import BaseModel
-
 from knowledge.knowledge_domain.knowledge_record_models import Kind
 
 
@@ -37,9 +35,3 @@ class SourceMigration(TypedDict):
     revision: NotRequired[int]
     original_pdf: NotRequired[str]
     clean_pdf: NotRequired[str]
-
-
-class BatchRow(BaseModel):
-    """Identify a batch returned by a database query."""
-
-    batch_id: str

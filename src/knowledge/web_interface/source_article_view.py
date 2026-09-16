@@ -47,7 +47,7 @@ def compose_article(
         snapshot = document_extraction.get_snapshot(ledger, record.reference(), extraction_revision)
         knowledge = related_knowledge(ledger, record)
         history = ledger.get(record.entity_id).revision
-        processing = processing_state(ledger, record)
+        processing = document_extraction.latest_job(ledger, record.reference())
     if extraction_revision is not None and snapshot is None:
         raise application_errors.Missing("Requested extraction revision is unavailable")
     citation = read_source_citation(database, record)
@@ -375,19 +375,6 @@ def outline_entries(snapshot: document_models.DocumentSnapshot | None) -> list[v
         stack[-1][1].append(entry)
         stack.append((block.heading_level, entry["children"]))
     return outline
-
-
-def processing_state(
-    ledger: postgresql_revision_store.Ledger,
-    record: models.Record,
-) -> views.ProcessingState | None:
-    """Read the latest extraction job outcome for this exact source version."""
-    row = ledger.connection.execute(
-        "SELECT state,error FROM extraction_jobs WHERE source_id=%s AND source_revision=%s "
-        "ORDER BY updated_at DESC LIMIT 1",
-        (record.entity_id, record.revision),
-    ).fetchone()
-    return views.ProcessingState.model_validate(row) if row is not None else None
 
 
 def read_source_citation(

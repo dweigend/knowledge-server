@@ -13,10 +13,11 @@ from knowledge.literature.structured_paper_models import PaperReference
 from knowledge.model_integration import structured_generation
 from knowledge.runtime_support.atomic_json_files import write_json_atomically
 from knowledge.source_workflows.reference_query_models import (
+    QUERY_EVIDENCE,
     CachedQueryPlan,
     ReferenceQueries,
     ReferenceQuery,
-    ReferenceQueryBatch,
+    ReferenceQueryEvidence,
 )
 
 SEARCH_INSTRUCTIONS: Final[str] = (
@@ -88,7 +89,7 @@ def query_plan_directory(
 
 
 def plan_reference_queries(
-    evidence: ReferenceQueryBatch,
+    evidence: list[ReferenceQueryEvidence],
     cache_directory: Path,
     settings: DiscoverySettings,
     report: DiscoveryReport,
@@ -96,8 +97,9 @@ def plan_reference_queries(
     cancelled: Callable[[], bool],
 ) -> ReferenceQueries:
     """Request one grounded planning batch only after ordinary searches remain unresolved."""
-    packet = json.dumps(evidence.model_dump(), ensure_ascii=False)
-    references = {entry.reference.id: entry.reference for entry in evidence.root}
+    evidence = QUERY_EVIDENCE.validate_python(evidence)
+    packet = json.dumps(QUERY_EVIDENCE.dump_python(evidence), ensure_ascii=False)
+    references = {entry.reference.id: entry.reference for entry in evidence}
     directory = query_plan_directory(packet, cache_directory, settings, configuration)
     path = directory / "plan.json"
     if path.exists():

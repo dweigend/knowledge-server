@@ -22,12 +22,12 @@ from knowledge.document_processing import document_models
 from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import environment_settings
 from knowledge.system_maintenance.maintenance_models import (
-    BatchRow,
     DatabaseInspection,
     RestoreReport,
     RevisionCount,
 )
 
+_BATCH_ID: Final[TypeAdapter[str]] = TypeAdapter(str)
 _MANIFEST: Final[TypeAdapter[dict[str, str]]] = TypeAdapter(dict[str, str])
 
 
@@ -120,7 +120,9 @@ def inspect_restored_database(database_url: str) -> DatabaseInspection:
             "SELECT kind, count(*) AS count FROM revisions GROUP BY kind ORDER BY kind",
         ).fetchall()
         batches = ledger.connection.execute("SELECT batch_id FROM batches").fetchall()
-        decoded = sum(len(ledger.list(BatchRow.model_validate(row).batch_id)) for row in batches)
+        decoded = sum(
+            len(ledger.list(_BATCH_ID.validate_python(row["batch_id"]))) for row in batches
+        )
         snapshots = inspect_document_snapshots(ledger)
     return {
         "current_records_decoded": decoded,

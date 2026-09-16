@@ -11,12 +11,13 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
-from typing import Final, Literal, Self
+from typing import Final
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import ValidationError
 
 from knowledge.knowledge_domain import knowledge_record_models as models
-from knowledge.model_integration.generation_response_models import GenerationResponse
+from knowledge.model_integration.generation_models import GenerationResponse
+from knowledge.model_integration.generation_models import ModelConfiguration as ModelConfiguration
 from knowledge.runtime_support import workflow_event_log as events
 
 HERMES_PYTHON: Final[Path] = Path(
@@ -24,38 +25,6 @@ HERMES_PYTHON: Final[Path] = Path(
         "KNOWLEDGE_HERMES_PYTHON", str(Path.home() / ".hermes/hermes-agent/venv/bin/python")
     )
 )
-
-ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
-
-
-class ModelConfiguration(models.Contract):
-    """Pin the bounded, tool-free Hermes request configuration."""
-
-    model: str | None = Field(default=None, min_length=1)
-    provider: str | None = Field(default=None, min_length=1)
-    reasoning_effort: ReasoningEffort = "max"
-    max_attempts: int = Field(default=2, ge=1, le=2)
-    timeout_seconds: float = Field(default=240, ge=1, le=240)
-    allowed_tools: list[str] = Field(default_factory=list)
-    cost_limit_usd: float | None = Field(default=None, ge=0)
-
-    @model_validator(mode="after")
-    def reject_unsupported_capabilities(self) -> Self:
-        """Reject limits or capabilities that the adapter cannot enforce."""
-        if self.allowed_tools:
-            raise ValueError("This Hermes adapter does not support tool execution")
-        if self.cost_limit_usd is not None:
-            raise ValueError("This Hermes adapter cannot enforce a monetary cost limit")
-        return self
-
-    def resolved(self) -> "ModelConfiguration":
-        """Make the existing Luna defaults explicit before hashing a request."""
-        return self.model_copy(
-            update={
-                "model": self.model or "gpt-5.6-luna",
-                "provider": self.provider or "openai-codex",
-            }
-        )
 
 
 def check_cancelled(cancelled: Callable[[], bool] | None) -> None:

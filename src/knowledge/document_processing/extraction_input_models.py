@@ -3,7 +3,7 @@
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, AliasPath, BaseModel, Field
 
 
 class DoclingReference(BaseModel):
@@ -71,17 +71,11 @@ class DoclingBody(BaseModel):
     children: list[DoclingReference] = Field(default_factory=list)
 
 
-class PageSize(BaseModel):
-    """Describe page dimensions in PDF points."""
-
-    width: float
-    height: float
-
-
 class DoclingPage(BaseModel):
-    """Keep the source page size for coordinate conversion."""
+    """Keep source dimensions in PDF points for coordinate conversion."""
 
-    size: PageSize
+    width: float = Field(validation_alias=AliasChoices(AliasPath("size", "width"), "width"))
+    height: float = Field(validation_alias=AliasChoices(AliasPath("size", "height"), "height"))
 
 
 class DoclingDocument(BaseModel):
@@ -115,9 +109,4 @@ class ExtractionJob(BaseModel):
     configuration: str
     state: Literal["queued", "running", "succeeded", "failed"]
     attempts: int
-
-
-class SnapshotRevision(BaseModel):
-    """Read the revision returned by an idempotent annotation lookup."""
-
-    revision: int
+    error: str = ""

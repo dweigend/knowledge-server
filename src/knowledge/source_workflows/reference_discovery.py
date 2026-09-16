@@ -38,7 +38,6 @@ from knowledge.source_workflows.reference_discovery_models import (
 from knowledge.source_workflows.reference_query_models import (
     MAX_QUERY_CANDIDATES,
     MAX_QUERY_REFERENCES,
-    ReferenceQueryBatch,
     ReferenceQueryEvidence,
 )
 from knowledge.source_workflows.reference_search import (
@@ -319,16 +318,14 @@ def refine_unresolved(
         refine_reference(pending[proposal.reference_id], proposal, session)
 
 
-def planning_evidence(searches: list[ReferenceSearchState]) -> ReferenceQueryBatch:
+def planning_evidence(searches: list[ReferenceSearchState]) -> list[ReferenceQueryEvidence]:
     """Select bounded provider evidence without rebuilding parallel reference dictionaries."""
-    return ReferenceQueryBatch(
-        [
-            ReferenceQueryEvidence(
-                reference=state.reference, candidates=state.candidates[:MAX_QUERY_CANDIDATES]
-            )
-            for state in islice(searches, MAX_QUERY_REFERENCES)
-        ]
-    )
+    return [
+        ReferenceQueryEvidence(
+            reference=state.reference, candidates=state.candidates[:MAX_QUERY_CANDIDATES]
+        )
+        for state in islice(searches, MAX_QUERY_REFERENCES)
+    ]
 
 
 def can_refine(state: ReferenceSearchState, session: ReferenceSearchSession) -> bool:

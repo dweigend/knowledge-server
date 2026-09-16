@@ -1,8 +1,8 @@
 """Validate the parameters consumed by individual pipeline operations."""
 
-from typing import Literal
+from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
 
 class SegmentationParameters(BaseModel):
@@ -13,21 +13,14 @@ class SegmentationParameters(BaseModel):
     max_characters: int = Field(default=2000, ge=1, le=120000)
 
 
-class SelectionParameters(BaseModel):
-    """Provide an optional explicit query for source knowledge selection."""
+class RetrievalParameters(BaseModel):
+    """Bound knowledge retrieval while sharing its optional selection query."""
 
     model_config = ConfigDict(strict=True)
     query: str | None = None
-
-
-class RetrievalParameters(SelectionParameters):
-    """Bound knowledge retrieval while sharing its optional selection query."""
-
     limit: int = Field(default=20, ge=1, le=40)
 
 
-class WritingParameters(BaseModel):
-    """Provide the optional editorial goal for grounded writing."""
-
-    model_config = ConfigDict(strict=True)
-    goal: str | None = None
+OPTIONAL_TEXT: Final[TypeAdapter[str | None]] = TypeAdapter(
+    str | None, config=ConfigDict(strict=True)
+)

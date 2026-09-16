@@ -78,16 +78,3 @@ class UploadAuthorization(BaseModel):
         if not self.url or not self.contentType or not self.uploadKey:
             raise ValueError("Zotero upload requires url, contentType and uploadKey")
         return self
-
-
-class BibliographyData(ItemData):
-    """Require the bibliographic identity consumed by source registration."""
-
-    key: str
-    title: str
-
-
-class AttachmentItem(Item):
-    """Require an attachment key before accessing its stored bytes."""
-
-    key: str = Field(min_length=1)

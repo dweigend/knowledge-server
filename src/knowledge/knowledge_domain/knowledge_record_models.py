@@ -4,10 +4,19 @@ These Pydantic contracts describe stable references, sources, claims, evidence,
 assessments, notes, reviews, and stored record envelopes.
 """
 
+from datetime import datetime
 from typing import Annotated, Final, Literal, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 Text = Annotated[str, Field(min_length=1, max_length=30000)]
 Kind = Literal["source", "claim", "evidence", "assessment", "note", "review"]
@@ -155,6 +164,23 @@ class Record(Contract):
     created_at: str
     payload: Source | LegacySource | Claim | Evidence | Assessment | Note | Review
 
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def normalize_creation_time(cls, timestamp: object) -> object:
+        """Preserve the serialized timestamp when reading PostgreSQL rows."""
+        return timestamp.isoformat() if isinstance(timestamp, datetime) else timestamp
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def decode_payload(cls, payload: object, info: ValidationInfo) -> object:
+        """Select the record contract from its stored kind, including legacy sources."""
+        kind = info.data.get("kind")
+        if kind == "source":
+            return _SOURCE_PAYLOAD.validate_python(payload)
+        if kind in PAYLOAD_TYPES:
+            return PAYLOAD_TYPES[kind].model_validate(payload)
+        return payload
+
     def reference(self) -> Reference:
         """Return a citation pinned to this exact record revision."""
         return Reference(entity_id=self.entity_id, revision=self.revision)
@@ -183,3 +209,5 @@ PAYLOAD_TYPES: Final[dict[Kind, type[Contract]]] = {
     "note": Note,
     "review": Review,
 }
+
+_SOURCE_PAYLOAD: Final[TypeAdapter[Source | LegacySource]] = TypeAdapter(Source | LegacySource)

@@ -556,3 +556,25 @@ def test_invalid_isbn_without_title_does_not_trigger_book_lookup(
         provider_http, "request_bytes", lambda *_a, **_k: pytest.fail("Unexpected request")
     )
     assert lookup(PaperReference(id="r1", raw="ISBN 9783593379785"), 2, lambda: False) == []
+
+
+@pytest.mark.parametrize(
+    "payload", [[], None, {}, {"results": None}, {"results": {}}, {"results": [{}]}]
+)
+def test_search_collection_rejects_malformed_envelopes_and_entries(
+    monkeypatch: pytest.MonkeyPatch, reference: PaperMetadata, payload: object
+) -> None:
+    mock_response(monkeypatch, payload)
+    with pytest.raises(ValueError, match="invalid bibliographic JSON"):
+        openalex_client.lookup_openalex(reference, 2, lambda: False)
+
+
+def test_google_books_accepts_missing_items_but_rejects_explicit_null(
+    monkeypatch: pytest.MonkeyPatch, reference: PaperMetadata
+) -> None:
+    monkeypatch.setenv("KNOWLEDGE_GOOGLE_BOOKS_API_KEY", "test-key")
+    mock_response(monkeypatch, {})
+    assert google_books_client.lookup_google_books(reference, 2, lambda: False) == []
+    mock_response(monkeypatch, {"items": None})
+    with pytest.raises(ValueError, match="invalid bibliographic JSON"):
+        google_books_client.lookup_google_books(reference, 2, lambda: False)

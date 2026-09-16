@@ -5,7 +5,7 @@ from collections.abc import Callable
 from typing import Final
 from urllib.parse import urlencode
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from knowledge.literature.bibliographic_identifiers import extracted_isbn
 from knowledge.literature.literature_models import Candidate, LiteratureMetadata
@@ -34,10 +34,6 @@ class _Work(BaseModel):
     editions: _Editions | None = None
 
 
-class _Search(BaseModel):
-    docs: list[_Work]
-
-
 def lookup_openlibrary(
     reference: PaperMetadata, timeout_seconds: float, cancelled: Callable[[], bool]
 ) -> list[Candidate]:
@@ -55,12 +51,14 @@ def lookup_openlibrary(
     query["isbn" if isbn else "title"] = isbn or (reference.title or "")[:500]
     if reference.authors and not isbn:
         query["author"] = reference.authors[0][:200]
-    response = request_model(API_URL + "?" + urlencode(query), _Search, timeout_seconds, cancelled)
-    return (
-        [_candidate(work, bool(isbn)) for work in response.docs[:MAX_CANDIDATES]]
-        if response
-        else []
+    works = request_model(
+        API_URL + "?" + urlencode(query),
+        TypeAdapter(list[_Work]),
+        timeout_seconds,
+        cancelled,
+        collection_key="docs",
     )
+    return [_candidate(work, bool(isbn)) for work in (works or [])[:MAX_CANDIDATES]]
 
 
 def _candidate(work: _Work, exact_isbn: bool = False) -> Candidate:

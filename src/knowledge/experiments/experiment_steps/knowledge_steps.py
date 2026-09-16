@@ -25,7 +25,7 @@ def validate_retrieval_parameters(parameters: Mapping[str, object]) -> None:
 
 def validate_selection_parameters(parameters: Mapping[str, object]) -> None:
     """Validate an optional selection query."""
-    parameter_models.SelectionParameters.model_validate(parameters)
+    parameter_models.OPTIONAL_TEXT.validate_python(parameters.get("query"))
 
 
 def _knowledge_query(execution: pipeline_specification.StepExecution) -> str:

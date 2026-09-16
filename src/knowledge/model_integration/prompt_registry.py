@@ -14,12 +14,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, model_validator
 
 from knowledge.knowledge_domain import application_errors as errors
 from knowledge.model_integration import structured_generation
-from knowledge.model_integration.generation_response_models import ActiveRevision
 from knowledge.runtime_support import atomic_json_files
+
+_REVISION: Final[TypeAdapter[int]] = TypeAdapter(int)
 
 ConfigKind = Literal["prompt", "recipe", "author_rules"]
 KINDS: Final[tuple[ConfigKind, ...]] = ("prompt", "recipe", "author_rules")
@@ -257,7 +258,9 @@ def get_revision(kind: ConfigKind, name: str, revision: int | None = None) -> Co
 def active_revision(directory: Path) -> int:
     """Read the active revision number, using zero before first activation."""
     path = directory / "active.json"
-    return ActiveRevision.model_validate_json(path.read_bytes()).revision if path.exists() else 0
+    if not path.exists():
+        return 0
+    return _REVISION.validate_python(json.loads(path.read_bytes())["revision"])
 
 
 def activate_revision(

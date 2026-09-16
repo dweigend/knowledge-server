@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Final
 from urllib.parse import urlencode
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, TypeAdapter
 
 from knowledge.literature.bibliographic_identifiers import extracted_isbn
 from knowledge.literature.literature_models import Candidate, LiteratureMetadata
@@ -39,10 +39,6 @@ class _Volume(BaseModel):
     volume_info: _VolumeInfo = Field(alias="volumeInfo")
 
 
-class _Search(BaseModel):
-    items: list[_Volume] = Field(default_factory=list)
-
-
 def lookup_google_books(
     reference: PaperMetadata, timeout_seconds: float, cancelled: Callable[[], bool]
 ) -> list[Candidate]:
@@ -59,12 +55,15 @@ def lookup_google_books(
     if reference.authors and not isbn:
         query += ' inauthor:"' + reference.authors[0].replace('"', " ")[:200] + '"'
     url = API_URL + "?" + urlencode({"q": query, "maxResults": MAX_CANDIDATES, "key": key})
-    response = request_model(url, _Search, timeout_seconds, cancelled)
-    return (
-        [_candidate(volume, bool(isbn)) for volume in response.items[:MAX_CANDIDATES]]
-        if response
-        else []
+    volumes = request_model(
+        url,
+        TypeAdapter(list[_Volume]),
+        timeout_seconds,
+        cancelled,
+        allow_missing_collection=True,
+        collection_key="items",
     )
+    return [_candidate(volume, bool(isbn)) for volume in (volumes or [])[:MAX_CANDIDATES]]
 
 
 def _candidate(volume: _Volume, exact_isbn: bool = False) -> Candidate:

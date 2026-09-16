@@ -163,7 +163,7 @@ def _parse_location(
     right, bottom = bounding_box.right, bounding_box.bottom
     origin = bounding_box.coord_origin
     if origin == "BOTTOMLEFT":
-        height = document.pages[str(page)].size.height
+        height = document.pages[str(page)].height
         top, bottom = height - top, height - bottom
     elif origin != "TOPLEFT":
         raise ValueError(f"Unknown Docling coordinate origin: {origin}")
@@ -200,6 +200,4 @@ def page_sizes(document: DoclingDocument | Mapping[str, object]) -> dict[int, tu
     document = DoclingDocument.model_validate(document)
     if "pages" not in document.model_fields_set:
         raise ValueError("Docling document is missing its pages")
-    return {
-        int(number): (page.size.width, page.size.height) for number, page in document.pages.items()
-    }
+    return {int(number): (page.width, page.height) for number, page in document.pages.items()}

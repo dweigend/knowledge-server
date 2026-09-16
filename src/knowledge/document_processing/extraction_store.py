@@ -9,9 +9,10 @@ import json
 from typing import Final
 
 from psycopg.types.json import Jsonb
+from pydantic import TypeAdapter
 
 from knowledge.document_processing import document_models
-from knowledge.document_processing.extraction_input_models import ExtractionJob, SnapshotRevision
+from knowledge.document_processing.extraction_input_models import ExtractionJob
 from knowledge.knowledge_domain import (
     application_errors as errors,
 )
@@ -147,7 +148,7 @@ def annotate_document(ledger: store.Ledger, annotation: document_models.Document
         (identity,),
     ).fetchone()
     if previous:
-        return SnapshotRevision.model_validate(previous).revision
+        return TypeAdapter(int).validate_python(previous["revision"])
     snapshot = get_snapshot(ledger, annotation.source)
     if snapshot is None:
         raise errors.Missing("No extraction to annotate")
@@ -180,3 +181,13 @@ def apply_annotations(
         blocks[block_id].issues = list(dict.fromkeys([*blocks[block_id].issues, *issues]))
     snapshot.relationships = annotation.relationships
     snapshot.annotation = f"{annotation.actor}: {annotation.reason}"
+
+
+def latest_job(ledger: store.Ledger, source: models.Reference) -> ExtractionJob | None:
+    """Read the latest extraction job for an exact source revision."""
+    row = ledger.connection.execute(
+        "SELECT * FROM extraction_jobs WHERE source_id=%s AND source_revision=%s "
+        "ORDER BY updated_at DESC LIMIT 1",
+        (source.entity_id, source.revision),
+    ).fetchone()
+    return ExtractionJob.model_validate(row) if row is not None else None

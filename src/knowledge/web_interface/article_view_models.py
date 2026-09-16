@@ -3,9 +3,9 @@
 from typing import NotRequired, TypedDict
 
 from markupsafe import Markup
-from pydantic import BaseModel
 
 from knowledge.document_processing import document_models
+from knowledge.document_processing.extraction_input_models import ExtractionJob
 from knowledge.knowledge_domain import knowledge_record_models as models
 
 
@@ -68,20 +68,13 @@ class OutlineEntry(TypedDict):
     children: list["OutlineEntry"]
 
 
-class ProcessingState(BaseModel):
-    """Read the latest database extraction state and its failure explanation."""
-
-    state: str
-    error: str | None
-
-
 class ArticleView(TypedDict):
     """Compose the template context from individually typed source projections."""
 
     record: models.Record
     citation: CitationView
     snapshot: document_models.DocumentSnapshot | None
-    processing: ProcessingState | None
+    processing: ExtractionJob | None
     blocks: list[BlockView]
     relationships: list[RelationshipView]
     outline: list[OutlineEntry]

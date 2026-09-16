@@ -10,9 +10,8 @@ from support import SeedArticle
 import knowledge.knowledge_base.source_records as sources
 import knowledge.literature.zotero_client as zotero
 from knowledge.knowledge_base.knowledge_service import Knowledge
-from knowledge.knowledge_domain.knowledge_record_models import LegacySource, Source, ZoteroReference
+from knowledge.knowledge_domain.knowledge_record_models import Source, ZoteroReference
 from knowledge.literature.zotero_models import ItemData
-from knowledge.revision_store.postgresql_revision_store import decode_payload
 
 
 def zotero_reference(pdf_hash: str) -> ZoteroReference:
@@ -34,8 +33,6 @@ def test_new_source_rejects_literature_metadata(article: SeedArticle) -> None:
     assert "bibliography" not in source.model_dump()
     with pytest.raises(ValidationError):
         Source.model_validate({**payload, "zotero": reference, "bibliography": legacy.bibliography})
-    assert isinstance(decode_payload("source", legacy.model_dump()), LegacySource)
-    assert isinstance(decode_payload("source", source.model_dump()), Source)
 
 
 def test_legacy_registration_rejected_without_records_or_receipt(
@@ -262,3 +259,26 @@ def test_recovery_tag_with_additional_fields_does_not_resume_upload(
 
     assert zotero.matching_attachment("ITEM", pdf, "test-instance") is None
     upload.assert_not_called()
+
+
+def test_record_decodes_legacy_source_and_postgres_timestamp(article: SeedArticle) -> None:
+    from datetime import UTC, datetime
+    from uuid import uuid4
+
+    from knowledge.knowledge_domain.knowledge_record_models import LegacySource, Record
+
+    created = datetime(2026, 9, 16, tzinfo=UTC)
+    record = Record.model_validate(
+        {
+            "entity_id": uuid4(),
+            "revision": 1,
+            "batch_id": "pilot",
+            "kind": "source",
+            "actor": "fixture",
+            "created_at": created,
+            "payload": article.source.model_dump(),
+        }
+    )
+    assert isinstance(record.payload, LegacySource)
+    assert record.created_at == created.isoformat()
+    assert Record.model_validate_json(record.model_dump_json()) == record
