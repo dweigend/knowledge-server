@@ -92,7 +92,12 @@ def step_execution(pdf, inputs, knowledge, recipe, output_directory, cancelled=l
     )
     return StepExecution(
         pdf=pdf,
-        inputs=inputs,
+        inputs={
+            name: experiment_step_catalog.get_step_definition(name).output_contract.model_validate(
+                output
+            )
+            for name, output in inputs.items()
+        },
         knowledge=knowledge,
         recipe=recipe,
         prompt_text=prompt,

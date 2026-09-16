@@ -43,9 +43,7 @@ def segment_blocks(
     execution: pipeline_specification.StepExecution,
 ) -> information_block_extraction.InformationBlocks:
     """Create verbatim paragraphs or source-validated model segments."""
-    extraction = information_block_extraction.TextExtraction.model_validate(
-        execution.inputs["extract_text"]
-    )
+    extraction = execution.inputs["extract_text"]
     parameters = execution.recipe.parameters
     maximum = cast(int, parameters.get("max_characters", 2000))
     if parameters.get("mode", "paragraphs") == "paragraphs":
@@ -97,12 +95,8 @@ def formulate_claims_from_blocks(
     execution: pipeline_specification.StepExecution,
 ) -> step_contracts.ClaimFormulation:
     """Generate claims while preserving the pinned information-block evidence."""
-    extraction = information_block_extraction.TextExtraction.model_validate(
-        execution.inputs["extract_text"]
-    )
-    blocks = information_block_extraction.InformationBlocks.model_validate(
-        execution.inputs["segment_blocks"]
-    )
+    extraction = execution.inputs["extract_text"]
+    blocks = execution.inputs["segment_blocks"]
     information_block_extraction.validate_blocks(blocks, extraction)
 
     def validate(article: article_claim_extraction.ArticleExtraction) -> None:

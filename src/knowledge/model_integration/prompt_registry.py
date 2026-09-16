@@ -286,24 +286,29 @@ def validate_payload(root: Path, kind: ConfigKind, payload: dict[str, JsonValue]
     if kind == "prompt":
         Prompt.model_validate(payload)
         return
-    recipe = Recipe.model_validate(payload)
+    _recipe_references(root, Recipe.model_validate(payload))
+
+
+def _recipe_references(root: Path, recipe: Recipe) -> tuple[ConfigRevision, ConfigRevision | None]:
     prompt = read_revision(
         configuration_directory(root, "prompt", recipe.prompt_name), recipe.prompt_revision
     )
-    validate_payload(root, "prompt", prompt.payload)
+    Prompt.model_validate(prompt.payload)
     note_name = recipe.parameters.get("note_prompt_name")
     note_revision = recipe.parameters.get("note_prompt_revision")
     if isinstance(note_name, str) and isinstance(note_revision, int):
         note_prompt = read_revision(
             configuration_directory(root, "prompt", note_name), note_revision
         )
-        validate_payload(root, "prompt", note_prompt.payload)
+        Prompt.model_validate(note_prompt.payload)
+    rules = None
     if recipe.author_rules_name is not None and recipe.author_rules_revision is not None:
         rules = read_revision(
             configuration_directory(root, "author_rules", recipe.author_rules_name),
             recipe.author_rules_revision,
         )
         AuthorRules.model_validate(rules.payload)
+    return prompt, rules
 
 
 def resolve_recipe(
@@ -315,17 +320,8 @@ def resolve_recipe(
         record = read_revision(
             directory, active_revision(directory) if revision is None else revision
         )
-        validate_payload(root, "recipe", record.payload)
         recipe = Recipe.model_validate(record.payload)
-        prompt = read_revision(
-            configuration_directory(root, "prompt", recipe.prompt_name), recipe.prompt_revision
-        )
-        rules = None
-        if recipe.author_rules_name is not None and recipe.author_rules_revision is not None:
-            rules = read_revision(
-                configuration_directory(root, "author_rules", recipe.author_rules_name),
-                recipe.author_rules_revision,
-            )
+        prompt, rules = _recipe_references(root, recipe)
         return record, recipe, prompt, rules
 
 

@@ -7,7 +7,7 @@ evidence so examples cannot silently become factual support.
 from typing import cast
 
 from knowledge.experiments import pipeline_specification
-from knowledge.source_workflows import information_block_extraction, source_grounded_writing
+from knowledge.source_workflows import source_grounded_writing
 
 
 def validate_writing_parameters(parameters: dict) -> None:
@@ -22,12 +22,14 @@ def prepare_writing(
 ) -> source_grounded_writing.WritingPoints:
     """Compose cited points from pinned proposals and source blocks."""
     goal = cast(str, execution.recipe.parameters.get("goal", ""))
-    extraction, blocks = _source_inputs(execution)
     return source_grounded_writing.prepare_writing_points(
         goal,
-        extraction,
-        blocks,
-        {key: execution.inputs[key] for key in ("formulate_claims", "propose_changes")},
+        execution.inputs["extract_text"],
+        execution.inputs["segment_blocks"],
+        {
+            "formulate_claims": execution.inputs["formulate_claims"].model_dump(mode="json"),
+            "propose_changes": execution.inputs["propose_changes"].model_dump(mode="json"),
+        },
         execution.prompt_text,
         execution.output_directory,
         execution.recipe.model,
@@ -46,30 +48,13 @@ def draft_text(
         or execution.author_rules is None
     ):
         raise ValueError("Save and select private author rules before drafting prose")
-    extraction, blocks = _source_inputs(execution)
     return source_grounded_writing.draft_prose(
-        source_grounded_writing.WritingPoints.model_validate(execution.inputs["prepare_writing"]),
-        extraction,
-        blocks,
+        execution.inputs["prepare_writing"],
+        execution.inputs["extract_text"],
+        execution.inputs["segment_blocks"],
         execution.author_rules,
         execution.prompt_text,
         execution.output_directory,
         recipe.model,
         execution.cancelled,
     )
-
-
-def _source_inputs(
-    execution: pipeline_specification.StepExecution,
-) -> tuple[
-    information_block_extraction.TextExtraction,
-    information_block_extraction.InformationBlocks,
-]:
-    extraction = information_block_extraction.TextExtraction.model_validate(
-        execution.inputs["extract_text"]
-    )
-    blocks = information_block_extraction.InformationBlocks.model_validate(
-        execution.inputs["segment_blocks"]
-    )
-    information_block_extraction.validate_blocks(blocks, extraction)
-    return extraction, blocks

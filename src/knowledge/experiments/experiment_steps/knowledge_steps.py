@@ -13,7 +13,6 @@ from knowledge.knowledge_domain import knowledge_record_models
 from knowledge.model_integration import prompt_registry, structured_generation
 from knowledge.source_workflows import (
     claim_matching,
-    information_block_extraction,
     knowledge_candidate_selection,
     note_revision_proposals,
 )
@@ -21,7 +20,7 @@ from knowledge.source_workflows import (
 
 def validate_retrieval_parameters(parameters: dict) -> None:
     """Validate an optional query and bounded retrieval limit."""
-    _validate_query(parameters)
+    validate_selection_parameters(parameters)
     limit = parameters.get("limit", 20)
     if type(limit) is not int or not 1 <= limit <= 40:
         raise ValueError("limit must be an integer between 1 and 40")
@@ -29,19 +28,13 @@ def validate_retrieval_parameters(parameters: dict) -> None:
 
 def validate_selection_parameters(parameters: dict) -> None:
     """Validate an optional selection query."""
-    _validate_query(parameters)
-
-
-def _validate_query(parameters: dict) -> None:
     query = parameters.get("query")
     if query is not None and not isinstance(query, str):
         raise ValueError("query must be text")
 
 
 def _knowledge_query(execution: pipeline_specification.StepExecution) -> str:
-    formulation = step_contracts.ClaimFormulation.model_validate(
-        execution.inputs["formulate_claims"]
-    )
+    formulation = execution.inputs["formulate_claims"]
     return str(
         execution.recipe.parameters.get("query")
         or " ".join(
@@ -65,9 +58,7 @@ def select_entries(
     execution: pipeline_specification.StepExecution,
 ) -> knowledge_candidate_selection.KnowledgeSelection:
     """Select relevant entries only from the pinned retrieval output."""
-    retrieval = knowledge_candidate_selection.KnowledgeRetrieval.model_validate(
-        execution.inputs["find_knowledge"]
-    )
+    retrieval = execution.inputs["find_knowledge"]
     return knowledge_candidate_selection.select_knowledge(
         retrieval,
         _knowledge_query(execution),
@@ -82,12 +73,8 @@ def selected_records(
     execution: pipeline_specification.StepExecution,
 ) -> list[knowledge_record_models.Record]:
     """Verify selected candidates against retrieval and pinned knowledge revisions."""
-    retrieval = knowledge_candidate_selection.KnowledgeRetrieval.model_validate(
-        execution.inputs["find_knowledge"]
-    )
-    selection = knowledge_candidate_selection.KnowledgeSelection.model_validate(
-        execution.inputs["select_entries"]
-    )
+    retrieval = execution.inputs["find_knowledge"]
+    selection = execution.inputs["select_entries"]
     knowledge_candidate_selection.validate_selection(selection, retrieval)
     if any(hit.record not in execution.knowledge for hit in retrieval.hits):
         raise ValueError("Retrieved record differs from pinned input knowledge")
@@ -100,9 +87,7 @@ def propose_changes(
 ) -> step_contracts.KnowledgeChanges:
     """Generate claim and note proposals without accepting domain changes."""
     records = selected_records(execution)
-    formulation = step_contracts.ClaimFormulation.model_validate(
-        execution.inputs["formulate_claims"]
-    )
+    formulation = execution.inputs["formulate_claims"]
     changes = _propose_claim_changes(execution, formulation, records)
     return step_contracts.KnowledgeChanges(
         claims=changes,
@@ -120,12 +105,8 @@ def _propose_claim_changes(
     formulation: step_contracts.ClaimFormulation,
     records: list[knowledge_record_models.Record],
 ) -> list[step_contracts.ClaimChange]:
-    extraction = information_block_extraction.TextExtraction.model_validate(
-        execution.inputs["extract_text"]
-    )
-    blocks = information_block_extraction.InformationBlocks.model_validate(
-        execution.inputs["segment_blocks"]
-    )
+    extraction = execution.inputs["extract_text"]
+    blocks = execution.inputs["segment_blocks"]
     candidates = [record for record in records if record.kind == "claim"]
     changes = []
     for claim in formulation.claims:

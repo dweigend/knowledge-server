@@ -11,6 +11,7 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 from knowledge.experiments import (
@@ -183,8 +184,6 @@ def prepare_attempt(
         raise application_errors.Conflict(
             "Application files changed; restart the server before preparing an attempt"
         )
-    if parsed.step != step:
-        raise ValueError("Recipe belongs to a different pipeline step")
     saved, _, prompt, author_rules = prompt_registry.resolve_recipe(recipe.name, recipe.revision)
     if saved != recipe:
         raise ValueError("Recipe differs from its saved immutable revision")
@@ -223,7 +222,7 @@ def prepare_attempt(
 
 def _execution_inputs(
     directory: Path, specification: experiment_models.AttemptInputs
-) -> tuple[dict, list[knowledge_record_models.Record]]:
+) -> tuple[pipeline_specification.StepInputs, list[knowledge_record_models.Record]]:
     source_hash = hashlib.sha256((directory / "source.pdf").read_bytes()).hexdigest()
     records = json.loads((directory / "knowledge.json").read_text())["records"]
     if (
@@ -241,8 +240,11 @@ def _execution_inputs(
             or attempt["output_hash"] != specification.input_hashes[step]
         ):
             raise ValueError(f"Pinned {step} output changed or is no longer available")
-        inputs[step] = attempt["output"]
-    return inputs, [knowledge_record_models.Record.model_validate(record) for record in records]
+        contract = experiment_step_catalog.get_step_definition(step).output_contract
+        inputs[step] = contract.model_validate(attempt["output"])
+    return cast(pipeline_specification.StepInputs, inputs), [
+        knowledge_record_models.Record.model_validate(record) for record in records
+    ]
 
 
 def _attempt_cancellation(path: Path, started: float, timeout_seconds: float) -> Callable[[], bool]:
@@ -299,7 +301,7 @@ def _perform_attempt(
     )
     if cancelled():
         raise InterruptedError("Attempt cancelled; generated result was not accepted")
-    return contract.model_validate(result.model_dump()).model_dump(mode="json")
+    return contract.model_validate(result).model_dump(mode="json")
 
 
 def execute_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> dict:

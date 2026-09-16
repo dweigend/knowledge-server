@@ -13,15 +13,6 @@ if TYPE_CHECKING:
     from run_agent import AIAgent
 
 
-def configured_model(configuration: dict | None = None) -> tuple[str, str]:
-    """Resolve per-request choices without changing the user's Hermes configuration."""
-    configuration = configuration or {}
-    return (
-        configuration.get("model") or "gpt-5.6-luna",
-        configuration.get("provider") or "openai-codex",
-    )
-
-
 def create_agent(
     model: str,
     provider: str,
@@ -54,7 +45,8 @@ def main() -> None:
     """Read one request, persist its response and always close the Hermes agent."""
     request = json.loads(Path(sys.argv[1]).read_text())
     configuration = json.loads(request.get("configuration", "{}"))
-    model, provider = configured_model(configuration)
+    model = configuration.get("model") or "gpt-5.6-luna"
+    provider = configuration.get("provider") or "openai-codex"
     agent = create_agent(
         model,
         provider,

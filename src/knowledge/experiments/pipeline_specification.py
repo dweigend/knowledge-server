@@ -7,11 +7,30 @@ workflow implementations or maintaining parallel metadata tables.
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 from pydantic import JsonValue
 
+from knowledge.experiments.experiment_steps import step_contracts
 from knowledge.knowledge_domain import knowledge_record_models
 from knowledge.model_integration import prompt_registry, structured_generation
+from knowledge.source_workflows import (
+    information_block_extraction,
+    knowledge_candidate_selection,
+    source_grounded_writing,
+)
+
+
+class StepInputs(TypedDict, total=False):
+    """Keep loaded dependency outputs typed throughout one execution."""
+
+    extract_text: information_block_extraction.TextExtraction
+    segment_blocks: information_block_extraction.InformationBlocks
+    formulate_claims: step_contracts.ClaimFormulation
+    find_knowledge: knowledge_candidate_selection.KnowledgeRetrieval
+    select_entries: knowledge_candidate_selection.KnowledgeSelection
+    propose_changes: step_contracts.KnowledgeChanges
+    prepare_writing: source_grounded_writing.WritingPoints
 
 
 @dataclass(frozen=True)
@@ -19,7 +38,7 @@ class StepExecution:
     """Supply one step with its pinned inputs and isolated output location."""
 
     pdf: Path
-    inputs: dict[str, dict]
+    inputs: StepInputs
     knowledge: list[knowledge_record_models.Record]
     recipe: prompt_registry.Recipe
     prompt_text: str
