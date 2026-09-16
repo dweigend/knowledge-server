@@ -1,7 +1,10 @@
 import threading
+from collections.abc import Iterator
+from contextlib import suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from time import monotonic, sleep
+from typing import override
 
 import pytest
 
@@ -109,7 +112,7 @@ TEI = """<TEI xmlns="http://www.tei-c.org/ns/1.0">
 </TEI>"""
 
 
-def test_tei_preserves_structure_bibliography_and_unresolved_citations():
+def test_tei_preserves_structure_bibliography_and_unresolved_citations() -> None:
     paper = parse_paper_tei(TEI)
     assert paper.metadata.title == "A paper"
     assert paper.metadata.authors == ["Ada Lovelace"]
@@ -140,7 +143,7 @@ def test_tei_preserves_structure_bibliography_and_unresolved_citations():
     assert paper.raw_document == TEI
 
 
-def test_missing_metadata_stays_missing_and_is_reported():
+def test_missing_metadata_stays_missing_and_is_reported() -> None:
     paper = parse_paper_tei(
         '<TEI xmlns="http://www.tei-c.org/ns/1.0"><text><body><p>Hello</p></body></text></TEI>'
     )
@@ -161,29 +164,28 @@ def test_missing_metadata_stays_missing_and_is_reported():
         '<!DOCTYPE TEI [<!ENTITY secret SYSTEM "file:///etc/passwd">]><TEI/>',
     ],
 )
-def test_invalid_or_entity_bearing_response_is_rejected(xml):
+def test_invalid_or_entity_bearing_response_is_rejected(xml: str) -> None:
     with pytest.raises(ValueError):
         parse_paper_tei(xml)
 
 
 @pytest.fixture
-def grobid_server():
-    received = []
+def grobid_server() -> Iterator[tuple[str, list[tuple[str, bytes]]]]:
+    received: list[tuple[str, bytes]] = []
 
     class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
+        def do_POST(self) -> None:
             received.append((self.path, self.rfile.read(int(self.headers["Content-Length"]))))
             if self.path.startswith("/slow/"):
                 sleep(0.5)
             status = 503 if self.path.startswith("/busy/") else 200
             self.send_response(status)
             self.end_headers()
-            try:
+            with suppress(BrokenPipeError):
                 self.wfile.write(TEI.encode())
-            except BrokenPipeError:
-                pass
 
-        def log_message(self, format, *args):
+        @override
+        def log_message(self, format: str, *args: object) -> None:
             pass
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
@@ -195,7 +197,9 @@ def grobid_server():
     thread.join()
 
 
-def test_http_request_includes_complete_pdf_and_disables_consolidation(tmp_path, grobid_server):
+def test_http_request_includes_complete_pdf_and_disables_consolidation(
+    tmp_path: Path, grobid_server: tuple[str, list[tuple[str, bytes]]]
+) -> None:
     url, received = grobid_server
     pdf = tmp_path / 'paper;filename="oops.pdf'
     pdf.write_bytes(b"%PDF-test")
@@ -209,7 +213,12 @@ def test_http_request_includes_complete_pdf_and_disables_consolidation(tmp_path,
 
 
 @pytest.mark.parametrize("route, exception", [("busy", ValueError), ("slow", TimeoutError)])
-def test_service_failure_and_total_timeout_are_explicit(tmp_path, grobid_server, route, exception):
+def test_service_failure_and_total_timeout_are_explicit(
+    tmp_path: Path,
+    grobid_server: tuple[str, list[tuple[str, bytes]]],
+    route: str,
+    exception: type[Exception],
+) -> None:
     url, _ = grobid_server
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-test")
@@ -217,7 +226,9 @@ def test_service_failure_and_total_timeout_are_explicit(tmp_path, grobid_server,
         extract_paper(pdf, base_url=f"{url}/{route}", timeout_seconds=0.1)
 
 
-def test_cancel_stops_inflight_http_request(tmp_path, grobid_server):
+def test_cancel_stops_inflight_http_request(
+    tmp_path: Path, grobid_server: tuple[str, list[tuple[str, bytes]]]
+) -> None:
     url, _ = grobid_server
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-test")
@@ -232,7 +243,7 @@ def test_cancel_stops_inflight_http_request(tmp_path, grobid_server):
     assert monotonic() - start < 0.45
 
 
-def test_cancel_before_request_does_not_read_pdf_or_contact_service():
+def test_cancel_before_request_does_not_read_pdf_or_contact_service() -> None:
     with pytest.raises(InterruptedError):
         extract_paper(
             Path("missing.pdf"),
@@ -246,19 +257,19 @@ def test_cancel_before_request_does_not_read_pdf_or_contact_service():
     "url",
     ["file:///tmp/paper", "http://user:secret@localhost:8070", "http://localhost:8070?key=secret"],
 )
-def test_service_url_rejects_non_http_and_credentials(url):
+def test_service_url_rejects_non_http_and_credentials(url: str) -> None:
     with pytest.raises(ValueError):
         service_endpoint(url)
 
 
-def test_duplicate_bibliography_identifiers_do_not_resolve_citations():
+def test_duplicate_bibliography_identifiers_do_not_resolve_citations() -> None:
     duplicate = '<biblStruct xml:id="b0"><monogr><title>Other work</title></monogr></biblStruct>'
     paper = parse_paper_tei(TEI.replace("</listBibl>", duplicate + "</listBibl>"))
     assert not paper.citations[0].resolved
     assert any("Duplicate bibliography" in warning for warning in paper.warnings)
 
 
-def test_unstructured_bibliography_is_retained_in_markdown():
+def test_unstructured_bibliography_is_retained_in_markdown() -> None:
     entry = '<bibl xml:id="b9">An unparsed reference string.</bibl>'
     paper = parse_paper_tei(TEI.replace("</listBibl>", entry + "</listBibl>"))
     assert paper.references[-1].id == "b9"
@@ -266,7 +277,7 @@ def test_unstructured_bibliography_is_retained_in_markdown():
     assert "An unparsed reference string." in paper.markdown
 
 
-def test_citation_context_and_nearest_section_are_retained():
+def test_citation_context_and_nearest_section_are_retained() -> None:
     paper = parse_paper_tei(TEI)
     assert paper.citations[0].context == "Text before [1] after."
     assert paper.citations[0].section == "Introduction"
@@ -274,7 +285,7 @@ def test_citation_context_and_nearest_section_are_retained():
     assert paper.citations[1].section == "Details"
 
 
-def test_repeated_marker_context_tracks_its_actual_occurrence():
+def test_repeated_marker_context_tracks_its_actual_occurrence() -> None:
     repeated = '<p>First context <ref type="bibr" target="#b0">[1]</ref>'
     repeated += " filler " * 200
     repeated += ' second context <ref type="bibr" target="#b0">[1]</ref> ending.</p>'

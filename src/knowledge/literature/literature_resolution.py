@@ -31,9 +31,9 @@ MAX_LOOKUP_SECONDS: Final[int] = 15
 def normalized_words(text: str | None) -> str:
     """Normalize punctuation and Unicode for matching, never for stored quotations."""
     text = unicodedata.normalize("NFKD", text or "").casefold()
-    return " ".join(
-        re.findall(r"[^\W_]+", "".join(c for c in text if not unicodedata.combining(c)))
-    )
+    unaccented = "".join(c for c in text if not unicodedata.combining(c))
+    words = [match.group() for match in re.finditer(r"[^\W_]+", unaccented)]
+    return " ".join(words)
 
 
 def title_matches(original: papers.PaperMetadata, candidate: literature_models.Candidate) -> bool:

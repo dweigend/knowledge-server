@@ -13,7 +13,10 @@ from urllib.error import HTTPError
 from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from pydantic import TypeAdapter
+
 from knowledge.knowledge_domain import knowledge_record_models as models
+from knowledge.literature import zotero_models as responses
 
 BASE_URL: Final[str] = os.environ.get("KNOWLEDGE_ZOTERO_URL", "http://127.0.0.1:23119").rstrip("/")
 
@@ -21,7 +24,10 @@ BASE_URL: Final[str] = os.environ.get("KNOWLEDGE_ZOTERO_URL", "http://127.0.0.1:
 def server_id() -> str:
     """Identify the library instance before trusting persisted Zotero keys."""
     with urlopen(BASE_URL + "/api/", timeout=30) as response:
-        return response.headers["Zotero-Server-ID"]
+        identity = response.headers.get("Zotero-Server-ID")
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("Zotero response lacks its server identity")
+        return identity
 
 
 def fetch(path: str, instance: str | None = None) -> object:
@@ -31,7 +37,7 @@ def fetch(path: str, instance: str | None = None) -> object:
         return json.load(response)
 
 
-def write(path: str, content: bytes, content_type: str, instance: str, **headers: str) -> dict:
+def write(path: str, content: bytes, content_type: str, instance: str, **headers: str) -> object:
     """Make an authorized local API write without exposing the key in request URLs."""
     request = Request(
         BASE_URL + path,
@@ -48,39 +54,35 @@ def write(path: str, content: bytes, content_type: str, instance: str, **headers
     return json.loads(body) if body else {}
 
 
-def item_data(reference: models.ZoteroReference) -> dict:
+def item_data(reference: models.ZoteroReference) -> responses.ItemData:
     """Read current literature metadata directly from its pinned Zotero instance."""
     item = fetch(f"/api/{reference.library}/items/{reference.item_key}", reference.server_id)
-    if not isinstance(item, dict):
-        raise ValueError("Zotero item response is not an object")
-    return item["data"]
+    return responses.Item.model_validate(item).data
 
 
 def get_bibliography(
-    source: models.Source | models.ZoteroReference,
+    source: models.Source | models.LegacySource | models.ZoteroReference,
 ) -> models.Bibliography:
     """Resolve current Zotero metadata, including historical source references."""
     if isinstance(source, models.LegacySource):
         item = fetch(f"/api/users/0/items/{source.bibliography.zotero_key}")
-        if not isinstance(item, dict):
-            raise ValueError("Zotero item response is not an object")
-        metadata = item["data"]
+        metadata = responses.Item.model_validate(item).data
     else:
         reference = source if isinstance(source, models.ZoteroReference) else source.zotero
         metadata = item_data(reference)
+    metadata = responses.BibliographyData.model_validate(metadata.model_dump(exclude_unset=True))
     return models.Bibliography(
-        title=metadata["title"],
+        title=metadata.title,
         authors=[
-            creator.get("name")
-            or " ".join(filter(None, [creator.get("firstName"), creator.get("lastName")]))
-            for creator in metadata.get("creators", [])
+            creator.name or " ".join(filter(None, [creator.firstName, creator.lastName]))
+            for creator in metadata.creators
         ],
-        year=metadata.get("date", ""),
-        doi=metadata.get("DOI", ""),
-        url=metadata.get("url", ""),
-        zotero_key=metadata["key"],
+        year=metadata.date,
+        doi=metadata.DOI,
+        url=metadata.url,
+        zotero_key=metadata.key,
         zotero_library="server-pilot:users/0",
-        zotero_version=metadata.get("version", 0),
+        zotero_version=metadata.version,
     )
 
 
@@ -122,19 +124,19 @@ def matching_attachment(item_key: str, pdf: Path, instance: str) -> str | None:
     expected = hashlib.sha256(pdf.read_bytes()).hexdigest()
     if not isinstance(children, list):
         raise ValueError("Zotero children response is not a list")
-    for child in children:
-        metadata = child["data"]
-        if metadata.get("contentType") != "application/pdf":
+    for child in TypeAdapter(list[responses.AttachmentItem]).validate_python(children):
+        metadata = child.data
+        if metadata.contentType != "application/pdf":
             continue
-        if metadata.get("linkMode") not in {"imported_file", "imported_url"}:
+        if metadata.linkMode not in {"imported_file", "imported_url"}:
             continue
-        actual_hash = attachment_hash(child["key"], instance)
+        actual_hash = attachment_hash(child.key, instance)
         if actual_hash == expected:
-            return child["key"]
-        pending_tag = {"tag": f"knowledge-pilot-sha256:{expected}"}
-        if actual_hash is None and pending_tag in metadata.get("tags", []):
-            upload_attachment(child["key"], pdf, instance)
-            return child["key"]
+            return child.key
+        pending_tag = responses.Tag(tag=f"knowledge-pilot-sha256:{expected}")
+        if actual_hash is None and pending_tag in metadata.tags:
+            upload_attachment(child.key, pdf, instance)
+            return child.key
     return None
 
 
@@ -175,7 +177,7 @@ def add_attachment(item_key: str, pdf: Path, instance: str) -> str:
         "application/json",
         instance,
     )
-    key = result["successful"]["0"]["key"]
+    key = responses.WriteResult.model_validate(result).successful["0"].key
     upload_attachment(key, pdf, instance)
     return key
 
@@ -197,16 +199,19 @@ def upload_attachment(key: str, pdf: Path, instance: str) -> None:
         instance,
         **{"If-None-Match": "*"},
     )
-    if upload.get("exists"):
+    authorization = responses.UploadAuthorization.model_validate(upload)
+    if authorization.exists:
         return
-    if not upload["url"].startswith(BASE_URL + "/api/local/uploads/"):
+    if not authorization.url.startswith(BASE_URL + "/api/local/uploads/"):
         raise ValueError("Zotero returned an unexpected upload destination")
-    request = Request(upload["url"], data=content, headers={"Content-Type": upload["contentType"]})
+    request = Request(
+        authorization.url, data=content, headers={"Content-Type": authorization.contentType}
+    )
     with urlopen(request, timeout=60) as response:
         response.read()
     write(
         endpoint,
-        urlencode({"upload": upload["uploadKey"]}).encode(),
+        urlencode({"upload": authorization.uploadKey}).encode(),
         "application/x-www-form-urlencoded",
         instance,
         **{"If-None-Match": "*"},
@@ -249,7 +254,7 @@ def find_or_import_item(
         existing = fetch(f"/api/users/0/items?{query}")
     if not isinstance(existing, list) or len(existing) != 1:
         raise ValueError("Zotero import not reconciled to exactly one tagged source")
-    return existing[0]["key"]
+    return responses.ItemKey.model_validate(existing[0]).key
 
 
 def import_ris(bibliography: models.Bibliography, clean_pdf: Path, tag: str) -> None:
@@ -275,7 +280,7 @@ def import_ris(bibliography: models.Bibliography, clean_pdf: Path, tag: str) -> 
         response.read()
 
 
-def article_citation(reference: models.ZoteroReference) -> dict:
+def article_citation(reference: models.ZoteroReference) -> responses.Item:
     """Read current metadata and Zotero-rendered citation exports without persisting copies."""
     query = urlencode({"include": "data,bib,bibtex", "style": "apa", "linkwrap": 0})
     item = fetch(
@@ -283,4 +288,4 @@ def article_citation(reference: models.ZoteroReference) -> dict:
     )
     if not isinstance(item, dict) or not isinstance(item.get("data"), dict):
         raise ValueError("Zotero item response lacks literature metadata")
-    return item
+    return responses.Item.model_validate(item)

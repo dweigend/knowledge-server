@@ -7,12 +7,12 @@ the shared experiment lifecycle without writing canonical knowledge.
 import json
 import secrets
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, TypedDict
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 from starlette.datastructures import FormData, UploadFile
 
 from knowledge.experiments import (
@@ -23,6 +23,7 @@ from knowledge.experiments import (
 from knowledge.experiments import (
     experiment_runner as experiments,
 )
+from knowledge.experiments.experiment_views import AttemptView
 from knowledge.knowledge_domain import application_errors
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import prompt_registry, structured_generation
@@ -58,9 +59,22 @@ def latest_recipe(step: str) -> tuple[prompt_registry.ConfigRevision, prompt_reg
     return record, prompt_registry.Recipe.model_validate(record.payload)
 
 
-def step_cards(attempts: list[dict]) -> list[dict]:
+class StepCard(TypedDict):
+    """Present a pipeline operation with its recipe and attempt history."""
+
+    step: str
+    title: str
+    record: prompt_registry.ConfigRevision
+    recipe: prompt_registry.Recipe
+    prompt: prompt_registry.ConfigRevision
+    latest_prompt: prompt_registry.ConfigRevision
+    latest: AttemptView | None
+    history: list[AttemptView]
+
+
+def step_cards(attempts: list[AttemptView]) -> list[StepCard]:
     """Compose operation controls with their latest attempt and exact prompt draft."""
-    cards = []
+    cards: list[StepCard] = []
     for step, title in STEP_LABELS.items():
         record, recipe = latest_recipe(step)
         prompt = prompt_registry.get_revision("prompt", recipe.prompt_name, recipe.prompt_revision)
@@ -80,7 +94,9 @@ def step_cards(attempts: list[dict]) -> list[dict]:
     return cards
 
 
-def extraction_form_parameters(form: FormData, previous: dict) -> dict:
+def extraction_form_parameters(
+    form: FormData, previous: dict[str, JsonValue]
+) -> dict[str, JsonValue]:
     """Preserve saved extraction settings while applying explicit form edits."""
     parameters = dict(previous)
     parameters["document_provider"] = required_text(form, "document_provider")
@@ -93,7 +109,7 @@ def extraction_form_parameters(form: FormData, previous: dict) -> dict:
     if "discovery_settings" not in form:
         return parameters
 
-    discovery = dict(parameters.get("discovery", {}))
+    discovery = TypeAdapter(dict[str, JsonValue]).validate_python(parameters.get("discovery", {}))
     for name in ("providers", "required_fields"):
         discovery[name] = [
             entry.strip()
@@ -128,31 +144,32 @@ def save_step_configuration(step: str, form: FormData) -> prompt_registry.Config
     prompt_revision = int(required_text(form, "prompt_revision"))
     if prompt_registry.get_revision("prompt", recipe.prompt_name).revision != prompt_revision:
         raise application_errors.Conflict("Prompt changed in another page; reload before saving.")
-    configuration = structured_generation.ModelConfiguration(
-        model=str(form.get("model", recipe.model.model or "")) or None,
-        provider=str(form.get("provider", recipe.model.provider or "")) or None,
-        reasoning_effort=cast(
-            structured_generation.ReasoningEffort,
-            str(form.get("reasoning_effort", recipe.model.reasoning_effort)),
-        ),
-        max_attempts=int(str(form.get("max_attempts", "2"))),
-        timeout_seconds=float(str(form.get("timeout_seconds", "240"))),
-        allowed_tools=json.loads(str(form.get("allowed_tools", "[]"))),
+    configuration = structured_generation.ModelConfiguration.model_validate(
+        {
+            "model": str(form.get("model", recipe.model.model or "")) or None,
+            "provider": str(form.get("provider", recipe.model.provider or "")) or None,
+            "reasoning_effort": str(form.get("reasoning_effort", recipe.model.reasoning_effort)),
+            "max_attempts": int(str(form.get("max_attempts", "2"))),
+            "timeout_seconds": float(str(form.get("timeout_seconds", "240"))),
+            "allowed_tools": json.loads(str(form.get("allowed_tools", "[]"))),
+        }
     )
-    parameters = json.loads(str(form.get("parameters", "{}")))
+    parameters = TypeAdapter(dict[str, JsonValue]).validate_json(str(form.get("parameters", "{}")))
     if step == "extract_text" and "document_provider" in form:
         parameters = extraction_form_parameters(form, recipe.parameters)
     rules_name = str(form.get("author_rules_name", "")) or None
     rules_revision = int(required_text(form, "author_rules_revision")) if rules_name else None
-    updated = prompt_registry.Recipe(
-        step=cast(prompt_registry.Step, step),
-        prompt_name=recipe.prompt_name,
-        prompt_revision=recipe.prompt_revision,
-        model=configuration,
-        parameters=parameters,
-        output_schema=definition.output_schema,
-        author_rules_name=rules_name,
-        author_rules_revision=rules_revision,
+    updated = prompt_registry.Recipe.model_validate(
+        {
+            "step": step,
+            "prompt_name": recipe.prompt_name,
+            "prompt_revision": recipe.prompt_revision,
+            "model": configuration,
+            "parameters": parameters,
+            "output_schema": definition.output_schema,
+            "author_rules_name": rules_name,
+            "author_rules_revision": rules_revision,
+        }
     )
     definition.validate_recipe(updated)
     if rules_name is not None and rules_revision is not None:
@@ -170,7 +187,7 @@ def save_step_configuration(step: str, form: FormData) -> prompt_registry.Config
     return prompt_registry.save_revision("recipe", step, updated.model_dump(mode="json"), expected)
 
 
-def selected_attempt(root: Path, run_id: str, attempt_id: str) -> dict:
+def selected_attempt(root: Path, run_id: str, attempt_id: str) -> AttemptView:
     """Resolve one attempt only within its owned experiment."""
     for attempt in experiments.read_attempts(root, run_id):
         if attempt["id"] == attempt_id:
@@ -210,13 +227,14 @@ def prepare_comparison(
 
 async def validated_uploads(uploads: list[str | UploadFile]) -> list[tuple[str, UploadFile]]:
     """Check every uploaded PDF before creating the first experiment."""
-    if not uploads or any(not isinstance(source, UploadFile) for source in uploads):
+    if not uploads:
         raise ValueError("Choose at least one PDF source")
     if len(uploads) > 12:
         raise ValueError("Choose at most twelve sources at a time")
     validated = []
-    for upload in uploads:
-        source = cast(UploadFile, upload)
+    for source in uploads:
+        if not isinstance(source, UploadFile):
+            raise ValueError("Choose at least one PDF source")
         filename = source.filename or "source.pdf"
         content = await source.read(experiments.MAX_PDF_BYTES + 1)
         if len(content) > experiments.MAX_PDF_BYTES:

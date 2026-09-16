@@ -1,5 +1,8 @@
 import json
 from pathlib import Path
+from typing import Never
+
+import pytest
 
 from knowledge.knowledge_domain.knowledge_record_models import Contract
 from knowledge.model_integration.structured_generation import generate
@@ -9,10 +12,12 @@ class Proposal(Contract):
     quote: str
 
 
-def test_cached_schema_valid_output_must_pass_domain_validation(tmp_path, monkeypatch):
+def test_cached_schema_valid_output_must_pass_domain_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
 
-    def respond(arguments, **kwargs):
+    def respond(arguments: list[str], **kwargs: object) -> None:
         calls.append(arguments)
         quote = "fabricated" if len(calls) == 1 else "exact source"
         Path(arguments[-1]).write_text(json.dumps({"response": json.dumps({"quote": quote})}))
@@ -21,7 +26,7 @@ def test_cached_schema_valid_output_must_pass_domain_validation(tmp_path, monkey
     first = generate("Instructions", "Source", Proposal, tmp_path)
     assert first.quote == "fabricated"
 
-    def validate(proposal):
+    def validate(proposal: Proposal) -> None:
         if proposal.quote != "exact source":
             raise ValueError("Quote not in source")
 
@@ -30,10 +35,12 @@ def test_cached_schema_valid_output_must_pass_domain_validation(tmp_path, monkey
     assert len(calls) == 2
 
 
-def test_json_syntax_repair_excludes_large_source_context(tmp_path, monkeypatch):
+def test_json_syntax_repair_excludes_large_source_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     requests = []
 
-    def respond(arguments, **kwargs):
+    def respond(arguments: list[str], **kwargs: object) -> None:
         requests.append(json.loads(Path(arguments[-2]).read_text()))
         response = '{"quote": "exact",}' if len(requests) == 1 else '{"quote": "exact"}'
         Path(arguments[-1]).write_text(json.dumps({"response": response}))
@@ -47,12 +54,14 @@ def test_json_syntax_repair_excludes_large_source_context(tmp_path, monkeypatch)
     assert "Validation errors" in requests[1]["input"]
 
 
-def test_configuration_variants_do_not_share_model_responses(tmp_path, monkeypatch):
+def test_configuration_variants_do_not_share_model_responses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from knowledge.model_integration.structured_generation import ModelConfiguration
 
     requests = []
 
-    def respond(arguments, **kwargs):
+    def respond(arguments: list[str], **kwargs: object) -> None:
         request = json.loads(Path(arguments[-2]).read_text())
         requests.append(json.loads(request["configuration"]))
         Path(arguments[-1]).write_text(json.dumps({"response": '{"quote": "exact"}'}))
@@ -72,14 +81,16 @@ def test_configuration_variants_do_not_share_model_responses(tmp_path, monkeypat
     assert [request["reasoning_effort"] for request in requests] == ["max", "max"]
 
 
-def test_single_attempt_does_not_run_repair(tmp_path, monkeypatch):
+def test_single_attempt_does_not_run_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import pytest
 
     from knowledge.model_integration.structured_generation import ModelConfiguration
 
     calls = []
 
-    def respond(arguments, **kwargs):
+    def respond(arguments: list[str], **kwargs: object) -> None:
         calls.append(arguments)
         assert kwargs["timeout"] == 12
         Path(arguments[-1]).write_text(json.dumps({"response": "invalid"}))
@@ -96,7 +107,7 @@ def test_single_attempt_does_not_run_repair(tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
-def test_unsupported_model_capabilities_are_rejected():
+def test_unsupported_model_capabilities_are_rejected() -> None:
     import pytest
 
     from knowledge.model_integration.structured_generation import ModelConfiguration
@@ -112,7 +123,7 @@ def test_unsupported_model_capabilities_are_rejected():
             ModelConfiguration.model_validate(configuration)
 
 
-def test_cancelled_generation_does_not_create_request(tmp_path):
+def test_cancelled_generation_does_not_create_request(tmp_path: Path) -> None:
     import pytest
 
     with pytest.raises(InterruptedError, match="cancelled"):
@@ -120,7 +131,7 @@ def test_cancelled_generation_does_not_create_request(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_running_hermes_is_terminated_on_cancellation():
+def test_running_hermes_is_terminated_on_cancellation() -> None:
     import subprocess
     from unittest.mock import Mock
 
@@ -136,12 +147,14 @@ def test_running_hermes_is_terminated_on_cancellation():
     process.wait.assert_called_once_with(timeout=2)
 
 
-def test_provider_failure_records_inspectable_event_without_credentials(tmp_path, monkeypatch):
+def test_provider_failure_records_inspectable_event_without_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import subprocess
 
     import pytest
 
-    def fail(arguments, **kwargs):
+    def fail(arguments: list[str], **kwargs: object) -> Never:
         raise subprocess.CalledProcessError(1, arguments, stderr="SECRET_PROVIDER_TOKEN")
 
     monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", fail)
@@ -159,8 +172,10 @@ def test_provider_failure_records_inspectable_event_without_credentials(tmp_path
     assert "SECRET_PROVIDER_TOKEN" not in json.dumps(events)
 
 
-def test_reused_response_preserves_files_and_records_effective_provider(tmp_path, monkeypatch):
-    def respond(arguments, **kwargs):
+def test_reused_response_preserves_files_and_records_effective_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def respond(arguments: list[str], **kwargs: object) -> None:
         Path(arguments[-1]).write_text(
             json.dumps(
                 {
@@ -189,23 +204,27 @@ def test_reused_response_preserves_files_and_records_effective_provider(tmp_path
     assert events[-1]["event"] == "model_cache_reused"
 
 
-def test_bridge_does_not_report_requested_model_as_verified_runtime():
-    from types import SimpleNamespace
-
+def test_bridge_does_not_report_requested_model_as_verified_runtime() -> None:
     from knowledge.model_integration.hermes_bridge import run_request
 
-    agent = SimpleNamespace(
-        session_id="test-session",
-        run_conversation=lambda **kwargs: {"final_response": "{}"},
-    )
+    class Agent:
+        session_id = "test-session"
+
+        def run_conversation(self, *, user_message: str, system_message: str) -> dict[str, str]:
+            return {"final_response": "{}"}
+
+        def close(self) -> None:
+            pass
+
+    agent = Agent()
     response = run_request(agent, {"input": "fixture", "instructions": "fixture"}, "a", "b")
-    assert response["model"] is None
-    assert response["provider"] is None
-    assert response["requested_model"] == "a"
-    assert response["requested_provider"] == "b"
+    assert response.model is None
+    assert response.provider is None
+    assert response.requested_model == "a"
+    assert response.requested_provider == "b"
 
 
-def test_bridge_passes_pinned_reasoning_effort_to_hermes(monkeypatch):
+def test_bridge_passes_pinned_reasoning_effort_to_hermes(monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
     from types import SimpleNamespace
 
@@ -214,7 +233,7 @@ def test_bridge_passes_pinned_reasoning_effort_to_hermes(monkeypatch):
     received = {}
 
     class Agent:
-        def __init__(self, **settings):
+        def __init__(self, **settings: object) -> None:
             received.update(settings)
 
     monkeypatch.setitem(

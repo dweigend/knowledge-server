@@ -13,6 +13,7 @@ from pydantic import TypeAdapter
 
 from knowledge.experiments import experiment_runner as experiments
 from knowledge.experiments import experiment_step_catalog
+from knowledge.experiments.experiment_views import AttemptView, ExperimentReport, ExperimentView
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import prompt_registry
 
@@ -55,7 +56,7 @@ def create_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def create_from_file(arguments: argparse.Namespace) -> dict:
+def create_from_file(arguments: argparse.Namespace) -> dict[str, str | bool]:
     """Read explicit local inputs and delegate isolation to the shared experiment store."""
     if arguments.pdf.stat().st_size > experiments.MAX_PDF_BYTES:
         raise ValueError("Experiment PDFs must not exceed 64 MiB")
@@ -69,7 +70,7 @@ def create_from_file(arguments: argparse.Namespace) -> dict:
     return {"experiment_id": identifier}
 
 
-def run_saved_step(arguments: argparse.Namespace) -> dict:
+def run_saved_step(arguments: argparse.Namespace) -> AttemptView:
     """Pin and execute one step using exactly the runner invoked by the web interface."""
     prompt_registry.seed_defaults()
     recipe, _, _, _ = prompt_registry.resolve_recipe(
@@ -86,7 +87,9 @@ def run_saved_step(arguments: argparse.Namespace) -> dict:
     return experiments.execute_attempt(arguments.archive_root, arguments.experiment, identifier)
 
 
-def dispatch(arguments: argparse.Namespace) -> dict | list[dict]:
+def dispatch(
+    arguments: argparse.Namespace,
+) -> AttemptView | ExperimentReport | list[ExperimentView] | dict[str, str | bool]:
     """Dispatch explicit commands while keeping reads free of configuration writes."""
     root = arguments.archive_root.expanduser()
     arguments.archive_root = root

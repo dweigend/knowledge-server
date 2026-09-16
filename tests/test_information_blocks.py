@@ -25,7 +25,9 @@ from knowledge.source_workflows.information_block_extraction import (
 )
 
 
-def extraction(pages=("First observation.\n\nSecond observation.", "A separate page.")):
+def extraction(
+    pages: tuple[str, ...] = ("First observation.\n\nSecond observation.", "A separate page."),
+) -> TextExtraction:
     digest = hashlib.sha256(b"manually reviewed fixture").hexdigest()
     return TextExtraction(
         pdf_sha256=digest,
@@ -35,7 +37,7 @@ def extraction(pages=("First observation.\n\nSecond observation.", "A separate p
     )
 
 
-def test_paragraph_segmentation_preserves_independently_known_offsets():
+def test_paragraph_segmentation_preserves_independently_known_offsets() -> None:
     result = segment_verbatim(extraction())
     assert [block.bullets for block in result.blocks] == [
         ["First observation."],
@@ -61,7 +63,9 @@ def test_paragraph_segmentation_preserves_independently_known_offsets():
         ({"quote": "Invented observation"}, "exact page offsets"),
     ],
 )
-def test_sources_reject_wrong_revision_page_offsets_and_quote(changes, message):
+def test_sources_reject_wrong_revision_page_offsets_and_quote(
+    changes: dict[str, object], message: str
+) -> None:
     document = extraction()
     span = SourceSpan(
         extraction_revision=document.revision, page=1, start=0, end=18, quote="First observation."
@@ -73,14 +77,14 @@ def test_sources_reject_wrong_revision_page_offsets_and_quote(changes, message):
         validate_blocks(blocks, document)
 
 
-def test_extraction_revision_detects_changed_text_and_method():
+def test_extraction_revision_detects_changed_text_and_method() -> None:
     document = extraction()
     for change in [{"pages": ["Changed text"]}, {"method": "another-tool"}]:
         with pytest.raises(ValidationError, match="does not match"):
             TextExtraction.model_validate(document.model_dump() | change)
 
 
-def test_verbatim_cannot_disguise_paraphrases():
+def test_verbatim_cannot_disguise_paraphrases() -> None:
     document = extraction()
     result = segment_verbatim(document)
     result.blocks[0].bullets = ["A different observation."]
@@ -90,7 +94,9 @@ def test_verbatim_cannot_disguise_paraphrases():
     validate_blocks(result, document)
 
 
-def test_pdf_operation_accepts_readable_single_page(tmp_path, monkeypatch):
+def test_pdf_operation_accepts_readable_single_page(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     pdf = tmp_path / "source.pdf"
     pdf.write_bytes(b"PDF fixture boundary")
 
@@ -101,7 +107,7 @@ def test_pdf_operation_accepts_readable_single_page(tmp_path, monkeypatch):
     assert extract_text(pdf).pages == ("A short page.",)
 
 
-def test_pdf_operation_rejects_empty_text(tmp_path, monkeypatch):
+def test_pdf_operation_rejects_empty_text(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pdf = tmp_path / "source.pdf"
     pdf.write_bytes(b"PDF fixture boundary")
     monkeypatch.setattr(
@@ -112,11 +118,13 @@ def test_pdf_operation_rejects_empty_text(tmp_path, monkeypatch):
         extract_text(pdf)
 
 
-def test_model_segmentation_uses_shared_adapter_and_domain_validation(tmp_path, monkeypatch):
+def test_model_segmentation_uses_shared_adapter_and_domain_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     document = extraction()
     requests = []
 
-    def respond(arguments, **kwargs):
+    def respond(arguments: list[str], **kwargs: object) -> None:
         requests.append(json.loads(Path(arguments[-2]).read_text()))
         result = segment_verbatim(document).model_dump()
         for block in result["blocks"]:
@@ -138,12 +146,12 @@ def test_model_segmentation_uses_shared_adapter_and_domain_validation(tmp_path, 
     assert set(schema["$defs"]["QuoteReference"]["properties"]) == {"page", "quote"}
 
 
-def test_deterministic_segmentation_rejects_unbounded_result():
+def test_deterministic_segmentation_rejects_unbounded_result() -> None:
     with pytest.raises(ValueError, match="500 blocks"):
         segment_verbatim(extraction(("x" * 501,)), max_characters=1)
 
 
-def test_model_segmentation_source_budget_is_an_enforced_constraint():
+def test_model_segmentation_source_budget_is_an_enforced_constraint() -> None:
     document = extraction(("First observation.",))
     blocks = segment_verbatim(document)
     validate_segment_budget(blocks, document, 18)
@@ -151,7 +159,7 @@ def test_model_segmentation_source_budget_is_an_enforced_constraint():
         validate_segment_budget(blocks, document, 17)
 
 
-def test_quote_resolver_computes_offsets_without_changing_pdf_typography():
+def test_quote_resolver_computes_offsets_without_changing_pdf_typography() -> None:
     document = extraction(("Heading\n\nA  ﬁnding\nspans lines.\nEnd.",))
     span = resolve_source_quote(QuoteReference(page=1, quote="A  ﬁnding\nspans lines."), document)
     assert (span.start, span.end) == (9, 31)
@@ -171,12 +179,14 @@ def test_quote_resolver_computes_offsets_without_changing_pdf_typography():
         (("A  ﬁnding\nspans lines.",), 1, "A finding spans lines."),
     ],
 )
-def test_quote_resolver_rejects_ambiguity_wrong_page_and_changed_wording(pages, page, quote):
+def test_quote_resolver_rejects_ambiguity_wrong_page_and_changed_wording(
+    pages: tuple[str, ...], page: int, quote: str
+) -> None:
     with pytest.raises(ValueError):
         resolve_source_quote(QuoteReference(page=page, quote=quote), extraction(pages))
 
 
-def test_segmentation_resolver_retains_paraphrases_without_calling_them_quotes():
+def test_segmentation_resolver_retains_paraphrases_without_calling_them_quotes() -> None:
     document = extraction(("A finding.",))
     proposal = BlockSegmentation(
         blocks=[

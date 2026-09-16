@@ -1,8 +1,14 @@
+from pathlib import Path
+
+import pytest
+
 from knowledge.experiments.experiment_literature_catalog import literature_catalog
 from knowledge.literature.literature_models import LiteratureMetadata, LiteratureRecord, Resolution
 
 
-def test_catalog_groups_confirmed_work_identity_across_current_documents(tmp_path, monkeypatch):
+def test_catalog_groups_confirmed_work_identity_across_current_documents(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     record = LiteratureRecord(
         id="doi:10.1234/shared",
         role="reference",
@@ -15,7 +21,7 @@ def test_catalog_groups_confirmed_work_identity_across_current_documents(tmp_pat
         "knowledge.experiments.experiment_literature_catalog.list_experiments", lambda root: sources
     )
 
-    def attempts(root, source_id):
+    def attempts(root: Path, source_id: str) -> list[dict[str, object]]:
         return [
             {
                 "step": "extract_text",

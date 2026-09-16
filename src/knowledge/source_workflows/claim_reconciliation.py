@@ -56,7 +56,7 @@ def reconcile_claim(
     with application.database.transaction() as ledger:
         receipt = ledger.get_receipt(request_id)
     if receipt:
-        return [models.Reference.model_validate(reference) for reference in receipt["result"]]
+        return receipt.result
     query = f"{proposal.proposition} {proposal.scope}"
     candidates = claim_candidates(application, batch_id, query)
     decision = claim_matching.propose_matching(proposal, candidates, run_directory)

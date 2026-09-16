@@ -16,6 +16,7 @@ from typing import Final, Literal, Self
 from pydantic import Field, ValidationError, model_validator
 
 from knowledge.knowledge_domain import knowledge_record_models as models
+from knowledge.model_integration.generation_response_models import GenerationResponse
 from knowledge.runtime_support import workflow_event_log as events
 
 HERMES_PYTHON: Final[Path] = Path(
@@ -207,7 +208,7 @@ def run_hermes(
 
 
 def wait_for_hermes(
-    process: subprocess.Popen,
+    process: subprocess.Popen[bytes],
     timeout_seconds: float,
     cancelled: Callable[[], bool],
 ) -> None:
@@ -263,18 +264,18 @@ def request_response(
     if not cached:
         log_path = directory / f"hermes-{attempt}.log"
         run_hermes(request_path, response_path, log_path, cancelled=cancelled)
-    recorded = json.loads(response_path.read_text())
+    recorded = GenerationResponse.model_validate_json(response_path.read_bytes())
     events.record_event(
         directory,
         "model_response",
         attempt=attempt + 1,
         response_file=response_path.name,
         execution="cached" if cached else "live",
-        response_origin=recorded.get("execution", "unverified"),
-        model=recorded.get("model"),
-        provider=recorded.get("provider"),
+        response_origin=recorded.execution,
+        model=recorded.model,
+        provider=recorded.provider,
     )
-    response = recorded["response"].strip()
+    response = recorded.response.strip()
     if response.startswith("```json") and response.endswith("```"):
         response = response[7:-3].strip()
     return response

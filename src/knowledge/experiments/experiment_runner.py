@@ -11,8 +11,10 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Final, cast
+from typing import Final
 from uuid import uuid4
+
+from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from knowledge.experiments import (
     experiment_models,
@@ -20,11 +22,17 @@ from knowledge.experiments import (
     experiment_store,
     pipeline_specification,
 )
+from knowledge.experiments.experiment_views import AttemptView, ExperimentReport, ExperimentView
 from knowledge.knowledge_domain import application_errors, knowledge_record_models
 from knowledge.model_integration import prompt_registry
 from knowledge.runtime_support import atomic_json_files
 
 MAX_PDF_BYTES: Final[int] = 64 * 1024 * 1024
+EXPERIMENT_VIEW: Final[TypeAdapter[ExperimentView]] = TypeAdapter(ExperimentView)
+STEP_INPUTS: Final[TypeAdapter[pipeline_specification.StepInputs]] = TypeAdapter(
+    pipeline_specification.StepInputs
+)
+TRACE_EVENT: Final[TypeAdapter[dict[str, JsonValue]]] = TypeAdapter(dict[str, JsonValue])
 
 
 def create_experiment(
@@ -58,7 +66,7 @@ def create_experiment(
     return experiment_id
 
 
-def read_attempts(archive_root: Path, experiment_id: str) -> list[dict]:
+def read_attempts(archive_root: Path, experiment_id: str) -> list[AttemptView]:
     """Read history and derive stale inputs against the latest successful attempts."""
     directory = experiment_store.experiment_directory(archive_root, experiment_id)
     experiment_store.read_experiment(directory)
@@ -86,17 +94,17 @@ def read_attempts(archive_root: Path, experiment_id: str) -> list[dict]:
     return attempts
 
 
-def read_manifest(archive_root: Path, experiment_id: str) -> dict:
+def read_manifest(archive_root: Path, experiment_id: str) -> ExperimentView:
     """Read one current experiment with its latest step statuses."""
     directory = experiment_store.experiment_directory(archive_root, experiment_id)
     manifest = experiment_store.read_experiment(directory).model_dump(mode="json")
     attempts = read_attempts(archive_root, experiment_id)
     manifest["steps"] = {attempt["step"]: attempt for attempt in attempts}
     manifest["status"] = attempts[-1]["status"] if attempts else "created"
-    return manifest
+    return EXPERIMENT_VIEW.validate_python(manifest)
 
 
-def list_experiments(archive_root: Path) -> list[dict]:
+def list_experiments(archive_root: Path) -> list[ExperimentView]:
     """List private sources with their latest manually requested step status."""
     root = experiment_store.experiments_root(archive_root)
     if not root.exists():
@@ -122,7 +130,7 @@ def list_experiments(archive_root: Path) -> list[dict]:
 
 
 def _select_inputs(
-    attempts: list[dict], dependencies: tuple[str, ...], supplied: dict[str, str] | None
+    attempts: list[AttemptView], dependencies: tuple[str, ...], supplied: dict[str, str] | None
 ) -> tuple[dict[str, str], dict[str, str]]:
     selected = (
         supplied
@@ -136,7 +144,8 @@ def _select_inputs(
     if supplied is not None and set(supplied) != set(dependencies):
         raise ValueError("Explicit input attempts must match the step's required dependencies")
     indexed = {attempt["id"]: attempt for attempt in attempts}
-    pins, hashes = {}, {}
+    pins: dict[str, str] = {}
+    hashes: dict[str, str] = {}
     for step in dependencies:
         attempt = indexed.get(selected.get(step, ""))
         if attempt is None or attempt["step"] != step or attempt["status"] != "completed":
@@ -145,12 +154,15 @@ def _select_inputs(
             raise application_errors.Conflict(
                 f"Input {step} is stale; rerun it or explicitly select comparison inputs"
             )
-        pins[step], hashes[step] = attempt["id"], attempt["output_hash"]
+        output_hash = attempt.get("output_hash")
+        if output_hash is None:
+            raise ValueError(f"Successful {step} attempt has no output hash")
+        pins[step], hashes[step] = attempt["id"], output_hash
     _validate_input_lineage(pins, indexed)
     return pins, hashes
 
 
-def _validate_input_lineage(pins: dict[str, str], indexed: dict[str, dict]) -> None:
+def _validate_input_lineage(pins: dict[str, str], indexed: dict[str, AttemptView]) -> None:
     lineage: dict[str, str] = {}
     pending = list(pins.items())
     while pending:
@@ -242,7 +254,7 @@ def _execution_inputs(
             raise ValueError(f"Pinned {step} output changed or is no longer available")
         contract = experiment_step_catalog.get_step_definition(step).output_contract
         inputs[step] = contract.model_validate(attempt["output"])
-    return cast(pipeline_specification.StepInputs, inputs), [
+    return STEP_INPUTS.validate_python(inputs), [
         knowledge_record_models.Record.model_validate(record) for record in records
     ]
 
@@ -261,7 +273,7 @@ def _perform_attempt(
     path: Path,
     specification: experiment_models.AttemptInputs,
     started: float,
-) -> dict:
+) -> dict[str, JsonValue]:
     recipe = prompt_registry.Recipe.model_validate(specification.recipe.payload)
     cancelled = _attempt_cancellation(path, started, recipe.model.timeout_seconds)
     if cancelled():
@@ -304,7 +316,7 @@ def _perform_attempt(
     return contract.model_validate(result).model_dump(mode="json")
 
 
-def execute_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> dict:
+def execute_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> AttemptView:
     """Execute one pinned attempt while excluding concurrent workers and deletion."""
     with experiment_store.experiment_lock(archive_root, experiment_id):
         directory = experiment_store.experiment_directory(archive_root, experiment_id)
@@ -357,7 +369,7 @@ def request_cancel(archive_root: Path, experiment_id: str, attempt_id: str) -> N
         pass
 
 
-def recover_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> dict:
+def recover_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> AttemptView:
     """Mark interruption only after a worker released the operating-system lock."""
     with experiment_store.experiment_lock(archive_root, experiment_id):
         directory = experiment_store.experiment_directory(archive_root, experiment_id)
@@ -389,13 +401,15 @@ def delete_experiment(archive_root: Path, experiment_id: str) -> None:
         shutil.rmtree(experiment_store.experiment_directory(archive_root, experiment_id))
 
 
-def read_attempt_trace(archive_root: Path, experiment_id: str, attempt_id: str) -> list[dict]:
+def read_attempt_trace(
+    archive_root: Path, experiment_id: str, attempt_id: str
+) -> list[dict[str, JsonValue]]:
     """Read structured execution events without exposing raw process transcripts."""
     path = experiment_store.attempt_directory(
         experiment_store.experiment_directory(archive_root, experiment_id), attempt_id
     )
     attempt = experiment_store.read_attempt(path)
-    events = [
+    events: list[dict[str, JsonValue]] = [
         {"time": attempt["created_at"], "event": "attempt_prepared", "attempt_id": attempt_id}
     ]
     if attempt.get("started_at"):
@@ -409,9 +423,11 @@ def read_attempt_trace(archive_root: Path, experiment_id: str, attempt_id: str) 
     for file in sorted(path.rglob("events.jsonl")):
         content = file.read_text()
         lines = content.split("\n")[:-1]
-        for line in lines:
-            if line.strip():
-                events.append(_trace_event(file.parent, json.loads(line)))
+        events.extend(
+            _trace_event(file.parent, TRACE_EVENT.validate_json(line))
+            for line in lines
+            if line.strip()
+        )
     if attempt.get("finished_at"):
         events.append(
             {
@@ -422,10 +438,10 @@ def read_attempt_trace(archive_root: Path, experiment_id: str, attempt_id: str) 
                 "duration_seconds": attempt["duration_seconds"],
             }
         )
-    return sorted(events, key=lambda event: event.get("time", ""))
+    return sorted(events, key=lambda event: str(event.get("time", "")))
 
 
-def _trace_event(directory: Path, event: dict) -> dict:
+def _trace_event(directory: Path, event: dict[str, JsonValue]) -> dict[str, JsonValue]:
     fields = {
         "request_file": ("instructions", "input", "configuration"),
         "response_file": ("response", "model", "provider", "execution"),
@@ -438,8 +454,8 @@ def _trace_event(directory: Path, event: dict) -> dict:
         if path.is_symlink() or not path.is_file():
             continue
         try:
-            payload = json.loads(path.read_text())
-        except json.JSONDecodeError:
+            payload = TRACE_EVENT.validate_json(path.read_text())
+        except ValidationError:
             continue
         event[reference.removesuffix("_file")] = {
             key: payload[key] for key in allowed if key in payload
@@ -447,7 +463,7 @@ def _trace_event(directory: Path, event: dict) -> dict:
     return event
 
 
-def export_experiment(archive_root: Path, experiment_id: str) -> dict:
+def export_experiment(archive_root: Path, experiment_id: str) -> ExperimentReport:
     """Return an explicitly requested private report without writing repository files."""
     manifest = read_manifest(archive_root, experiment_id)
     attempts = read_attempts(archive_root, experiment_id)

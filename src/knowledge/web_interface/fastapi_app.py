@@ -4,7 +4,6 @@ The interface reads revisioned views and sends every mutation through applicatio
 commands rather than writing the ledger directly.
 """
 
-import json
 import re
 import secrets
 from html import escape
@@ -19,13 +18,13 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
-from pydantic import ValidationError
+from pydantic import JsonValue, TypeAdapter, ValidationError
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from knowledge.knowledge_base import knowledge_service
 from knowledge.knowledge_base import review_records as review
 from knowledge.knowledge_base import source_records as sources
-from knowledge.knowledge_domain import application_errors
+from knowledge.knowledge_domain import application_errors, response_models
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.literature import zotero_client as zotero
 from knowledge.revision_store import postgresql_revision_store
@@ -84,7 +83,7 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
         return JSONResponse({"error": str(error)}, status_code=error_status(error))
 
     @app.get("/health")
-    def health() -> dict:
+    def health() -> dict[str, str]:
         """Check database connectivity."""
         with database.transaction() as ledger:
             ledger.connection.execute("SELECT 1")
@@ -153,7 +152,9 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
             return templates.TemplateResponse(
                 request=request,
                 name="article.html",
-                context=source_article_view.compose_article(database, record, extraction_revision),
+                context=dict(
+                    source_article_view.compose_article(database, record, extraction_revision)
+                ),
             )
         with database.transaction() as ledger:
             dependencies = [
@@ -188,7 +189,7 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
         )
 
     @app.get("/api/records/{entity_id}")
-    def read_record(entity_id: UUID, revision: int | None = None) -> dict:
+    def read_record(entity_id: UUID, revision: int | None = None) -> response_models.RecordResponse:
         """Return a record with its status and pinned dependencies."""
         with database.transaction() as ledger:
             record = ledger.get(entity_id, revision)
@@ -201,13 +202,16 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
             }
 
     @app.get("/api/requests/{request_id}")
-    def receipt(request_id: str) -> dict:
+    def receipt(request_id: str) -> response_models.ReceiptResponse:
         """Return the result of an accepted command."""
         with database.transaction() as ledger:
             row = ledger.get_receipt(request_id)
             if not row:
                 raise application_errors.Missing("Request not accepted")
-            return {"request_id": row["request_id"], "result": row["result"]}
+            return {
+                "request_id": row.request_id,
+                "result": [ref.model_dump(mode="json") for ref in row.result],
+            }
 
     @app.get("/sources/{entity_id}/{variant}/view", response_class=HTMLResponse)
     def source_viewer(
@@ -356,7 +360,7 @@ def save_edit(
 def source_metadata(
     records: list[models.Record],
     database: postgresql_revision_store.Database,
-) -> dict:
+) -> dict[str, dict[str, JsonValue]]:
     """Read live literature while retaining access to snapshots if Zotero is unavailable."""
     return {
         str(record.entity_id): source_description(record, database)
@@ -368,7 +372,7 @@ def source_metadata(
 def source_description(
     record: models.Record,
     database: postgresql_revision_store.Database,
-) -> dict:
+) -> dict[str, JsonValue]:
     """Show an explicit availability error instead of substituting cached literature."""
     try:
         with database.transaction() as ledger:
@@ -378,15 +382,15 @@ def source_description(
         return {"title": "Zotero-Daten nicht verfügbar", "error": str(error)}
 
 
-def read_run_events(root: Path, name: str) -> list[dict]:
+def read_run_events(root: Path, name: str) -> list[dict[str, JsonValue]]:
     """Read chronological JSONL events only from a direct run directory."""
     directory = (root / name).resolve()
     if directory.parent != root.resolve() or not directory.is_dir():
         raise application_errors.Missing("Unknown run")
     events = [
-        json.loads(line)
+        TypeAdapter(dict[str, JsonValue]).validate_json(line)
         for path in directory.rglob("events.jsonl")
         for line in path.read_text().splitlines()
         if line.strip()
     ]
-    return sorted(events, key=lambda event: event["time"])
+    return sorted(events, key=lambda event: str(event["time"]))

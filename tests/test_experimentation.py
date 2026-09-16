@@ -5,6 +5,8 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
+from typing import Never
 
 import pytest
 from pypdf import PdfWriter
@@ -12,12 +14,18 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 import knowledge.experiments.experiment_runner as experiments
 import knowledge.experiments.experiment_store as experiment_store
+from knowledge.experiments.experiment_views import AttemptView
 from knowledge.knowledge_domain.application_errors import Conflict
 from knowledge.model_integration.prompt_registry import (
+    ConfigRevision,
     activate_revision,
     get_default,
     save_revision,
     seed_defaults,
+)
+from knowledge.source_workflows.information_block_extraction import (
+    InformationBlocks,
+    TextExtraction,
 )
 
 pytestmark = pytest.mark.usefixtures("poppler_extraction")
@@ -67,38 +75,43 @@ def experiment(tmp_path: Path) -> tuple[Path, str]:
     return root, identifier
 
 
-def run(experiment: tuple[Path, str], step: str, recipe=None, **kwargs):
+def run(
+    experiment: tuple[Path, str],
+    step: str,
+    recipe: ConfigRevision | None = None,
+    *,
+    input_attempts: dict[str, str] | None = None,
+) -> AttemptView:
     attempt = experiments.prepare_attempt(
-        *experiment, step, recipe or get_default("recipe", step), **kwargs
+        *experiment, step, recipe or get_default("recipe", step), input_attempts=input_attempts
     )
     return experiments.execute_attempt(*experiment, attempt)
 
 
 def test_real_pdf_and_blocks_use_same_shared_operations_and_exact_references(
     experiment: tuple[Path, str],
-):
+) -> None:
     assert experiments.read_manifest(*experiment)["steps"] == {}
     extracted = run(experiment, "extract_text")
     assert extracted["status"] == "completed", extracted["error"]
     segmented = run(experiment, "segment_blocks")
     assert segmented["status"] == "completed", segmented["error"]
     assert segmented["inputs"] == {"extract_text": extracted["id"]}
-    assert [block["bullets"] for block in segmented["output"]["blocks"]] == [
+    extraction = TextExtraction.model_validate(extracted["output"])
+    blocks = InformationBlocks.model_validate(segmented["output"])
+    assert [block.bullets for block in blocks.blocks] == [
         ["First observation.\nSecond observation."],
     ]
-    for block in segmented["output"]["blocks"]:
-        span = block["sources"][0]
-        assert span["extraction_revision"] == extracted["output"]["revision"]
-        assert (
-            extracted["output"]["pages"][span["page"] - 1][span["start"] : span["end"]]
-            == span["quote"]
-        )
+    for block in blocks.blocks:
+        span = block.sources[0]
+        assert span.extraction_revision == extraction.revision
+        assert extraction.pages[span.page - 1][span.start : span.end] == span.quote
     assert segmented["recipe"]["revision"] == 2
     assert segmented["output_schema_hash"]
     assert "dirty" in segmented["code"]
 
 
-def test_reruns_retain_results_and_mark_downstream_stale(experiment: tuple[Path, str]):
+def test_reruns_retain_results_and_mark_downstream_stale(experiment: tuple[Path, str]) -> None:
     original = run(experiment, "extract_text")
     blocks = run(experiment, "segment_blocks")
     repeated = run(experiment, "extract_text")
@@ -116,7 +129,7 @@ def test_reruns_retain_results_and_mark_downstream_stale(experiment: tuple[Path,
     assert experiments.read_attempts(*experiment)[-1]["stale"] is True
 
 
-def test_comparison_rejects_mixed_input_lineages(experiment: tuple[Path, str]):
+def test_comparison_rejects_mixed_input_lineages(experiment: tuple[Path, str]) -> None:
     old = run(experiment, "extract_text")
     blocks = run(experiment, "segment_blocks")
     newer = run(experiment, "extract_text")
@@ -130,7 +143,7 @@ def test_comparison_rejects_mixed_input_lineages(experiment: tuple[Path, str]):
         )
 
 
-def test_missing_dependency_fails_before_creating_an_attempt(experiment: tuple[Path, str]):
+def test_missing_dependency_fails_before_creating_an_attempt(experiment: tuple[Path, str]) -> None:
     with pytest.raises(ValueError, match="Run extract_text"):
         experiments.prepare_attempt(
             *experiment, "segment_blocks", get_default("recipe", "segment_blocks")
@@ -139,15 +152,15 @@ def test_missing_dependency_fails_before_creating_an_attempt(experiment: tuple[P
 
 
 def test_failed_rerun_retains_success_without_invalidating_downstream(
-    experiment: tuple[Path, str], monkeypatch
-):
+    experiment: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     run(experiment, "extract_text")
     completed = run(experiment, "segment_blocks")
     recipe = get_default("recipe", "segment_blocks")
     payload = {**recipe.payload, "parameters": {"mode": "model", "max_characters": 2000}}
     variant = save_revision("recipe", "segment_blocks", payload, recipe.revision)
 
-    def unavailable_provider(*args, **kwargs):
+    def unavailable_provider(*args: object, **kwargs: object) -> Never:
         raise ValueError("Provider unavailable during test")
 
     monkeypatch.setattr(
@@ -155,6 +168,7 @@ def test_failed_rerun_retains_success_without_invalidating_downstream(
     )
     failed = run(experiment, "segment_blocks", variant)
     assert failed["status"] == "failed"
+    assert isinstance(failed["error"], str)
     assert "Provider unavailable" in failed["error"]
     history = experiments.read_attempts(*experiment)
     assert history[1]["id"] == completed["id"]
@@ -166,7 +180,9 @@ def test_failed_rerun_retains_success_without_invalidating_downstream(
 
 
 @pytest.mark.parametrize("filename", ["source.pdf", "knowledge.json"])
-def test_input_file_changes_fail_before_execution(experiment: tuple[Path, str], filename):
+def test_input_file_changes_fail_before_execution(
+    experiment: tuple[Path, str], filename: str
+) -> None:
     attempt_id = experiments.prepare_attempt(
         *experiment, "extract_text", get_default("recipe", "extract_text")
     )
@@ -177,13 +193,14 @@ def test_input_file_changes_fail_before_execution(experiment: tuple[Path, str], 
         (directory / filename).write_text('{"records": ["modified"]}')
     result = experiments.execute_attempt(*experiment, attempt_id)
     assert result["status"] == "failed"
+    assert isinstance(result["error"], str)
     assert "snapshot changed" in result["error"]
     assert result["output"] is None
 
 
 def test_prepared_attempt_keeps_saved_recipe_and_prompt_when_new_draft_is_saved(
     experiment: tuple[Path, str],
-):
+) -> None:
     recipe = get_default("recipe", "extract_text")
     attempt_id = experiments.prepare_attempt(*experiment, "extract_text", recipe)
     save_revision(
@@ -192,10 +209,10 @@ def test_prepared_attempt_keeps_saved_recipe_and_prompt_when_new_draft_is_saved(
     result = experiments.execute_attempt(*experiment, attempt_id)
     assert result["status"] == "completed", result["error"]
     assert result["recipe"] == recipe.model_dump(mode="json")
-    assert result["prompt"]["payload"]["text"]
+    assert ConfigRevision.model_validate(result["prompt"]).payload["text"]
 
 
-def test_cancelled_queued_attempt_cannot_generate_a_result(experiment: tuple[Path, str]):
+def test_cancelled_queued_attempt_cannot_generate_a_result(experiment: tuple[Path, str]) -> None:
     attempt_id = experiments.prepare_attempt(
         *experiment, "extract_text", get_default("recipe", "extract_text")
     )
@@ -208,23 +225,33 @@ def test_cancelled_queued_attempt_cannot_generate_a_result(experiment: tuple[Pat
 
 @pytest.mark.parametrize("cancel", [False, True])
 def test_external_extraction_is_terminated_on_step_timeout_or_user_cancellation(
-    experiment: tuple[Path, str], monkeypatch, cancel
-):
+    experiment: tuple[Path, str], monkeypatch: pytest.MonkeyPatch, cancel: bool
+) -> None:
     started = Event()
     processes = []
     real_popen = subprocess.Popen
 
-    def slow_external_operation(arguments, *args, **kwargs):
+    def slow_external_operation(
+        arguments: list[str], *, stdout: int, stderr: int
+    ) -> subprocess.Popen[bytes]:
         if arguments[0] != "pdftotext":
-            return real_popen(arguments, *args, **kwargs)
-        process = real_popen([sys.executable, "-c", "import time; time.sleep(30)"], *args, **kwargs)
+            return real_popen(arguments, stdout=stdout, stderr=stderr)
+        process = real_popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"], stdout=stdout, stderr=stderr
+        )
         processes.append(process)
         started.set()
         return process
 
     monkeypatch.setattr(
-        "knowledge.document_processing.pdf_text_extraction.subprocess.Popen",
-        slow_external_operation,
+        "knowledge.document_processing.pdf_text_extraction.subprocess",
+        SimpleNamespace(
+            Popen=slow_external_operation,
+            run=subprocess.run,
+            PIPE=subprocess.PIPE,
+            TimeoutExpired=subprocess.TimeoutExpired,
+            CalledProcessError=subprocess.CalledProcessError,
+        ),
     )
     original = get_default("recipe", "extract_text")
     configuration = original.payload["model"]
@@ -242,12 +269,13 @@ def test_external_extraction_is_terminated_on_step_timeout_or_user_cancellation(
     assert result["output"] is None
     assert processes[0].poll() is not None
     if not cancel:
+        assert isinstance(result["error"], str)
         assert "time limit" in result["error"]
 
 
 def test_worker_lock_blocks_recovery_and_deletion_but_permits_cancellation(
     experiment: tuple[Path, str],
-):
+) -> None:
     attempt_id = experiments.prepare_attempt(
         *experiment, "extract_text", get_default("recipe", "extract_text")
     )
@@ -263,7 +291,9 @@ def test_worker_lock_blocks_recovery_and_deletion_but_permits_cancellation(
     assert experiments.recover_attempt(*experiment, attempt_id)["status"] == "cancelled"
 
 
-def test_recovery_preserves_abandoned_attempt_and_allows_new_attempt(experiment: tuple[Path, str]):
+def test_recovery_preserves_abandoned_attempt_and_allows_new_attempt(
+    experiment: tuple[Path, str],
+) -> None:
     attempt_id = experiments.prepare_attempt(
         *experiment, "extract_text", get_default("recipe", "extract_text")
     )
@@ -273,7 +303,9 @@ def test_recovery_preserves_abandoned_attempt_and_allows_new_attempt(experiment:
     assert experiments.read_attempts(*experiment)[0]["id"] == attempt_id
 
 
-def test_cleanup_is_isolated_idempotent_and_preserves_saved_recipes(experiment: tuple[Path, str]):
+def test_cleanup_is_isolated_idempotent_and_preserves_saved_recipes(
+    experiment: tuple[Path, str],
+) -> None:
     other = experiments.create_experiment(experiment[0], "other.pdf", fixture_pdf())
     result = run(experiment, "extract_text")
     report = experiments.export_experiment(*experiment)
@@ -285,8 +317,8 @@ def test_cleanup_is_isolated_idempotent_and_preserves_saved_recipes(experiment: 
 
 
 def test_disk_changes_require_restart_before_preparing_or_executing(
-    experiment: tuple[Path, str], monkeypatch
-):
+    experiment: tuple[Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     recipe = get_default("recipe", "extract_text")
     identifier = experiments.prepare_attempt(*experiment, "extract_text", recipe)
     changed = experiment_store.LOADED_CODE.model_copy(update={"hash": "changed source"})
@@ -295,13 +327,14 @@ def test_disk_changes_require_restart_before_preparing_or_executing(
         experiments.prepare_attempt(*experiment, "extract_text", recipe)
     result = experiments.execute_attempt(*experiment, identifier)
     assert result["status"] == "failed"
+    assert isinstance(result["error"], str)
     assert "code changed" in result["error"]
     assert result["output"] is None
 
 
 def test_trace_shows_actual_requests_without_raw_reasoning_or_secret_fields(
     experiment: tuple[Path, str],
-):
+) -> None:
     attempt = run(experiment, "extract_text")
     trace = (
         experiment_store.experiment_directory(*experiment) / "attempts" / attempt["id"] / "trace"
@@ -346,7 +379,7 @@ def test_trace_shows_actual_requests_without_raw_reasoning_or_secret_fields(
     assert model["response"] == {"response": "A concise result", "execution": "simulated"}
 
 
-def test_invalid_sources_and_traversal_are_rejected(tmp_path):
+def test_invalid_sources_and_traversal_are_rejected(tmp_path: Path) -> None:
     for filename, content in [("notes.txt", b"text"), ("broken.pdf", b"pdf bytes")]:
         with pytest.raises(ValueError, match="PDF"):
             experiments.create_experiment(tmp_path / "archive", filename, content)

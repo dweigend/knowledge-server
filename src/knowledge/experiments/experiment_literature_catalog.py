@@ -5,14 +5,33 @@ without mutating canonical knowledge or Zotero.
 """
 
 from pathlib import Path
+from typing import TypedDict
+
+from pydantic import TypeAdapter
 
 from knowledge.experiments.experiment_runner import list_experiments, read_attempts
 from knowledge.literature import literature_models
 
 
-def literature_catalog(root: Path) -> list[dict]:
+class LiteratureDocument(TypedDict):
+    """Link one observed literature record to its source experiment."""
+
+    run_id: str
+    filename: str
+    attempt_id: str
+    record: literature_models.LiteratureRecord
+
+
+class LiteratureEntry(TypedDict):
+    """Group a resolved work and the documents citing it."""
+
+    record: literature_models.LiteratureRecord
+    documents: list[LiteratureDocument]
+
+
+def literature_catalog(root: Path) -> list[LiteratureEntry]:
     """Group stable work identities while retaining each document's citation observations."""
-    catalog: dict[str, dict] = {}
+    catalog: dict[str, LiteratureEntry] = {}
     for source in list_experiments(root):
         attempts = [
             attempt
@@ -22,8 +41,13 @@ def literature_catalog(root: Path) -> list[dict]:
         if not attempts:
             continue
         attempt = attempts[-1]
-        for payload in attempt["output"].get("literature", []):
-            record = literature_models.LiteratureRecord.model_validate(payload)
+        output = attempt["output"]
+        if output is None:
+            continue
+        records = TypeAdapter(list[literature_models.LiteratureRecord]).validate_python(
+            output.get("literature", [])
+        )
+        for record in records:
             entry = catalog.setdefault(record.id, {"record": record, "documents": []})
             if record.resolution.checked_at > entry["record"].resolution.checked_at:
                 entry["record"] = record

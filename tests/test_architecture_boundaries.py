@@ -103,7 +103,7 @@ def module_dependencies(
     path: Path,
     modules: dict[str, Path],
 ) -> set[str]:
-    dependencies = set()
+    dependencies: set[str] = set()
     for imported, names in internal_imports(path):
         if imported in modules:
             dependencies.add(imported)

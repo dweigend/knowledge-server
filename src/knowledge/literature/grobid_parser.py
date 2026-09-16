@@ -184,7 +184,7 @@ def block_markdown(element: ET.Element, level: int = 2) -> str:
         return "\n".join(f"- {element_text(item)}" for item in element.findall("tei:item", NS))
     if tag in {"p", "formula", "figDesc", "note", "item"} or not len(element):
         return content
-    pieces = [element.text.strip()] if element.text and element.text.strip() else []
+    pieces: list[str] = [element.text.strip()] if element.text and element.text.strip() else []
     for child in element:
         child_level = level + 1 if tag == "div" and child.tag.endswith("}div") else level
         pieces.append(block_markdown(child, child_level))
@@ -199,7 +199,7 @@ def document_markdown(
     references: list[papers.PaperReference],
 ) -> str:
     """Assemble the paper body, abstract, back matter and bibliography once."""
-    pieces = [f"# {metadata.title}"] if metadata.title else []
+    pieces: list[str] = [f"# {metadata.title}"] if metadata.title else []
     abstract = root.find("tei:teiHeader/tei:profileDesc/tei:abstract", NS)
     if abstract is not None:
         pieces.extend(["## Abstract", block_markdown(abstract)])
@@ -276,7 +276,7 @@ def extraction_warnings(
     missing = [
         name for name in ("title", "authors", "year", "venue", "doi") if not getattr(metadata, name)
     ]
-    warnings = [f"Missing document metadata: {', '.join(missing)}."] if missing else []
+    warnings: list[str] = [f"Missing document metadata: {', '.join(missing)}."] if missing else []
     if len({reference.id for reference in references}) != len(references):
         warnings.append(
             "Duplicate bibliography identifiers; affected citation targets are unresolved."

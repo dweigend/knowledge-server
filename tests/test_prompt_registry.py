@@ -18,7 +18,7 @@ from knowledge.model_integration.prompt_registry import (
 )
 
 
-def test_saved_recipe_does_not_activate_or_rewrite_pinned_prompt():
+def test_saved_recipe_does_not_activate_or_rewrite_pinned_prompt() -> None:
     seed_defaults()
     original, recipe, prompt, _ = resolve_recipe("segment_blocks")
     prompt_path = configuration_root() / "prompt" / "segment" / "1.json"
@@ -38,7 +38,7 @@ def test_saved_recipe_does_not_activate_or_rewrite_pinned_prompt():
     assert prompt_path.read_bytes() == original_bytes
 
 
-def test_recipe_save_rejects_missing_prompt_and_partial_author_pin():
+def test_recipe_save_rejects_missing_prompt_and_partial_author_pin() -> None:
     seed_defaults()
     recipe = Recipe.model_validate(get_default("recipe", "draft_text").payload)
     with pytest.raises(Missing):
@@ -64,7 +64,7 @@ def test_recipe_save_rejects_missing_prompt_and_partial_author_pin():
     assert get_revision("recipe", "draft_text").revision == 1
 
 
-def test_author_rules_are_typed_and_pinned_independently_of_activation():
+def test_author_rules_are_typed_and_pinned_independently_of_activation() -> None:
     seed_defaults()
     with pytest.raises(ValueError):
         save_revision("author_rules", "david", {"unknown": "unstructured"}, 0)
@@ -92,7 +92,7 @@ def test_author_rules_are_typed_and_pinned_independently_of_activation():
     assert resolve_recipe("draft_text")[3] is None
 
 
-def test_conflicts_preserve_saved_and_active_revisions():
+def test_conflicts_preserve_saved_and_active_revisions() -> None:
     seed_defaults()
     original = get_default("prompt", "segment")
     saved = save_revision("prompt", "segment", {"text": "Draft"}, 1)
@@ -104,7 +104,7 @@ def test_conflicts_preserve_saved_and_active_revisions():
     assert get_revision("prompt", "segment") == saved
 
 
-def test_seed_defaults_never_reactivates_or_rewrites_saved_configuration():
+def test_seed_defaults_never_reactivates_or_rewrites_saved_configuration() -> None:
     seed_defaults()
     saved = save_revision("prompt", "segment", {"text": "My active instructions"}, 1)
     activate_revision("prompt", "segment", 2, 1)
@@ -115,7 +115,7 @@ def test_seed_defaults_never_reactivates_or_rewrites_saved_configuration():
     assert status["revision"] == status["active_revision"] == 2
 
 
-def test_resolution_rejects_changed_referenced_content():
+def test_resolution_rejects_changed_referenced_content() -> None:
     seed_defaults()
     prompt_path = configuration_root() / "prompt" / "segment" / "1.json"
     document = json.loads(prompt_path.read_text())
@@ -127,7 +127,7 @@ def test_resolution_rejects_changed_referenced_content():
         get_default("recipe", "segment_blocks")
 
 
-def test_recipe_contract_rejects_unknown_step_and_unsupported_tools():
+def test_recipe_contract_rejects_unknown_step_and_unsupported_tools() -> None:
     seed_defaults()
     original = get_default("recipe", "segment_blocks").payload
     for changes in ({"step": "execute_shell"}, {"model": {"allowed_tools": ["shell"]}}):
@@ -135,7 +135,7 @@ def test_recipe_contract_rejects_unknown_step_and_unsupported_tools():
             save_revision("recipe", "segment_blocks", {**original, **changes}, 1)
 
 
-def test_operation_configuration_tracks_recipe_activation_not_saved_draft():
+def test_operation_configuration_tracks_recipe_activation_not_saved_draft() -> None:
     instructions, model = operation_configuration("formulate_claims")
     original = get_default("recipe", "formulate_claims")
     changed = save_revision("prompt", "import", {"text": "Reviewed new instructions"}, 1)
@@ -157,7 +157,7 @@ def test_operation_configuration_tracks_recipe_activation_not_saved_draft():
     assert active_model.provider == "custom"
 
 
-def test_secondary_operation_prompt_is_a_validated_immutable_pin():
+def test_secondary_operation_prompt_is_a_validated_immutable_pin() -> None:
     instructions, _ = operation_configuration("propose_changes", secondary_prompt=True)
     save_revision("prompt", "consolidate", {"text": "Unactivated new prompt"}, 1)
     assert operation_configuration("propose_changes", secondary_prompt=True)[0] == instructions
@@ -174,12 +174,14 @@ def test_secondary_operation_prompt_is_a_validated_immutable_pin():
         )
 
 
-def test_main_import_uses_activated_recipe_at_the_provider_boundary(tmp_path, monkeypatch):
+def test_main_import_uses_activated_recipe_at_the_provider_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from knowledge.source_workflows.article_claim_extraction import extract_document
 
     requests = []
 
-    def respond(arguments, **kwargs):
+    def respond(arguments: list[str], **kwargs: object) -> None:
         request = json.loads(Path(arguments[-2]).read_text())
         requests.append(request)
         response = {

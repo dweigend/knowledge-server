@@ -1,8 +1,12 @@
+from collections.abc import Callable, Iterable
+from typing import Literal, Never
+
 import pytest
+from pydantic import BaseModel
 
 from knowledge.literature.crossref_client import normalize_doi, parse_metadata
-from knowledge.literature.literature_models import Candidate, LiteratureMetadata
-from knowledge.literature.literature_resolution import enrich_paper
+from knowledge.literature.literature_models import Candidate, LiteratureMetadata, LiteratureRecord
+from knowledge.literature.literature_resolution import Lookup, enrich_paper
 from knowledge.literature.structured_paper_models import (
     PaperCitation,
     PaperDocument,
@@ -11,45 +15,61 @@ from knowledge.literature.structured_paper_models import (
 )
 
 
-def candidate(doi="10.1234/work", method="bibliographic", **fields):
+def candidate(
+    doi: str = "10.1234/work",
+    method: Literal["doi", "isbn", "bibliographic"] = "bibliographic",
+    **fields: object,
+) -> Candidate:
     return Candidate(
         provider="crossref",
         provider_id=doi,
         method=method,
-        metadata=LiteratureMetadata(
-            title="A scientific paper", authors=["Alice Smith"], year="2020", doi=doi, **fields
+        metadata=LiteratureMetadata.model_validate(
+            {
+                "title": "A scientific paper",
+                "authors": ["Alice Smith"],
+                "year": "2020",
+                "doi": doi,
+                **fields,
+            }
         ),
     )
 
 
-def paper(references=(), citations=(), **metadata):
+def paper(
+    references: Iterable[PaperReference] = (),
+    citations: Iterable[PaperCitation] = (),
+    **metadata: object,
+) -> PaperDocument:
     return PaperDocument(
         markdown="# Test",
         provider="grobid",
-        metadata=PaperMetadata(**metadata),
+        metadata=PaperMetadata.model_validate(metadata),
         references=list(references),
         citations=list(citations),
     )
 
 
-def enrich(document, lookup):
+def enrich(document: PaperDocument, lookup: Lookup) -> list[LiteratureRecord]:
     return enrich_paper(
         document, "a" * 64, timeout_seconds=10, cancelled=lambda: False, lookup=lookup
     )
 
 
-def reference(identifier="b1", **fields):
-    return PaperReference(
-        id=identifier,
-        title="A scientific paper",
-        authors=["A. Smith"],
-        year="2020",
-        raw="Smith (2020) original reference",
-        **fields,
+def reference(identifier: str = "b1", **fields: object) -> PaperReference:
+    return PaperReference.model_validate(
+        {
+            "id": identifier,
+            "title": "A scientific paper",
+            "authors": ["A. Smith"],
+            "year": "2020",
+            "raw": "Smith (2020) original reference",
+            **fields,
+        }
     )
 
 
-def test_corroborated_duplicates_merge_preserving_originals_and_occurrences():
+def test_corroborated_duplicates_merge_preserving_originals_and_occurrences() -> None:
     document = paper(
         [reference(), reference("b2")],
         [
@@ -70,7 +90,7 @@ def test_corroborated_duplicates_merge_preserving_originals_and_occurrences():
     assert "venue" in record.missing_fields
 
 
-def test_wrong_doi_title_is_not_accepted_or_used_for_deduplication():
+def test_wrong_doi_title_is_not_accepted_or_used_for_deduplication() -> None:
     wrong = candidate(method="doi")
     wrong.metadata.title = "A completely different paper"
     records = enrich(
@@ -82,7 +102,7 @@ def test_wrong_doi_title_is_not_accepted_or_used_for_deduplication():
     assert records[1].metadata.authors == ["A. Smith"]
 
 
-def test_doi_with_author_appended_to_extracted_title_is_corroborated():
+def test_doi_with_author_appended_to_extracted_title_is_corroborated() -> None:
     document = paper(title="A scientific paper Alice Smith", doi="https://doi.org/10.1234/work")
     record = enrich(document, lambda *_: [candidate(method="doi")])[0]
     assert record.resolution.status == "matched"
@@ -90,21 +110,23 @@ def test_doi_with_author_appended_to_extracted_title_is_corroborated():
 
 
 @pytest.mark.parametrize("field,replacement", [("authors", ["Jones"]), ("year", "2019")])
-def test_title_alone_is_insufficient_for_search_match(field, replacement):
+def test_title_alone_is_insufficient_for_search_match(
+    field: str, replacement: str | list[str]
+) -> None:
     source = reference()
     setattr(source, field, replacement)
     record = enrich(paper([source]), lambda *_: [candidate()])[1]
     assert record.resolution.status == "unmatched"
 
 
-def test_two_matching_candidates_require_review():
+def test_two_matching_candidates_require_review() -> None:
     record = enrich(paper([reference()]), lambda *_: [candidate(), candidate("10.1234/other")])[1]
     assert record.resolution.status == "ambiguous"
     assert record.metadata.doi is None
     assert len(record.resolution.candidates) == 2
 
 
-def test_unresolved_markers_and_unknown_targets_are_not_discarded():
+def test_unresolved_markers_and_unknown_targets_are_not_discarded() -> None:
     document = paper(
         citations=[PaperCitation(marker="[?]"), PaperCitation(marker="X", target_ids=["missing"])]
     )
@@ -115,10 +137,10 @@ def test_unresolved_markers_and_unknown_targets_are_not_discarded():
     assert records[2].reference_ids == ["missing"]
 
 
-def test_repeated_identical_requests_are_cached():
+def test_repeated_identical_requests_are_cached() -> None:
     calls = []
 
-    def lookup(ref, *_):
+    def lookup(ref: PaperMetadata, *_: object) -> list[Candidate]:
         calls.append(ref.title)
         return []
 
@@ -127,8 +149,8 @@ def test_repeated_identical_requests_are_cached():
     assert calls == [None, "A scientific paper"]
 
 
-def test_provider_failure_keeps_extracted_data_and_explicit_error():
-    def fail(*_):
+def test_provider_failure_keeps_extracted_data_and_explicit_error() -> None:
+    def fail(*_: object) -> Never:
         raise ValueError("Crossref returned HTTP 429")
 
     record = enrich(paper([reference()]), fail)[1]
@@ -137,12 +159,12 @@ def test_provider_failure_keeps_extracted_data_and_explicit_error():
     assert record.metadata.title == "A scientific paper"
 
 
-def test_cancellation_is_not_downgraded_to_lookup_error():
+def test_cancellation_is_not_downgraded_to_lookup_error() -> None:
     with pytest.raises(InterruptedError):
         enrich_paper(paper(), "a" * 64, timeout_seconds=1, cancelled=lambda: True)
 
 
-def test_crossref_metadata_preserves_book_fields_and_missing_values():
+def test_crossref_metadata_preserves_book_fields_and_missing_values() -> None:
     metadata = parse_metadata(
         {
             "DOI": "10.1234/X",
@@ -161,17 +183,21 @@ def test_crossref_metadata_preserves_book_fields_and_missing_values():
     assert metadata.venue is None
 
 
-def test_doi_normalization_does_not_strip_valid_suffix_punctuation():
+def test_doi_normalization_does_not_strip_valid_suffix_punctuation() -> None:
     assert normalize_doi("doi:10.1234/ABC(1)") == "10.1234/abc(1)"
     assert normalize_doi("not a DOI") is None
 
 
-def test_crossref_lookup_uses_encoded_exact_doi_and_bounded_search(monkeypatch):
+def test_crossref_lookup_uses_encoded_exact_doi_and_bounded_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import knowledge.literature.crossref_client as crossref_client
 
     requests = []
 
-    def request(url, response_type, timeout, cancelled):
+    def request(
+        url: str, response_type: type[BaseModel], timeout: float, cancelled: Callable[[], bool]
+    ) -> BaseModel:
         requests.append(url)
         entry = {"DOI": "10.1234/work", "title": ["A scientific paper"]}
         return response_type.model_validate(
@@ -187,14 +213,17 @@ def test_crossref_lookup_uses_encoded_exact_doi_and_bounded_search(monkeypatch):
     assert searched[0].method == "bibliographic"
 
 
-def test_exhausted_total_budget_marks_remaining_sources_without_new_requests(monkeypatch):
+def test_exhausted_total_budget_marks_remaining_sources_without_new_requests(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import knowledge.literature.literature_resolution as literature_resolution
 
     times = iter([0.0, 0.1, 11.0])
     monkeypatch.setattr(literature_resolution, "monotonic", lambda: next(times))
     calls = []
 
-    def lookup(ref, *_):
+    def lookup(ref: PaperMetadata, *_: object) -> list[Candidate]:
+        assert isinstance(ref, PaperReference)
         calls.append(ref.id)
         return []
 
@@ -204,12 +233,13 @@ def test_exhausted_total_budget_marks_remaining_sources_without_new_requests(mon
     assert "budget exhausted" in records[1].resolution.message
 
 
-def test_rate_limit_stops_further_requests_in_the_same_run(monkeypatch):
+def test_rate_limit_stops_further_requests_in_the_same_run(monkeypatch: pytest.MonkeyPatch) -> None:
     import knowledge.literature.literature_resolution as literature_resolution
 
     calls = []
 
-    def limited(ref, *_):
+    def limited(ref: PaperMetadata, *_: object) -> list[Candidate]:
+        assert isinstance(ref, PaperReference)
         calls.append(ref.id)
         raise ValueError("Crossref returned HTTP 429")
 
@@ -221,13 +251,13 @@ def test_rate_limit_stops_further_requests_in_the_same_run(monkeypatch):
     assert all(record.resolution.status == "error" for record in records)
 
 
-def test_identical_repeated_markers_remain_distinct_occurrences():
+def test_identical_repeated_markers_remain_distinct_occurrences() -> None:
     marker = PaperCitation(marker="Smith", target_ids=["b1"])
     records = enrich(paper([reference()], [marker, marker]), lambda *_: [candidate()])
     assert [edge.occurrence_index for edge in records[1].occurrences] == [1, 2]
 
 
-def test_duplicate_reference_ids_produce_ambiguous_stub_instead_of_false_edge():
+def test_duplicate_reference_ids_produce_ambiguous_stub_instead_of_false_edge() -> None:
     document = paper(
         [reference(), PaperReference(id="b1", title="Different paper")],
         [PaperCitation(marker="Smith", target_ids=["b1"])],
@@ -240,7 +270,7 @@ def test_duplicate_reference_ids_produce_ambiguous_stub_instead_of_false_edge():
     assert records[3].occurrences[0].marker == "Smith"
 
 
-def test_publication_year_uses_issued_but_never_deposit_timestamp():
+def test_publication_year_uses_issued_but_never_deposit_timestamp() -> None:
     assert parse_metadata({"issued": {"date-parts": [[2009]]}}).year == "2009"
     assert (
         parse_metadata(
@@ -250,7 +280,7 @@ def test_publication_year_uses_issued_but_never_deposit_timestamp():
     )
 
 
-def test_missing_title_requires_distinctive_exact_raw_title_with_author_and_year():
+def test_missing_title_requires_distinctive_exact_raw_title_with_author_and_year() -> None:
     ref = PaperReference(
         id="b1", authors=["A. Smith"], year="2020", raw="Smith (2020). A scientific paper. Journal."
     )
@@ -268,14 +298,16 @@ def test_missing_title_requires_distinctive_exact_raw_title_with_author_and_year
     assert enrich(paper([ref]), lambda *_: [external])[1].resolution.status == "unmatched"
 
 
-def test_bibliographic_query_uses_raw_reference_when_title_is_missing(monkeypatch):
+def test_bibliographic_query_uses_raw_reference_when_title_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from urllib.parse import parse_qs, urlsplit
 
     import knowledge.literature.crossref_client as crossref_client
 
     urls = []
 
-    def request(url, response_type, *_):
+    def request(url: str, response_type: type[BaseModel], *_: object) -> BaseModel:
         urls.append(url)
         return response_type.model_validate({"message": {"items": []}})
 
@@ -293,7 +325,9 @@ def test_bibliographic_query_uses_raw_reference_when_title_is_missing(monkeypatc
         ("Grunwald, A.", "Armin Grunwald"),
     ],
 )
-def test_author_surnames_match_with_trailing_initials(extracted_author, catalog_author):
+def test_author_surnames_match_with_trailing_initials(
+    extracted_author: str, catalog_author: str
+) -> None:
     from knowledge.literature.literature_resolution import candidate_matches
 
     original = reference().model_copy(update={"authors": [extracted_author]})
@@ -302,7 +336,7 @@ def test_author_surnames_match_with_trailing_initials(extracted_author, catalog_
     assert candidate_matches(original, found)
 
 
-def test_matching_given_name_does_not_confirm_different_author_surname():
+def test_matching_given_name_does_not_confirm_different_author_surname() -> None:
     from knowledge.literature.literature_resolution import candidate_matches
 
     original = reference().model_copy(update={"authors": ["Alice Smith"]})
@@ -320,8 +354,8 @@ def test_matching_given_name_does_not_confirm_different_author_surname():
     ],
 )
 def test_exact_isbn_requires_matching_identifier_and_no_title_conflict(
-    source_title, candidate_title, returned_isbn, expected
-):
+    source_title: str | None, candidate_title: str, returned_isbn: str, expected: bool
+) -> None:
     from knowledge.literature.literature_resolution import candidate_matches
 
     original = PaperReference(id="isbn", title=source_title, raw="ISBN 3-593-37978-3")

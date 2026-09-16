@@ -1,4 +1,6 @@
 import hashlib
+from pathlib import Path
+from typing import Never
 
 import pytest
 from test_experimentation import fixture_pdf
@@ -12,7 +14,7 @@ from knowledge.source_workflows.structured_paper_extraction import (
 from knowledge.web_interface.paper_markdown_renderer import render_paper_markdown
 
 
-def paper():
+def paper() -> PaperDocument:
     return PaperDocument(
         markdown="# A paper\n\n## Findings\n\nFirst observation.",
         metadata=PaperMetadata(title="A paper", authors=["A. Researcher"], year="2026"),
@@ -21,12 +23,14 @@ def paper():
     )
 
 
-def test_replaceable_analyzer_preserves_exact_page_quotes_and_private_artifacts(tmp_path):
+def test_replaceable_analyzer_preserves_exact_page_quotes_and_private_artifacts(
+    tmp_path: Path,
+) -> None:
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(fixture_pdf())
     received = []
 
-    def analyzer(source, **settings):
+    def analyzer(source: Path, **settings: object) -> PaperDocument:
         received.append((source, settings))
         return paper()
 
@@ -39,7 +43,9 @@ def test_replaceable_analyzer_preserves_exact_page_quotes_and_private_artifacts(
         analyzer=analyzer,
     )
     assert received[0][0] == pdf
-    assert 0 < received[0][1]["timeout_seconds"] <= 10
+    timeout = received[0][1]["timeout_seconds"]
+    assert isinstance(timeout, (int, float))
+    assert 0 < timeout <= 10
     assert result.pdf_sha256 == hashlib.sha256(pdf.read_bytes()).hexdigest()
     assert result.paper is not None
     assert result.paper.metadata.title == "A paper"
@@ -51,11 +57,11 @@ def test_replaceable_analyzer_preserves_exact_page_quotes_and_private_artifacts(
     assert result.pages[span.page - 1][span.start : span.end] == span.quote
 
 
-def test_explicit_raw_text_mode_does_not_contact_analyzer(tmp_path):
+def test_explicit_raw_text_mode_does_not_contact_analyzer(tmp_path: Path) -> None:
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(fixture_pdf())
 
-    def unexpected(*args, **kwargs):
+    def unexpected(*args: object, **kwargs: object) -> Never:
         raise AssertionError("Raw extraction contacted the service")
 
     result = extract_paper_document(
@@ -70,11 +76,11 @@ def test_explicit_raw_text_mode_does_not_contact_analyzer(tmp_path):
     assert "First observation." in result.pages[0]
 
 
-def test_analyzer_failure_does_not_silently_return_raw_success(tmp_path):
+def test_analyzer_failure_does_not_silently_return_raw_success(tmp_path: Path) -> None:
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(fixture_pdf())
 
-    def unavailable(*args, **kwargs):
+    def unavailable(*args: object, **kwargs: object) -> Never:
         raise ValueError("service unavailable")
 
     with pytest.raises(ValueError, match="service unavailable"):
@@ -98,12 +104,12 @@ def test_analyzer_failure_does_not_silently_return_raw_success(tmp_path):
         {"document_provider": "poppler", "service_url": "http://localhost"},
     ],
 )
-def test_invalid_provider_configuration_is_rejected(parameters):
+def test_invalid_provider_configuration_is_rejected(parameters: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         validate_paper_parameters(parameters)
 
 
-def test_document_markdown_renders_headings_without_executable_html_or_remote_images():
+def test_document_markdown_renders_headings_without_executable_html_or_remote_images() -> None:
     rendered = str(
         render_paper_markdown(
             "# Heading\n\n<script>alert(1)</script>\n\n![image](https://remote/image.png)\n"
@@ -117,7 +123,7 @@ def test_document_markdown_renders_headings_without_executable_html_or_remote_im
 
 
 @pytest.mark.parametrize("suffix", ["?token=secret", "#fragment"])
-def test_service_url_rejects_query_and_fragment(suffix):
+def test_service_url_rejects_query_and_fragment(suffix: str) -> None:
     with pytest.raises(ValueError, match="credentials, query or fragment"):
         validate_paper_parameters(
             {
@@ -127,7 +133,7 @@ def test_service_url_rejects_query_and_fragment(suffix):
         )
 
 
-def test_extraction_settings_accept_unrelated_recipe_fields_without_coercing_limits():
+def test_extraction_settings_accept_unrelated_recipe_fields_without_coercing_limits() -> None:
     from knowledge.source_workflows.paper_extraction_models import PaperExtractionSettings
 
     settings = PaperExtractionSettings.model_validate({"max_characters": 200, "prompt": "custom"})
@@ -137,12 +143,14 @@ def test_extraction_settings_accept_unrelated_recipe_fields_without_coercing_lim
 
 
 @pytest.mark.parametrize("interrupt", ["source_changed", "cancelled"])
-def test_analysis_rejects_invalidated_evidence_before_writing_artifacts(tmp_path, interrupt):
+def test_analysis_rejects_invalidated_evidence_before_writing_artifacts(
+    tmp_path: Path, interrupt: str
+) -> None:
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(fixture_pdf())
     stopped = False
 
-    def analyzer(source, **settings):
+    def analyzer(source: Path, **settings: object) -> PaperDocument:
         nonlocal stopped
         if interrupt == "source_changed":
             source.write_bytes(b"changed")

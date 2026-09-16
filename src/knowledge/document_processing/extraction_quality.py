@@ -30,7 +30,9 @@ def table_issues(table: document_models.DocumentBlock) -> list[str]:
     return issues
 
 
-def _signature(cell: document_models.TableCell) -> tuple:
+def _signature(
+    cell: document_models.TableCell,
+) -> tuple[int, int, bool, bool, str, tuple[tuple[str, str], ...]]:
     return (
         cell.row_span,
         cell.column_span,
@@ -150,7 +152,7 @@ def reconcile_blocks(
     Keep both candidates in snapshot audit provenance before calling this function.
     A missing PDF text layer is a review signal, not proof that a page is scanned.
     """
-    selected = _reconcile_tables(primary, second_reading)
+    selected: list[document_models.DocumentBlock] = _reconcile_tables(primary, second_reading)
     for page in sorted(scan_pages or set()):
         reading = [block for block in second_reading if block.page == page]
         if not reading:

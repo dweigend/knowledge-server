@@ -4,13 +4,70 @@ The bridge keeps provider authentication and model construction inside Hermes
 and returns only the requested structured response.
 """
 
-import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Literal, Protocol
 
-if TYPE_CHECKING:
-    from run_agent import AIAgent
+from pydantic import BaseModel
+
+
+class BridgeConfiguration(BaseModel):
+    """Read the generation settings consumed inside the standalone Hermes runtime."""
+
+    model: str | None = None
+    provider: str | None = None
+    timeout_seconds: float = 240
+    reasoning_effort: str = "max"
+
+
+class BridgeRequest(BaseModel):
+    """Decode one prompt and its separately serialized configuration."""
+
+    input: str
+    instructions: str
+    configuration: str = "{}"
+
+
+class RuntimeProvider(BaseModel):
+    """Validate the credentials and transport selected by Hermes."""
+
+    provider: str
+    api_mode: str
+    api_key: str | None
+    base_url: str | None
+
+
+class ConversationResult(BaseModel):
+    """Read the final response from a completed Hermes conversation."""
+
+    final_response: str
+
+
+class BridgeResponse(BaseModel):
+    """Retain requested and observed generation provenance separately."""
+
+    execution: Literal["live"] = "live"
+    model: str | None
+    provider: str | None
+    requested_model: str
+    requested_provider: str
+    response: str
+    session_id: str
+
+
+class ConversationAgent(Protocol):
+    """Describe the conversation capability consumed by the bridge."""
+
+    session_id: str
+
+    def run_conversation(self, *, user_message: str, system_message: str) -> object:
+        """Return the provider result for one supplied conversation."""
+        ...
+
+    def close(self) -> None:
+        """Release the provider resources after the request."""
+        ...
 
 
 def create_agent(
@@ -18,18 +75,20 @@ def create_agent(
     provider: str,
     timeout_seconds: float = 240,
     reasoning_effort: str = "max",
-) -> "AIAgent":
+) -> ConversationAgent:
     """Reuse Hermes authentication with tools, memory and background review disabled."""
     from hermes_cli.runtime_provider import resolve_runtime_provider
     from run_agent import AIAgent
 
-    runtime = resolve_runtime_provider(requested=provider, target_model=model)
+    runtime = RuntimeProvider.model_validate(
+        resolve_runtime_provider(requested=provider, target_model=model)
+    )
     return AIAgent(
         model=model,
-        provider=runtime["provider"],
-        api_mode=runtime["api_mode"],
-        api_key=runtime["api_key"],
-        base_url=runtime["base_url"],
+        provider=runtime.provider,
+        api_mode=runtime.api_mode,
+        api_key=runtime.api_key,
+        base_url=runtime.base_url,
         enabled_toolsets=[],
         skip_context_files=True,
         skip_memory=True,
@@ -43,38 +102,39 @@ def create_agent(
 
 def main() -> None:
     """Read one request, persist its response and always close the Hermes agent."""
-    request = json.loads(Path(sys.argv[1]).read_text())
-    configuration = json.loads(request.get("configuration", "{}"))
-    model = configuration.get("model") or "gpt-5.6-luna"
-    provider = configuration.get("provider") or "openai-codex"
+    request = BridgeRequest.model_validate_json(Path(sys.argv[1]).read_text())
+    configuration = BridgeConfiguration.model_validate_json(request.configuration)
+    model = configuration.model or "gpt-5.6-luna"
+    provider = configuration.provider or "openai-codex"
     agent = create_agent(
-        model,
-        provider,
-        configuration.get("timeout_seconds", 240),
-        configuration.get("reasoning_effort", "max"),
+        model, provider, configuration.timeout_seconds, configuration.reasoning_effort
     )
     try:
         response = run_request(agent, request, model, provider)
-        Path(sys.argv[2]).write_text(json.dumps(response, ensure_ascii=False))
+        Path(sys.argv[2]).write_text(response.model_dump_json())
     finally:
         agent.close()
 
 
-def run_request(agent: "AIAgent", request: dict[str, str], model: str, provider: str) -> dict:
+def run_request(
+    agent: ConversationAgent,
+    request: BridgeRequest | Mapping[str, object],
+    model: str,
+    provider: str,
+) -> BridgeResponse:
     """Run the supplied prompt and retain the provider and session provenance."""
-    result = agent.run_conversation(
-        user_message=request["input"],
-        system_message=request["instructions"],
+    request = BridgeRequest.model_validate(request)
+    result = ConversationResult.model_validate(
+        agent.run_conversation(user_message=request.input, system_message=request.instructions)
     )
-    return {
-        "execution": "live",
-        "model": getattr(agent, "model", None),
-        "provider": getattr(agent, "provider", None),
-        "requested_model": model,
-        "requested_provider": provider,
-        "response": result["final_response"],
-        "session_id": agent.session_id,
-    }
+    return BridgeResponse(
+        model=getattr(agent, "model", None),
+        provider=getattr(agent, "provider", None),
+        requested_model=model,
+        requested_provider=provider,
+        response=result.final_response,
+        session_id=agent.session_id,
+    )
 
 
 if __name__ == "__main__":

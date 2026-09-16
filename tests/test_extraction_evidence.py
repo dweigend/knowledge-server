@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
+from support import SeedArticle
 
 import knowledge.knowledge_base.claim_evidence_records as evidence
 import knowledge.knowledge_base.source_records as sources
@@ -12,7 +13,7 @@ from knowledge.knowledge_domain.knowledge_record_models import Evidence, Referen
 
 
 @pytest.fixture
-def relation(article):
+def relation(article: SeedArticle) -> Evidence:
     payload = article.claim.model_dump(exclude={"proposition", "scope", "qualifications"})
     return Evidence(
         claim=Reference(entity_id=uuid4(), revision=1),
@@ -22,7 +23,7 @@ def relation(article):
 
 
 @pytest.fixture
-def ledger(article):
+def ledger(article: SeedArticle) -> Mock:
     ledger = Mock()
     ledger.require.return_value = SimpleNamespace(payload=article.source)
     ledger.list.return_value = []
@@ -30,7 +31,7 @@ def ledger(article):
     return ledger
 
 
-def test_legacy_evidence_serialization_has_no_added_null_fields(relation):
+def test_legacy_evidence_serialization_has_no_added_null_fields(relation: Evidence) -> None:
     encoded = relation.model_dump(mode="json")
     assert "extraction_revision" not in encoded
     assert "block_id" not in encoded
@@ -38,18 +39,24 @@ def test_legacy_evidence_serialization_has_no_added_null_fields(relation):
 
 
 @pytest.mark.parametrize("pin", [{"extraction_revision": 1}, {"block_id": "text"}])
-def test_extraction_pins_must_be_supplied_together(relation, pin):
+def test_extraction_pins_must_be_supplied_together(
+    relation: Evidence, pin: dict[str, object]
+) -> None:
     with pytest.raises(ValidationError, match="both extraction_revision and block_id"):
         Evidence.model_validate({**relation.model_dump(), **pin})
 
 
-def test_unpinned_legacy_commands_keep_page_text_contract(ledger, relation, monkeypatch):
+def test_unpinned_legacy_commands_keep_page_text_contract(
+    ledger: Mock, relation: Evidence, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(sources, "get_snapshot", lambda *args: SimpleNamespace(blocks=[]))
     evidence.link(ledger, "pilot", relation, "test")
     ledger.append.assert_called_once()
 
 
-def test_pinned_quote_uses_exact_historical_snapshot(ledger, relation, monkeypatch):
+def test_pinned_quote_uses_exact_historical_snapshot(
+    ledger: Mock, relation: Evidence, monkeypatch: pytest.MonkeyPatch
+) -> None:
     block = DocumentBlock(id="text", kind="text", page=1, text="Different extracted wording.")
     snapshot_reader = Mock(return_value=SimpleNamespace(blocks=[block]))
     monkeypatch.setattr(sources, "get_snapshot", snapshot_reader)
@@ -76,11 +83,11 @@ def test_pinned_quote_uses_exact_historical_snapshot(ledger, relation, monkeypat
     ],
 )
 def test_unusable_or_mismatched_block_cannot_supply_evidence(
-    ledger,
-    relation,
-    monkeypatch,
-    change,
-):
+    ledger: Mock,
+    relation: Evidence,
+    monkeypatch: pytest.MonkeyPatch,
+    change: dict[str, object],
+) -> None:
     block = DocumentBlock(id="text", kind="text", page=1, text=relation.quote)
     monkeypatch.setattr(
         sources,
@@ -95,7 +102,9 @@ def test_unusable_or_mismatched_block_cannot_supply_evidence(
     ledger.append.assert_not_called()
 
 
-def test_deduplication_does_not_erase_extraction_revision(ledger, relation, monkeypatch):
+def test_deduplication_does_not_erase_extraction_revision(
+    ledger: Mock, relation: Evidence, monkeypatch: pytest.MonkeyPatch
+) -> None:
     block = DocumentBlock(id="text", kind="text", page=1, text=relation.quote)
     monkeypatch.setattr(sources, "get_snapshot", lambda *args: SimpleNamespace(blocks=[block]))
     previous = relation.model_copy(update={"extraction_revision": 1, "block_id": "text"})

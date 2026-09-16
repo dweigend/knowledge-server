@@ -1,7 +1,7 @@
 # Typed data boundaries
 
-Reviewed 2026-09-16 against `6c3c2ed`. This replaces the longer plan deleted in
-`2596ce8`; it records implemented boundaries and remaining migration work.
+Reviewed 2026-09-16. This records the implemented data boundaries and the
+compatibility constraints applied during the repository-wide typing pass.
 
 Validate external structured input at its owner with Pydantic, retain the model
 inside the workflow, and serialize only for storage or output. Use existing
@@ -15,12 +15,11 @@ Contextual revision, hash, citation and transaction checks remain domain rules.
 | Import/resume | Retain `PreparedImport`; load saved state only on resume |
 | Pipeline inputs | Runner validates outputs; steps receive typed models |
 | Persistence | Existing record, extraction, configuration and attempt types |
-| Providers | Typed results where present; raw provider subsets remain |
+| Providers | Pydantic Crossref, catalog, Zotero, Docling and Marker response contracts |
 
-The historical plan's fully typed provider payloads, discriminated configuration
-and attempt variants, and single record discriminator are **not implemented**.
-Replacing these requires coordinated caller/storage changes and schema acceptance;
-adding parallel DTOs would defeat this cleanup. No historical data was migrated.
+Provider contracts describe the fields each adapter consumes, while ignoring
+unrelated upstream fields. Existing configuration and record discriminators remain
+unchanged to preserve stored schemas and request hashes. No historical data was migrated.
 Legacy source readers remain necessary for immutable citations. Local template
 contexts and callable execution state do not need additional Pydantic envelopes.
 
@@ -54,11 +53,22 @@ Pydantic schemas, FastAPI response handling, stored JSON and model-request hashe
 must remain stable during annotation-only changes. An annotation that changes
 runtime validation is a contract change and needs separate review.
 
-The annotation review covers application modules and test support. Remaining
-dynamic dictionaries are concentrated in external Docling/Marker/Zotero payloads,
-heterogeneous PostgreSQL rows, Jinja view contexts and merged experiment inspection
-results. Replacing these requires concrete boundary contracts; no blanket casts,
-type-check suppressions or misleading JSON annotations were added.
+The annotation review covers application modules and tests. Pydantic models now
+validate external parser, Zotero, database receipt and model response envelopes.
+Database connections expose untrusted `dict[str, object]` rows, which are validated
+before domain field access. Dictionary-based API and template projections use
+concrete `TypedDict` contracts; persisted projections are validated with
+`TypeAdapter`. This preserves existing JSON and template shapes.
+
+Ruff enforces annotations (`ANN`), return consistency (`RET`), simplification
+(`SIM`, `C4`, `PIE`), additional correctness rules (`RUF`) and performance rules
+(`PERF`) alongside the original rules. Literal en dashes remain allowed because
+bibliographic evidence and page-range patterns require them. All ty rules are
+errors, including missing generic arguments, unsafe returns and override markers.
+These checks do not establish semantic correctness: the regression suite and
+existing-schema comparison remain necessary. The standalone Hermes bridge has
+its own typed protocol and request/response models; checking its external imports
+still requires the separately installed Hermes runtime.
 
 ## Reference discovery
 
@@ -112,3 +122,6 @@ References: [Pydantic models](https://docs.pydantic.dev/latest/concepts/models/)
 [TypeAdapter](https://docs.pydantic.dev/latest/concepts/type_adapter/),
 [BaseSettings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/),
 [record integrity](knowledge-contracts.md).
+
+Tool guidance: [ty rule configuration](https://docs.astral.sh/ty/rules/),
+[Ruff rules](https://docs.astral.sh/ruff/rules/).

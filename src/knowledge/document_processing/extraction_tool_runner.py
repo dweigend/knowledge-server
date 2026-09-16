@@ -4,7 +4,6 @@ Each invocation uses private scratch space, controlled environment variables,
 cancellation, and inspectable logs.
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -13,6 +12,7 @@ from time import monotonic
 from typing import Final
 from uuid import uuid4
 
+from knowledge.document_processing.extraction_input_models import DoclingDocument, MarkerNode
 from knowledge.runtime_support import workflow_event_log as events
 
 RASTER_DPI: Final[int] = 200
@@ -71,7 +71,7 @@ def tool_environment(runtime_root: Path) -> list[str]:
     return [f"--setenv={name}={value}" for name, value in settings.items()]
 
 
-def docling_document(pdf: Path, directory: Path, runtime_root: Path) -> dict:
+def docling_document(pdf: Path, directory: Path, runtime_root: Path) -> DoclingDocument:
     """Export complete Docling JSON without creating an independent Markdown store."""
     directory.mkdir(parents=True, exist_ok=True)
     run_tool(
@@ -92,10 +92,10 @@ def docling_document(pdf: Path, directory: Path, runtime_root: Path) -> dict:
         directory,
         runtime_root,
     )
-    return json.loads((directory / f"{pdf.stem}.json").read_text())
+    return DoclingDocument.model_validate_json((directory / f"{pdf.stem}.json").read_text())
 
 
-def marker_document(pdf: Path, page: int, directory: Path, runtime_root: Path) -> dict:
+def marker_document(pdf: Path, page: int, directory: Path, runtime_root: Path) -> MarkerNode:
     """Read an original PDF page visually from a 200-DPI raster with Marker."""
     directory.mkdir(parents=True, exist_ok=True)
     image = directory / "page"
@@ -133,4 +133,4 @@ def marker_document(pdf: Path, page: int, directory: Path, runtime_root: Path) -
         directory,
         runtime_root,
     )
-    return json.loads((directory / "page" / "page.json").read_text())
+    return MarkerNode.model_validate_json((directory / "page" / "page.json").read_text())

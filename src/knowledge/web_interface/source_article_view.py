@@ -23,7 +23,9 @@ from knowledge.knowledge_base import source_records as sources
 from knowledge.knowledge_domain import application_errors
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.literature import zotero_client as zotero
+from knowledge.literature import zotero_models
 from knowledge.revision_store import postgresql_revision_store
+from knowledge.web_interface import article_view_models as views
 
 PREVIEW_DPI: Final[int] = 100
 LABEL_CHARACTER_LIMIT: Final[int] = 160
@@ -39,7 +41,7 @@ def compose_article(
     database: postgresql_revision_store.Database,
     record: models.Record,
     extraction_revision: int | None = None,
-) -> dict:
+) -> views.ArticleView:
     """Read an article without generating content or changing stored records."""
     with database.transaction() as ledger:
         snapshot = document_extraction.get_snapshot(ledger, record.reference(), extraction_revision)
@@ -63,36 +65,33 @@ def compose_article(
     }
 
 
-def read_citation(reference: models.ZoteroReference) -> dict:
+def read_citation(reference: models.ZoteroReference) -> views.CitationView:
     """Distinguish unavailable Zotero service from absent metadata fields."""
     try:
         exported = zotero.article_citation(reference)
     except (URLError, OSError, ValueError) as error:
         return {"title": "Zotero-Daten nicht verfügbar", "error": str(error)}
-    metadata = exported["data"]
+    metadata = exported.data
     return {
-        "title": metadata.get("title") or "Titel in Zotero nicht angegeben",
-        "authors": author_names(metadata.get("creators", [])),
-        "year": metadata.get("date", ""),
-        "venue": metadata.get("publicationTitle") or metadata.get("bookTitle", ""),
-        "version": metadata.get("versionNumber") or metadata.get("type", ""),
-        "doi_url": safe_web_url("https://doi.org/" + metadata["DOI"])
-        if metadata.get("DOI")
-        else "",
-        "publisher_url": safe_web_url(metadata.get("url", "")),
-        "text": unescape(re.sub(r"<[^>]*>", "", exported.get("bib", ""))).strip(),
-        "bibtex": exported.get("bibtex", ""),
-        "metadata_revision": metadata.get("version"),
+        "title": metadata.title or "Titel in Zotero nicht angegeben",
+        "authors": author_names(metadata.creators),
+        "year": metadata.date,
+        "venue": metadata.publicationTitle or metadata.bookTitle,
+        "version": metadata.versionNumber or metadata.type,
+        "doi_url": safe_web_url("https://doi.org/" + metadata.DOI) if metadata.DOI else "",
+        "publisher_url": safe_web_url(metadata.url),
+        "text": unescape(re.sub(r"<[^>]*>", "", exported.bib)).strip(),
+        "bibtex": exported.bibtex,
+        "metadata_revision": metadata.version if "version" in metadata.model_fields_set else None,
     }
 
 
-def author_names(creators: list[dict]) -> list[str]:
+def author_names(creators: list[zotero_models.Creator]) -> list[str]:
     """Use Zotero's author roles while preserving names and listed order."""
     return [
-        creator.get("name")
-        or " ".join(filter(None, [creator.get("firstName"), creator.get("lastName")]))
+        creator.name or " ".join(filter(None, [creator.firstName, creator.lastName]))
         for creator in creators
-        if creator.get("creatorType") == "author"
+        if creator.creatorType == "author"
     ]
 
 
@@ -112,7 +111,7 @@ def zotero_item_url(library: str, item_key: str) -> str:
 def related_knowledge(
     ledger: postgresql_revision_store.Ledger,
     source_record: models.Record,
-) -> list[dict]:
+) -> list[views.KnowledgeEntry]:
     """Find knowledge linked to any retained revision of this source."""
     records = ledger.list(source_record.batch_id)
     direct_evidence = [
@@ -140,7 +139,7 @@ def knowledge_entry(
     ledger: postgresql_revision_store.Ledger,
     record: models.Record,
     source: models.Record,
-) -> dict:
+) -> views.KnowledgeEntry:
     """Create a compact link while leaving full analysis on its existing record page."""
     title = record_title(record)
     if isinstance(record.payload, models.Assessment):
@@ -153,7 +152,7 @@ def source_claims(
     ledger: postgresql_revision_store.Ledger,
     records: list[models.Record],
     source_record: models.Record,
-) -> list[dict]:
+) -> list[views.KnowledgeEntry]:
     """Resolve claims through their evidence, preserving the claim revision actually cited."""
     claims = {}
     for record in records:
@@ -216,7 +215,7 @@ def eligible_overview(
 def present_blocks(
     record: models.Record,
     snapshot: document_models.DocumentSnapshot | None,
-) -> list[dict]:
+) -> list[views.BlockView]:
     """Derive presentation fields from the single stored block structure."""
     if snapshot is None:
         return []
@@ -248,7 +247,7 @@ def present_blocks(
     ]
 
 
-def table_rows(block: document_models.DocumentBlock) -> list[list]:
+def table_rows(block: document_models.DocumentBlock) -> list[list[document_models.TableCell]]:
     """Keep merged cells in their original starting row and column order."""
     return [
         sorted([cell for cell in block.cells if cell.row == row], key=lambda cell: cell.column)
@@ -267,7 +266,9 @@ def pdf_location(
     return path + (f"&extraction_revision={extraction_revision}" if extraction_revision else "")
 
 
-def present_relationships(snapshot: document_models.DocumentSnapshot | None) -> list[dict]:
+def present_relationships(
+    snapshot: document_models.DocumentSnapshot | None,
+) -> list[views.RelationshipView]:
     """Resolve document relationships only against the same snapshot's block identities."""
     if snapshot is None:
         return []
@@ -359,10 +360,10 @@ def citation_part(text: str, links: dict[str, str]) -> str:
     return f'<a href="#block-{target}">{escape(text)}</a>'
 
 
-def outline_entries(snapshot: document_models.DocumentSnapshot | None) -> list[dict]:
+def outline_entries(snapshot: document_models.DocumentSnapshot | None) -> list[views.OutlineEntry]:
     """Preserve the document's heading hierarchy using transient navigation entries."""
-    outline: list[dict] = []
-    stack: list[tuple[int, list[dict]]] = [(-1, outline)]
+    outline: list[views.OutlineEntry] = []
+    stack: list[tuple[int, list[views.OutlineEntry]]] = [(-1, outline)]
     if snapshot is None:
         return outline
     for block in snapshot.blocks:
@@ -370,7 +371,7 @@ def outline_entries(snapshot: document_models.DocumentSnapshot | None) -> list[d
             continue
         while len(stack) > 1 and stack[-1][0] >= block.heading_level:
             stack.pop()
-        entry = {"block": block, "children": []}
+        entry: views.OutlineEntry = {"block": block, "children": []}
         stack[-1][1].append(entry)
         stack.append((block.heading_level, entry["children"]))
     return outline
@@ -379,19 +380,20 @@ def outline_entries(snapshot: document_models.DocumentSnapshot | None) -> list[d
 def processing_state(
     ledger: postgresql_revision_store.Ledger,
     record: models.Record,
-) -> dict | None:
+) -> views.ProcessingState | None:
     """Read the latest extraction job outcome for this exact source version."""
-    return ledger.connection.execute(
+    row = ledger.connection.execute(
         "SELECT state,error FROM extraction_jobs WHERE source_id=%s AND source_revision=%s "
         "ORDER BY updated_at DESC LIMIT 1",
         (record.entity_id, record.revision),
     ).fetchone()
+    return views.ProcessingState.model_validate(row) if row is not None else None
 
 
 def read_source_citation(
     database: postgresql_revision_store.Database,
     record: models.Record,
-) -> dict:
+) -> views.CitationView:
     """Keep historical text readable when its original Zotero identity cannot be resolved."""
     try:
         with database.transaction() as ledger:

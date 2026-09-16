@@ -1,15 +1,19 @@
 import json
 import re
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from knowledge.command_interfaces.knowledge_cli import export_batch
+from knowledge.knowledge_base.knowledge_service import Knowledge
 from knowledge.knowledge_domain.knowledge_record_models import Claim, Note
 from knowledge.runtime_support.environment_settings import Settings
 from knowledge.web_interface.fastapi_app import create_app
 
 
-def test_note_edit_and_export_preserve_revision_history(application, tmp_path):
+def test_note_edit_and_export_preserve_revision_history(
+    application: Knowledge, tmp_path: Path
+) -> None:
     with application.database.transaction() as ledger:
         claim = ledger.append(
             "pilot",

@@ -1,11 +1,14 @@
 """Keep PDF viewing separate from the revision-pinned Zotero byte endpoint."""
 
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
+from support import SeedArticle
 
 import knowledge.literature.zotero_client as zotero
+from knowledge.knowledge_base.knowledge_service import Knowledge
 from knowledge.knowledge_domain.knowledge_record_models import Source, ZoteroReference
 from knowledge.runtime_support.environment_settings import Settings
 from knowledge.web_interface.fastapi_app import create_app
@@ -13,8 +16,12 @@ from knowledge.web_interface.fastapi_app import create_app
 
 @pytest.mark.parametrize("variant", ["original", "clean"])
 def test_pdf_viewer_pins_revision_and_preserves_raw_endpoint(
-    application, article, tmp_path, monkeypatch, variant
-):
+    application: Knowledge,
+    article: SeedArticle,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str,
+) -> None:
     reference = ZoteroReference(
         server_id="test-instance",
         item_key="LITERAT1",

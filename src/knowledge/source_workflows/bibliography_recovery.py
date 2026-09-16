@@ -61,7 +61,7 @@ def _entry_start(line: str, previous: str = "") -> bool:
     if "In:" in previous.split("\n")[-1] and re.search(r"\((?:Hrsg|eds?|Hg)\.?\)", line):
         return False
     match = AUTHOR_YEAR.match(line)
-    return bool(match and re.search(r"\b[A-ZÄÖÜ][\w-]*\b", match["authors"]))
+    return bool(match and re.search(r"\b[A-ZÄÖÜ][\w-]*\b", match.group("authors")))
 
 
 def _page_lines(page: str) -> list[tuple[int, str]]:
@@ -167,9 +167,11 @@ def _audit_issues(paper: PaperDocument, entries: list[BibliographyEntry]) -> lis
         count = sum(reference.id in entry.original_ids for entry in entries)
         if count > 1 and not _split_supported(reference, entries):
             issues.append(f"Original reference {reference.id} overlaps several source entries.")
-    for entry in entries:
-        if len(entry.original_ids) > 1:
-            issues.append(f"Source entry {entry.id} matches several original references.")
+    issues.extend(
+        f"Source entry {entry.id} matches several original references."
+        for entry in entries
+        if len(entry.original_ids) > 1
+    )
     return issues
 
 
@@ -196,8 +198,8 @@ def _recover_entries(paper: PaperDocument, audit: BibliographyAudit) -> list[Pap
             PaperReference(
                 id=identifier,
                 raw=entry.raw,
-                authors=_source_authors(match["authors"]) if match else [],
-                year=match["year"] if match else None,
+                authors=_source_authors(match.group("authors")) if match else [],
+                year=match.group("year") if match else None,
             )
         )
     return references
@@ -353,28 +355,31 @@ def _recovered_paper(
 
 def _marker_identity(marker: str) -> tuple[list[str], str, bool] | None:
     cleaned = re.sub(r",\s*(?:Kap\.|S\.|pp?\.)\s*[\d.,–-]+", "", marker)
-    match = re.fullmatch(
+    match: re.Match[str] | None = re.fullmatch(
         r"[\s(\[,;]*(?P<authors>[^\d;()]+?)\s+(?P<year>(?:18|19|20)\d{2}[a-z]?)"
         r"[\s)\],;]*",
         cleaned,
     )
     if match is None:
         return None
-    authors = match["authors"].strip()
+    groups = match.groupdict(default="")
+    authors = groups["authors"].strip()
     abbreviated = bool(re.search(r"\s+et al\.?$", authors, re.IGNORECASE))
     authors = re.sub(r"\s+et al\.?$", "", authors, flags=re.IGNORECASE)
     surnames = [
-        name.strip().casefold() for name in re.split(r"\s*(?:/|,|&|\band\b|\bund\b)\s*", authors)
+        name.strip().casefold()
+        for name in re.split(r"\s*(?:/|,|&|\band\b|\bund\b)\s*", authors)
+        if isinstance(name, str)
     ]
     if any(not re.fullmatch(r"[^\W\d_]+(?:[ '-][^\W\d_]+)*", name) for name in surnames):
         return None
-    return surnames, match["year"], abbreviated
+    return surnames, groups["year"], abbreviated
 
 
 def _reference_surnames(reference: PaperReference) -> list[str]:
     raw_match = AUTHOR_YEAR.match(reference.raw or "")
-    authors = _source_authors(raw_match["authors"]) if raw_match else reference.authors
-    surnames = []
+    authors = _source_authors(raw_match.group("authors")) if raw_match else reference.authors
+    surnames: list[str] = []
     for author in authors:
         words = re.findall(r"[^\W\d_]+(?:[-'][^\W\d_]+)*", author)
         names = [word for word in words if not re.fullmatch(r"[A-ZÄÖÜ](?:-[A-ZÄÖÜ])*", word)]
@@ -392,7 +397,7 @@ def _unique_marker_target(marker: str, references: list[PaperReference]) -> str 
     candidates = []
     for reference in references:
         raw_match = AUTHOR_YEAR.match(reference.raw or "")
-        reference_year = raw_match["year"] if raw_match else reference.year
+        reference_year = raw_match.group("year") if raw_match else reference.year
         authors = _reference_surnames(reference)
         author_match = authors == surnames
         if abbreviated:

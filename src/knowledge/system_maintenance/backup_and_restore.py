@@ -21,6 +21,12 @@ from pydantic import TypeAdapter
 from knowledge.document_processing import document_models
 from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import environment_settings
+from knowledge.system_maintenance.maintenance_models import (
+    BatchRow,
+    DatabaseInspection,
+    RestoreReport,
+    RevisionCount,
+)
 
 _MANIFEST: Final[TypeAdapter[dict[str, str]]] = TypeAdapter(dict[str, str])
 
@@ -107,18 +113,18 @@ def verify_manifest(directory: Path) -> int:
     return len(manifest)
 
 
-def inspect_restored_database(database_url: str) -> dict:
+def inspect_restored_database(database_url: str) -> DatabaseInspection:
     """Decode restored records as well as counting their stored revisions."""
     with postgresql_revision_store.Database(database_url).transaction() as ledger:
         counts = ledger.connection.execute(
             "SELECT kind, count(*) AS count FROM revisions GROUP BY kind ORDER BY kind",
         ).fetchall()
         batches = ledger.connection.execute("SELECT batch_id FROM batches").fetchall()
-        decoded = sum(len(ledger.list(row["batch_id"])) for row in batches)
+        decoded = sum(len(ledger.list(BatchRow.model_validate(row).batch_id)) for row in batches)
         snapshots = inspect_document_snapshots(ledger)
     return {
         "current_records_decoded": decoded,
-        "revision_counts": counts,
+        "revision_counts": TypeAdapter(list[RevisionCount]).validate_python(counts),
         "document_snapshots_decoded": snapshots,
     }
 
@@ -141,9 +147,9 @@ def write_restore_report(
     restored_url: str,
     restored_name: str,
     files_verified: int,
-) -> dict:
+) -> RestoreReport:
     """Persist file verification and decoded database counts together."""
-    report = {
+    report: RestoreReport = {
         "files_verified": files_verified,
         **inspect_restored_database(restored_url),
         "restored_database": restored_name,
@@ -152,7 +158,7 @@ def write_restore_report(
     return report
 
 
-def verify_restore(snapshot_directory: Path, database_url: str) -> dict:
+def verify_restore(snapshot_directory: Path, database_url: str) -> RestoreReport:
     """Restore into a random temporary database; always remove that isolated target."""
     restored_name = "knowledge_restore_" + uuid4().hex
     restored_url = make_conninfo(database_url, dbname=restored_name)

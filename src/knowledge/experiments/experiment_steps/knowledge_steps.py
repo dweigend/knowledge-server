@@ -6,10 +6,9 @@ operations, so experiments never import production persistence workflows.
 
 import difflib
 from collections.abc import Mapping
-from typing import cast
 
 from knowledge.experiments import pipeline_specification
-from knowledge.experiments.experiment_steps import document_steps, step_contracts
+from knowledge.experiments.experiment_steps import document_steps, parameter_models, step_contracts
 from knowledge.knowledge_domain import knowledge_record_models
 from knowledge.model_integration import prompt_registry, structured_generation
 from knowledge.source_workflows import (
@@ -21,17 +20,12 @@ from knowledge.source_workflows import (
 
 def validate_retrieval_parameters(parameters: Mapping[str, object]) -> None:
     """Validate an optional query and bounded retrieval limit."""
-    validate_selection_parameters(parameters)
-    limit = parameters.get("limit", 20)
-    if type(limit) is not int or not 1 <= limit <= 40:
-        raise ValueError("limit must be an integer between 1 and 40")
+    parameter_models.RetrievalParameters.model_validate(parameters)
 
 
 def validate_selection_parameters(parameters: Mapping[str, object]) -> None:
     """Validate an optional selection query."""
-    query = parameters.get("query")
-    if query is not None and not isinstance(query, str):
-        raise ValueError("query must be text")
+    parameter_models.SelectionParameters.model_validate(parameters)
 
 
 def _knowledge_query(execution: pipeline_specification.StepExecution) -> str:
@@ -49,9 +43,9 @@ def find_knowledge(
     execution: pipeline_specification.StepExecution,
 ) -> knowledge_candidate_selection.KnowledgeRetrieval:
     """Search the pinned knowledge snapshot deterministically."""
-    limit = cast(int, execution.recipe.parameters.get("limit", 20))
+    parameters = parameter_models.RetrievalParameters.model_validate(execution.recipe.parameters)
     return knowledge_candidate_selection.retrieve_knowledge(
-        _knowledge_query(execution), execution.knowledge, limit
+        _knowledge_query(execution), execution.knowledge, parameters.limit
     )
 
 
@@ -152,7 +146,9 @@ def _propose_note_change(
     prompt: str,
 ) -> step_contracts.NoteChange:
     structured_generation.check_cancelled(execution.cancelled)
-    note = cast(knowledge_record_models.Note, record.payload)
+    note = record.payload
+    if not isinstance(note, knowledge_record_models.Note):
+        raise ValueError("Note revision requires a note record")
     command = note_revision_proposals.propose_note_revision(
         record,
         records,

@@ -41,7 +41,8 @@ def page_chunks(pages: list[str]) -> list[dict[int, str]]:
             raise ValueError(f"PDF page {number} exceeds extraction budget")
         if current and characters + len(text) > PAGE_BUDGET:
             chunks.append(current)
-            current, characters = {}, 0
+            current = {}
+            characters = 0
         current[number] = text
         characters += len(text)
     if current:

@@ -1,5 +1,8 @@
 from collections import Counter
+from collections.abc import Callable
+from pathlib import Path
 from time import monotonic
+from typing import Never
 
 import pytest
 
@@ -30,8 +33,10 @@ from knowledge.source_workflows.reference_query_models import (
 
 
 @pytest.fixture(autouse=True)
-def isolated_discovery(monkeypatch):
-    def recover(paper, *_args, **_kwargs):
+def isolated_discovery(monkeypatch: pytest.MonkeyPatch) -> None:
+    def recover(
+        paper: PaperDocument, *_args: object, **_kwargs: object
+    ) -> BibliographyRecoveryResult:
         return BibliographyRecoveryResult(
             paper=paper.model_copy(deep=True),
             report=BibliographyAudit(
@@ -49,7 +54,7 @@ def isolated_discovery(monkeypatch):
     )
 
 
-def reference(identifier="r1", **changes):
+def reference(identifier: str = "r1", **changes: object) -> PaperReference:
     fields = {
         "id": identifier,
         "title": "A scientific study",
@@ -60,7 +65,12 @@ def reference(identifier="r1", **changes):
     return PaperReference.model_validate(fields | changes)
 
 
-def candidate(ref=None, provider="crossref", identifier="work-1", **changes):
+def candidate(
+    ref: PaperMetadata | None = None,
+    provider: str = "crossref",
+    identifier: str = "work-1",
+    **changes: object,
+) -> Candidate:
     ref = ref or reference()
     fields = ref.model_dump(exclude={"id", "raw"}) | changes
     return Candidate(
@@ -71,7 +81,7 @@ def candidate(ref=None, provider="crossref", identifier="work-1", **changes):
     )
 
 
-def document(*references, metadata=None):
+def document(*references: PaperReference, metadata: PaperMetadata | None = None) -> PaperDocument:
     return PaperDocument(
         markdown="Source text",
         provider="grobid",
@@ -82,8 +92,13 @@ def document(*references, metadata=None):
 
 
 def run_discovery(
-    tmp_path, paper, providers, settings=None, source_sha="a" * 64, cancelled=lambda: False
-):
+    tmp_path: Path,
+    paper: PaperDocument,
+    providers: dict[str, literature_resolution.Lookup],
+    settings: DiscoverySettings | None = None,
+    source_sha: str = "a" * 64,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> discovery.ReferenceDiscoveryResult:
     return discovery.discover_references(
         paper,
         ["Source text"],
@@ -98,15 +113,19 @@ def run_discovery(
     )
 
 
-def providers_recording(calls, reference_result=None, fallback_result=None):
-    def crossref(ref, *_):
+def providers_recording(
+    calls: list[tuple[str, PaperMetadata]],
+    reference_result: Callable[[PaperMetadata], list[Candidate]] | None = None,
+    fallback_result: Callable[[str, PaperMetadata], list[Candidate]] | None = None,
+) -> dict[str, literature_resolution.Lookup]:
+    def crossref(ref: PaperMetadata, *_: object) -> list[Candidate]:
         calls.append(("crossref", ref.model_copy(deep=True)))
         if ref.title == "Uploaded paper":
             return [candidate(ref, identifier="uploaded-paper")]
         return reference_result(ref) if reference_result else []
 
-    def fallback(name):
-        def lookup(ref, *_):
+    def fallback(name: str) -> literature_resolution.Lookup:
+        def lookup(ref: PaperMetadata, *_: object) -> list[Candidate]:
             calls.append((name, ref.model_copy(deep=True)))
             return fallback_result(name, ref) if fallback_result else []
 
@@ -118,7 +137,9 @@ def providers_recording(calls, reference_result=None, fallback_result=None):
     }
 
 
-def test_complete_crossref_record_skips_fallback_and_model(tmp_path, monkeypatch):
+def test_complete_crossref_record_skips_fallback_and_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
     monkeypatch.setattr(
         planning.structured_generation,
@@ -136,7 +157,7 @@ def test_complete_crossref_record_skips_fallback_and_model(tmp_path, monkeypatch
     assert result.report.model_calls == 0
 
 
-def test_optional_doi_and_venue_do_not_trigger_fallback(tmp_path):
+def test_optional_doi_and_venue_do_not_trigger_fallback(tmp_path: Path) -> None:
     calls = []
     result = run_discovery(
         tmp_path, document(reference()), providers_recording(calls, lambda ref: [candidate(ref)])
@@ -146,7 +167,9 @@ def test_optional_doi_and_venue_do_not_trigger_fallback(tmp_path):
     assert [name for name, _ in calls] == ["crossref", "crossref"]
 
 
-def test_required_missing_field_invokes_fallback_and_stops_on_complete_identity(tmp_path):
+def test_required_missing_field_invokes_fallback_and_stops_on_complete_identity(
+    tmp_path: Path,
+) -> None:
     calls = []
     providers = providers_recording(
         calls,
@@ -171,7 +194,7 @@ def test_required_missing_field_invokes_fallback_and_stops_on_complete_identity(
     assert calls_for_reference == ["crossref", "openalex"]
 
 
-def test_unsuccessful_results_are_reused_without_requests_on_repeated_run(tmp_path):
+def test_unsuccessful_results_are_reused_without_requests_on_repeated_run(tmp_path: Path) -> None:
     calls = []
     providers = providers_recording(calls)
     paper = document(reference())
@@ -184,7 +207,7 @@ def test_unsuccessful_results_are_reused_without_requests_on_repeated_run(tmp_pa
     assert second.report.cache_hits > 0
 
 
-def test_manual_retry_revision_repeats_cached_unsuccessful_queries(tmp_path):
+def test_manual_retry_revision_repeats_cached_unsuccessful_queries(tmp_path: Path) -> None:
     calls = []
     providers = providers_recording(calls)
     paper = document(reference())
@@ -203,7 +226,7 @@ def test_manual_retry_revision_repeats_cached_unsuccessful_queries(tmp_path):
     )
 
 
-def test_manual_retry_preserves_confirmed_complete_records_without_queries(tmp_path):
+def test_manual_retry_preserves_confirmed_complete_records_without_queries(tmp_path: Path) -> None:
     calls = []
     providers = providers_recording(calls, lambda ref: [candidate(ref)])
     paper = document(reference())
@@ -217,7 +240,9 @@ def test_manual_retry_preserves_confirmed_complete_records_without_queries(tmp_p
     assert all(record.resolution.status == "matched" for record in result.literature)
 
 
-def test_changed_source_metadata_and_reference_evidence_invalidate_effective_queries(tmp_path):
+def test_changed_source_metadata_and_reference_evidence_invalidate_effective_queries(
+    tmp_path: Path,
+) -> None:
     calls = []
     providers = providers_recording(calls)
     run_discovery(tmp_path, document(reference()), providers)
@@ -235,7 +260,7 @@ def test_changed_source_metadata_and_reference_evidence_invalidate_effective_que
     assert all(record.source_sha256 == "b" * 64 for record in result.literature)
 
 
-def test_total_request_budget_stops_all_further_network_requests(tmp_path):
+def test_total_request_budget_stops_all_further_network_requests(tmp_path: Path) -> None:
     calls = []
     result = run_discovery(
         tmp_path,
@@ -249,7 +274,7 @@ def test_total_request_budget_stops_all_further_network_requests(tmp_path):
     )
 
 
-def test_per_reference_budget_leaves_capacity_for_other_references(tmp_path):
+def test_per_reference_budget_leaves_capacity_for_other_references(tmp_path: Path) -> None:
     calls = []
     result = run_discovery(
         tmp_path,
@@ -261,11 +286,11 @@ def test_per_reference_budget_leaves_capacity_for_other_references(tmp_path):
     assert Counter(ref.id for _, ref in calls) == {"__source__": 1, "r1": 1, "r2": 1}
 
 
-def test_rate_limit_disables_only_the_affected_provider_for_remaining_run(tmp_path):
+def test_rate_limit_disables_only_the_affected_provider_for_remaining_run(tmp_path: Path) -> None:
     calls = []
     providers = providers_recording(calls)
 
-    def limited(ref, *_):
+    def limited(ref: PaperMetadata, *_: object) -> list[Candidate]:
         calls.append(("crossref", ref.model_copy(deep=True)))
         raise ValueError("upstream HTTP 429 with secret detail")
 
@@ -279,7 +304,7 @@ def test_rate_limit_disables_only_the_affected_provider_for_remaining_run(tmp_pa
     assert "secret detail" not in result.report.model_dump_json()
 
 
-def test_cancellation_propagates_without_downstream_provider_calls(tmp_path):
+def test_cancellation_propagates_without_downstream_provider_calls(tmp_path: Path) -> None:
     calls = []
     with pytest.raises(InterruptedError):
         run_discovery(
@@ -288,7 +313,7 @@ def test_cancellation_propagates_without_downstream_provider_calls(tmp_path):
     assert calls == []
 
 
-def test_same_doi_from_multiple_providers_is_one_identity_with_richer_metadata():
+def test_same_doi_from_multiple_providers_is_one_identity_with_richer_metadata() -> None:
     ref = reference()
     first = candidate(ref, doi="10.1234/WORK")
     second = candidate(
@@ -300,7 +325,7 @@ def test_same_doi_from_multiple_providers_is_one_identity_with_richer_metadata()
     assert len(result.candidates) == 2
 
 
-def test_different_book_editions_remain_ambiguous():
+def test_different_book_editions_remain_ambiguous() -> None:
     ref = reference()
     first = candidate(
         ref, provider="dnb", identifier="edition-one", work_type="book", isbn=["9783593379784"]
@@ -313,7 +338,7 @@ def test_different_book_editions_remain_ambiguous():
     assert result.metadata.isbn == []
 
 
-def test_failed_doi_lookup_retries_title_and_corroborates_original_evidence(tmp_path):
+def test_failed_doi_lookup_retries_title_and_corroborates_original_evidence(tmp_path: Path) -> None:
     calls = []
     providers = providers_recording(calls, lambda ref: [] if ref.doi else [candidate(ref)])
     result = run_discovery(tmp_path, document(reference(doi="10.1234/wrong")), providers)
@@ -324,13 +349,13 @@ def test_failed_doi_lookup_retries_title_and_corroborates_original_evidence(tmp_
     assert record.extracted[0].doi == "10.1234/wrong"
 
 
-def test_chapter_evidence_cannot_be_confirmed_as_containing_book():
+def test_chapter_evidence_cannot_be_confirmed_as_containing_book() -> None:
     ref = reference(raw="Smith (2020). A scientific study. In: Collected essays, pp. 1-10.")
     result = discovery.resolved_record(ref, [candidate(ref, work_type="book")], "a" * 64)
     assert result.resolution.status == "unmatched"
 
 
-def test_no_provider_query_without_bibliographic_evidence(tmp_path):
+def test_no_provider_query_without_bibliographic_evidence(tmp_path: Path) -> None:
     calls = []
     paper = document(PaperReference(id="empty"), metadata=PaperMetadata())
     result = run_discovery(tmp_path, paper, providers_recording(calls))
@@ -338,7 +363,7 @@ def test_no_provider_query_without_bibliographic_evidence(tmp_path):
     assert result.report.requests == 0
 
 
-def test_duplicate_reference_ids_preserve_each_original_record(tmp_path):
+def test_duplicate_reference_ids_preserve_each_original_record(tmp_path: Path) -> None:
     calls = []
     refs = [
         reference("same", title="First scientific study", raw="First original reference"),
@@ -351,17 +376,17 @@ def test_duplicate_reference_ids_preserve_each_original_record(tmp_path):
         if record.role == "reference"
         for entry in record.extracted
     ]
-    assert sorted(entry.title for entry in retained) == [
+    assert sorted(entry.title or "" for entry in retained) == [
         "First scientific study",
         "Second scientific study",
     ]
-    assert sorted(entry.raw for entry in retained) == [
+    assert sorted(entry.raw or "" for entry in retained) == [
         "First original reference",
         "Second original reference",
     ]
 
 
-def test_model_proposal_cannot_assert_identity_or_add_doi():
+def test_model_proposal_cannot_assert_identity_or_add_doi() -> None:
     with pytest.raises(ValueError):
         planning.ReferenceQuery.model_validate(
             {
@@ -374,7 +399,9 @@ def test_model_proposal_cannot_assert_identity_or_add_doi():
         )
 
 
-def test_model_search_variant_must_still_match_original_evidence(tmp_path, monkeypatch):
+def test_model_search_variant_must_still_match_original_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
     ref = reference(
         title="Unreadable original heading",
@@ -411,8 +438,11 @@ def test_model_search_variant_must_still_match_original_evidence(tmp_path, monke
     ],
 )
 def test_grounded_model_fields_enable_matching_without_rewriting_original_evidence(
-    tmp_path, monkeypatch, original_title, original_authors
-):
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    original_title: str | None,
+    original_authors: list[str],
+) -> None:
     ref = reference(
         title=original_title,
         authors=original_authors,
@@ -447,7 +477,9 @@ def test_grounded_model_fields_enable_matching_without_rewriting_original_eviden
     assert result.report.model_calls == 1
 
 
-def test_crossref_rate_limit_still_allows_model_planning_for_dnb(tmp_path, monkeypatch):
+def test_crossref_rate_limit_still_allows_model_planning_for_dnb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     ref = reference(
         title=None, authors=[], year=None, raw="Alice Smith (2020). A scientific study."
     )
@@ -465,7 +497,7 @@ def test_crossref_rate_limit_still_allows_model_planning_for_dnb(tmp_path, monke
     monkeypatch.setattr(planning.structured_generation, "generate", lambda *_a, **_k: plan)
     calls = []
 
-    def crossref_result(_reference):
+    def crossref_result(_reference: PaperMetadata) -> list[Candidate]:
         raise ValueError("Crossref HTTP 429")
 
     providers = providers_recording(
@@ -484,7 +516,9 @@ def test_crossref_rate_limit_still_allows_model_planning_for_dnb(tmp_path, monke
     assert sum(provider == "dnb" for provider, _ in calls) == 1
 
 
-def test_missing_title_skips_inapplicable_adapters_without_spending_request_budget(tmp_path):
+def test_missing_title_skips_inapplicable_adapters_without_spending_request_budget(
+    tmp_path: Path,
+) -> None:
     calls = []
     ref = reference(title=None, authors=[], year=None, raw="Smith (2020). A scientific study.")
     result = run_discovery(
@@ -503,7 +537,7 @@ def test_missing_title_skips_inapplicable_adapters_without_spending_request_budg
     assert result.report.requests == 2
 
 
-def test_model_plan_rejects_invented_bibliographic_fields():
+def test_model_plan_rejects_invented_bibliographic_fields() -> None:
     proposal = planning.ReferenceQueries(
         queries=[
             planning.ReferenceQuery(
@@ -519,7 +553,7 @@ def test_model_plan_rejects_invented_bibliographic_fields():
         planning.validate_queries(proposal, {"r1": reference()})
 
 
-def test_model_plan_rejects_partial_word_author_and_year_fabrication():
+def test_model_plan_rejects_partial_word_author_and_year_fabrication() -> None:
     proposal = planning.ReferenceQueries(
         queries=[
             planning.ReferenceQuery(
@@ -535,10 +569,12 @@ def test_model_plan_rejects_partial_word_author_and_year_fabrication():
         planning.validate_queries(proposal, {"r1": reference()})
 
 
-def test_failed_model_planning_is_cached_without_retrying_unchanged_evidence(tmp_path, monkeypatch):
+def test_failed_model_planning_is_cached_without_retrying_unchanged_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
 
-    def fail(*_args, **_kwargs):
+    def fail(*_args: object, **_kwargs: object) -> Never:
         calls.append(True)
         raise RuntimeError("Private upstream failure detail")
 
@@ -563,12 +599,12 @@ def test_failed_model_planning_is_cached_without_retrying_unchanged_evidence(tmp
 
 @pytest.mark.parametrize("budget, expected_access_calls", [(2, 0), (3, 1)])
 def test_optional_unpaywall_shares_the_total_request_budget(
-    tmp_path, budget, expected_access_calls
-):
+    tmp_path: Path, budget: int, expected_access_calls: int
+) -> None:
     calls = []
     providers = providers_recording(calls, lambda ref: [candidate(ref, doi="10.1234/work")])
 
-    def access(ref, *_args):
+    def access(ref: PaperMetadata, *_args: object) -> list[Candidate]:
         calls.append(("unpaywall", ref.model_copy(deep=True)))
         return [candidate(ref, provider="unpaywall", open_access_url="https://example.org/open")]
 
@@ -583,7 +619,7 @@ def test_optional_unpaywall_shares_the_total_request_budget(
     assert result.report.requests == 2 + expected_access_calls
 
 
-def test_unpaywall_skips_unconfirmed_dois_absent_dois_and_existing_links(tmp_path):
+def test_unpaywall_skips_unconfirmed_dois_absent_dois_and_existing_links(tmp_path: Path) -> None:
     calls = []
     refs = [
         reference("unmatched", title="Unmatched title", doi="10.1234/unconfirmed"),
@@ -591,7 +627,8 @@ def test_unpaywall_skips_unconfirmed_dois_absent_dois_and_existing_links(tmp_pat
         reference("has-link", title="Known access location"),
     ]
 
-    def found(ref):
+    def found(ref: PaperMetadata) -> list[Candidate]:
+        assert isinstance(ref, PaperReference)
         if ref.title == "Unmatched title":
             return []
         if ref.title == "Known access location":
@@ -618,8 +655,12 @@ def test_unpaywall_skips_unconfirmed_dois_absent_dois_and_existing_links(tmp_pat
     )
 
 
-def test_recovery_model_call_consumes_the_shared_model_budget(tmp_path, monkeypatch):
-    def recover(paper, *_args, **_kwargs):
+def test_recovery_model_call_consumes_the_shared_model_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def recover(
+        paper: PaperDocument, *_args: object, **_kwargs: object
+    ) -> BibliographyRecoveryResult:
         return BibliographyRecoveryResult(
             paper=paper,
             report=BibliographyAudit(
@@ -646,14 +687,16 @@ def test_recovery_model_call_consumes_the_shared_model_budget(tmp_path, monkeypa
     assert result.report.model_calls == 1
 
 
-def test_pacing_exhaustion_is_recorded_without_aborting_discovery(tmp_path, monkeypatch):
+def test_pacing_exhaustion_is_recorded_without_aborting_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     settings = DiscoverySettings(max_model_calls=0)
     report = DiscoveryReport()
     session = reference_search.ReferenceSearchSession(
         tmp_path, settings, report, monotonic() + 5, lambda: False, {"crossref": lambda *_: []}
     )
 
-    def expire(_provider):
+    def expire(_provider: str) -> None:
         session.deadline = monotonic() - 1
 
     monkeypatch.setattr(session, "wait_for_provider", expire)
@@ -663,12 +706,12 @@ def test_pacing_exhaustion_is_recorded_without_aborting_discovery(tmp_path, monk
     assert report.requests == 0
 
 
-def test_complete_exact_isbn_match_skips_crossref_and_remaining_providers(tmp_path):
+def test_complete_exact_isbn_match_skips_crossref_and_remaining_providers(tmp_path: Path) -> None:
     calls = []
     ref = reference(title=None, authors=[], year=None, raw="ISBN 3-593-37978-3")
     providers = providers_recording(calls)
 
-    def dnb(query, *_args):
+    def dnb(query: PaperMetadata, *_args: object) -> list[Candidate]:
         calls.append(("dnb", query.model_copy(deep=True)))
         return [
             Candidate(
@@ -694,7 +737,9 @@ def test_complete_exact_isbn_match_skips_crossref_and_remaining_providers(tmp_pa
     assert record.extracted[0] == ref
 
 
-def test_pre_refactor_query_cache_preserves_exact_evidence_without_model_calls(tmp_path):
+def test_pre_refactor_query_cache_preserves_exact_evidence_without_model_calls(
+    tmp_path: Path,
+) -> None:
     ref = reference(
         title="  Nachhaltigkeit – Grundlagen  ",
         authors=["A. Müller"],
@@ -735,14 +780,16 @@ def test_pre_refactor_query_cache_preserves_exact_evidence_without_model_calls(t
         {"max_requests": "10"},
     ],
 )
-def test_discovery_settings_reject_invalid_search_requirements(settings):
+def test_discovery_settings_reject_invalid_search_requirements(settings: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         DiscoverySettings.model_validate(settings)
 
 
 @pytest.mark.parametrize("error_type", [KeyError, TypeError, InterruptedError])
-def test_provider_defects_and_cancellation_are_not_cached_as_missing_sources(tmp_path, error_type):
-    def fail(*_args):
+def test_provider_defects_and_cancellation_are_not_cached_as_missing_sources(
+    tmp_path: Path, error_type: type[Exception]
+) -> None:
+    def fail(*_args: object) -> Never:
         raise error_type("provider stopped")
 
     session = reference_search.ReferenceSearchSession(
@@ -762,16 +809,20 @@ def test_provider_defects_and_cancellation_are_not_cached_as_missing_sources(tmp
     assert session.state.backoff == set()
 
 
-def test_planning_bounds_model_input_without_discarding_collected_evidence(tmp_path, monkeypatch):
+def test_planning_bounds_model_input_without_discarding_collected_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import json
 
     packets = []
 
-    def plan(_instructions, packet, *_args, **_kwargs):
+    def plan(
+        _instructions: str, packet: str, *_args: object, **_kwargs: object
+    ) -> planning.ReferenceQueries:
         packets.append(json.loads(packet))
         return planning.ReferenceQueries()
 
-    def lookup(ref, *_args):
+    def lookup(ref: PaperMetadata, *_args: object) -> list[Candidate]:
         return [candidate(ref, identifier=f"work-{index}", year="1900") for index in range(7)]
 
     monkeypatch.setattr(planning.structured_generation, "generate", plan)

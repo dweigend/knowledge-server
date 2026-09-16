@@ -1,7 +1,9 @@
 import json
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from knowledge.literature.structured_paper_models import (
     PaperCitation,
@@ -17,7 +19,9 @@ from knowledge.source_workflows.bibliography_recovery_models import (
 )
 
 
-def paper_with(references, citations=()):
+def paper_with(
+    references: list[PaperReference], citations: Iterable[PaperCitation] = ()
+) -> PaperDocument:
     return PaperDocument(
         provider="fixture",
         metadata=PaperMetadata(title="Synthetic research chapter"),
@@ -27,18 +31,28 @@ def paper_with(references, citations=()):
     )
 
 
-def recover(paper, pages, directory, **options):
+def recover(
+    paper: PaperDocument,
+    pages: list[str],
+    directory: Path,
+    *,
+    allow_model: bool = True,
+    timeout_seconds: float | None = None,
+    retry_generation: int = 0,
+) -> recovery.BibliographyRecoveryResult:
     return recovery.recover_bibliography(
         paper,
         pages,
         directory,
         configuration=ModelConfiguration(),
         cancelled=lambda: False,
-        **options,
+        allow_model=allow_model,
+        timeout_seconds=timeout_seconds,
+        retry_generation=retry_generation,
     )
 
 
-def complete_reference(identifier="b0"):
+def complete_reference(identifier: str = "b0") -> PaperReference:
     return PaperReference(
         id=identifier,
         raw="Smith J (2001) A research title. Publisher, Berlin",
@@ -48,11 +62,13 @@ def complete_reference(identifier="b0"):
     )
 
 
-def test_consistent_complete_bibliography_does_not_call_model(tmp_path, monkeypatch):
+def test_consistent_complete_bibliography_does_not_call_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(recovery.structured_generation, "generate", lambda *a, **k: pytest.fail())
     reference = complete_reference()
     paper = paper_with([reference])
-    result = recover(paper, ["References\n" + reference.raw], tmp_path)
+    result = recover(paper, ["References\n" + (reference.raw or "")], tmp_path)
     assert result.paper == paper
     assert result.report.status == "consistent"
     assert result.report.model_status == "not_needed"
@@ -62,7 +78,7 @@ def test_consistent_complete_bibliography_does_not_call_model(tmp_path, monkeypa
     assert span.text == reference.raw
 
 
-def test_golden_nineteen_entries_recover_five_missing_and_two_merged_pairs(tmp_path):
+def test_golden_nineteen_entries_recover_five_missing_and_two_merged_pairs(tmp_path: Path) -> None:
     surnames = [
         "Adams",
         "Baker",
@@ -120,18 +136,27 @@ def test_golden_nineteen_entries_recover_five_missing_and_two_merged_pairs(tmp_p
 
 
 def test_model_only_receives_incomplete_entries_and_source_fields_are_validated(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     complete = complete_reference()
-    pages = ["References\n" + complete.raw + "\nBrown B (2002) Missing source title. Press"]
+    pages = ["References\n" + (complete.raw or "") + "\nBrown B (2002) Missing source title. Press"]
     calls = []
 
-    def generate(instructions, packet, contract, output_directory, validate, **options):
+    def generate(
+        instructions: str,
+        packet: str,
+        contract: type[BaseModel],
+        output_directory: Path,
+        validate: Callable[[BibliographyParsing], None],
+        *,
+        configuration: ModelConfiguration,
+        **options: object,
+    ) -> BibliographyParsing:
         entries = json.loads(packet)
         calls.append(entries)
         assert len(entries) == 1
         assert "Brown B" in entries[0]["raw"]
-        assert options["configuration"].max_attempts == 1
+        assert configuration.max_attempts == 1
         proposal = BibliographyParsing(
             entries=[
                 ReferenceParsing(
@@ -162,7 +187,7 @@ def test_model_only_receives_incomplete_entries_and_source_fields_are_validated(
         PaperMetadata(doi="10.1234/fabricated"),
     ],
 )
-def test_model_cannot_invent_bibliographic_fields(metadata):
+def test_model_cannot_invent_bibliographic_fields(metadata: PaperMetadata) -> None:
     entries = recovery.detect_entries(paper_with([]), ["References\nSmith J (2001) Source title"])
     proposal = BibliographyParsing(
         entries=[ReferenceParsing(entry_id=entries[0].id, metadata=metadata)]
@@ -171,7 +196,7 @@ def test_model_cannot_invent_bibliographic_fields(metadata):
         recovery.validate_parsing(proposal, entries)
 
 
-def test_model_cannot_change_entry_ids_or_duplicate_them():
+def test_model_cannot_change_entry_ids_or_duplicate_them() -> None:
     entries = recovery.detect_entries(paper_with([]), ["References\nSmith J (2001) Source title"])
     invented = ReferenceParsing(entry_id="invented", metadata=PaperMetadata())
     duplicate = ReferenceParsing(entry_id=entries[0].id, metadata=PaperMetadata())
@@ -182,11 +207,11 @@ def test_model_cannot_change_entry_ids_or_duplicate_them():
 
 @pytest.mark.parametrize("failure", [False, True])
 def test_negative_and_failed_model_attempts_are_cached_across_retries(
-    tmp_path, monkeypatch, failure
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: bool
+) -> None:
     calls = []
 
-    def generate(*args, **kwargs):
+    def generate(*args: object, **kwargs: object) -> BibliographyParsing:
         calls.append(True)
         if failure:
             raise ValueError("No usable model response")
@@ -205,7 +230,7 @@ def test_negative_and_failed_model_attempts_are_cached_across_retries(
     assert len(calls) == 2
 
 
-def test_unmatched_original_reference_is_retained(tmp_path):
+def test_unmatched_original_reference_is_retained(tmp_path: Path) -> None:
     original = complete_reference()
     result = recover(
         paper_with([original]),
@@ -218,7 +243,9 @@ def test_unmatched_original_reference_is_retained(tmp_path):
     assert len(result.paper.references) == 2
 
 
-def test_missing_heading_is_unverified_without_unbounded_model_request(tmp_path, monkeypatch):
+def test_missing_heading_is_unverified_without_unbounded_model_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(recovery.structured_generation, "generate", lambda *a, **k: pytest.fail())
     paper = paper_with([complete_reference()])
     result = recover(paper, ["No explicit bibliography boundary"], tmp_path)
@@ -227,7 +254,9 @@ def test_missing_heading_is_unverified_without_unbounded_model_request(tmp_path,
     assert "unverified" in result.report.unresolved_issues[0]
 
 
-def test_exhausted_budget_preserves_grounded_entries_without_model(tmp_path, monkeypatch):
+def test_exhausted_budget_preserves_grounded_entries_without_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(recovery.structured_generation, "generate", lambda *a, **k: pytest.fail())
     result = recover(
         paper_with([]), ["References\nSmith J (2001) Source title"], tmp_path, timeout_seconds=0
@@ -236,8 +265,10 @@ def test_exhausted_budget_preserves_grounded_entries_without_model(tmp_path, mon
     assert len(result.paper.references) == 1
 
 
-def test_cancellation_propagates_without_caching(tmp_path, monkeypatch):
-    def generate(*args, **kwargs):
+def test_cancellation_propagates_without_caching(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def generate(*args: object, **kwargs: object) -> BibliographyParsing:
         raise InterruptedError("Cancelled")
 
     monkeypatch.setattr(recovery.structured_generation, "generate", generate)
@@ -246,7 +277,9 @@ def test_cancellation_propagates_without_caching(tmp_path, monkeypatch):
     assert not list(Path(tmp_path).rglob("result.json"))
 
 
-def test_unique_author_year_markers_relink_without_model(tmp_path, monkeypatch):
+def test_unique_author_year_markers_relink_without_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(recovery.structured_generation, "generate", lambda *a, **k: pytest.fail())
     citations = [
         PaperCitation(marker="(Smith 2001, Kap. 3.3.3)"),
@@ -264,7 +297,9 @@ def test_unique_author_year_markers_relink_without_model(tmp_path, monkeypatch):
     assert result.paper.citations[1].target_ids == result.paper.citations[2].target_ids
 
 
-def test_split_reference_citations_are_reassigned_only_to_unique_source_entries(tmp_path):
+def test_split_reference_citations_are_reassigned_only_to_unique_source_entries(
+    tmp_path: Path,
+) -> None:
     first = "Smith J (2001) First title. Publisher"
     second = "Brown B (2002) Second title. Publisher"
     paper = paper_with(
@@ -291,17 +326,19 @@ def test_split_reference_citations_are_reassigned_only_to_unique_source_entries(
         "(Smith 2001a)",
     ],
 )
-def test_unclear_multicitation_or_year_suffix_is_not_partially_relinked(tmp_path, marker):
+def test_unclear_multicitation_or_year_suffix_is_not_partially_relinked(
+    tmp_path: Path, marker: str
+) -> None:
     paper = paper_with([complete_reference()], [PaperCitation(marker=marker)])
     result = recover(
-        paper, ["References\n" + complete_reference().raw], tmp_path, allow_model=False
+        paper, ["References\n" + (complete_reference().raw or "")], tmp_path, allow_model=False
     )
     assert not result.paper.citations[0].resolved
     assert result.paper.citations[0].target_ids == []
     assert result.report.relinked_citation_indexes == []
 
 
-def test_same_author_year_collision_and_existing_links_are_preserved(tmp_path):
+def test_same_author_year_collision_and_existing_links_are_preserved(tmp_path: Path) -> None:
     references = [complete_reference("b0"), complete_reference("b1")]
     references[1].title = "Different research title"
     references[1].raw = "Smith J (2001) Different research title. Publisher"
@@ -310,18 +347,20 @@ def test_same_author_year_collision_and_existing_links_are_preserved(tmp_path):
         PaperCitation(marker="(Smith 2001)", target_ids=["b0"], resolved=True),
     ]
     paper = paper_with(references, citations)
-    pages = ["References\n" + "\n".join(ref.raw for ref in references)]
+    pages = ["References\n" + "\n".join(ref.raw or "" for ref in references)]
     result = recover(paper, pages, tmp_path, allow_model=False)
     assert result.paper.citations == citations
 
 
 def test_remaining_deadline_changes_reuse_negative_cache_but_prompt_changes_do_not(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
 
-    def generate(*args, **kwargs):
-        calls.append(kwargs["configuration"].timeout_seconds)
+    def generate(
+        *args: object, configuration: ModelConfiguration, **kwargs: object
+    ) -> BibliographyParsing:
+        calls.append(configuration.timeout_seconds)
         return BibliographyParsing()
 
     monkeypatch.setattr(recovery.structured_generation, "generate", generate)
@@ -345,11 +384,18 @@ def test_remaining_deadline_changes_reuse_negative_cache_but_prompt_changes_do_n
 
 
 def test_successful_metadata_recovery_is_reused_across_explicit_retry_generations(
-    tmp_path, monkeypatch
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
 
-    def generate(instructions, packet, contract, directory, validate, **options):
+    def generate(
+        instructions: str,
+        packet: str,
+        contract: type[BaseModel],
+        directory: Path,
+        validate: Callable[[BibliographyParsing], None],
+        **options: object,
+    ) -> BibliographyParsing:
         entries = json.loads(packet)
         calls.append(directory)
         proposal = BibliographyParsing(
@@ -376,11 +422,11 @@ def test_successful_metadata_recovery_is_reused_across_explicit_retry_generation
 
 @pytest.mark.parametrize("empty_response", [False, True])
 def test_explicit_retry_repeats_failed_or_empty_parsing_only_once_per_generation(
-    tmp_path, monkeypatch, empty_response
-):
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty_response: bool
+) -> None:
     directories = []
 
-    def generate(*args, **kwargs):
+    def generate(*args: object, **kwargs: object) -> BibliographyParsing:
         directories.append(args[3])
         if empty_response:
             return BibliographyParsing()
@@ -396,10 +442,12 @@ def test_explicit_retry_repeats_failed_or_empty_parsing_only_once_per_generation
     assert directories[0] != directories[1]
 
 
-def test_explicit_retry_reconsiders_previous_budget_exhaustion(tmp_path, monkeypatch):
+def test_explicit_retry_reconsiders_previous_budget_exhaustion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
 
-    def generate(*args, **kwargs):
+    def generate(*args: object, **kwargs: object) -> BibliographyParsing:
         calls.append(True)
         return BibliographyParsing()
 

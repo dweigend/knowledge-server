@@ -1,9 +1,12 @@
 import hashlib
 import json
+from collections.abc import Callable
+from pathlib import Path
 from typing import cast
 from uuid import UUID
 
 import pytest
+from pydantic import JsonValue
 
 from knowledge.experiments import experiment_step_catalog
 from knowledge.experiments.experiment_steps import document_steps
@@ -15,6 +18,7 @@ from knowledge.knowledge_domain.knowledge_record_models import (
     Record,
 )
 from knowledge.model_integration.prompt_registry import (
+    Recipe,
     get_revision,
     resolve_recipe,
     save_revision,
@@ -41,7 +45,7 @@ from knowledge.source_workflows.source_grounded_writing import (
 
 
 @pytest.fixture
-def document():
+def document() -> TextExtraction:
     digest = hashlib.sha256(b"Independent observation fixture").hexdigest()
     pages = ("Group A scored higher.\n\nNo retention was measured.",)
     return TextExtraction(
@@ -53,7 +57,7 @@ def document():
 
 
 @pytest.fixture
-def proposal():
+def proposal() -> ExtractedClaim:
     return ExtractedClaim(
         proposition="The intervention improved immediate scores",
         scope="Group A in the tested population",
@@ -71,7 +75,7 @@ def proposal():
 pytestmark = pytest.mark.usefixtures("poppler_extraction")
 
 
-def claim_record(number, text):
+def claim_record(number: int, text: str) -> Record:
     return Record(
         entity_id=UUID(int=number),
         revision=2,
@@ -83,7 +87,14 @@ def claim_record(number, text):
     )
 
 
-def step_execution(pdf, inputs, knowledge, recipe, output_directory, cancelled=lambda: False):
+def step_execution(
+    pdf: Path,
+    inputs: dict[str, object],
+    knowledge: list[Record],
+    recipe: Recipe,
+    output_directory: Path,
+    cancelled: Callable[[], bool] = lambda: False,
+) -> StepExecution:
     prompt = get_revision("prompt", recipe.prompt_name, recipe.prompt_revision).payload["text"]
     assert isinstance(prompt, str)
     rules = (
@@ -109,7 +120,9 @@ def step_execution(pdf, inputs, knowledge, recipe, output_directory, cancelled=l
     )
 
 
-def test_claim_source_pin_has_independently_known_offsets(document, proposal):
+def test_claim_source_pin_has_independently_known_offsets(
+    document: TextExtraction, proposal: ExtractedClaim
+) -> None:
     result = document_steps.claim_source_pins(proposal, segment_verbatim(document), document)
     assert result.block_indexes == [1]
     assert [(span.page, span.start, span.end, span.quote) for span in result.sources] == [
@@ -118,14 +131,16 @@ def test_claim_source_pin_has_independently_known_offsets(document, proposal):
     assert result.sources[0].extraction_revision == document.revision
 
 
-def test_claim_cannot_cite_text_outside_selected_blocks(document, proposal):
+def test_claim_cannot_cite_text_outside_selected_blocks(
+    document: TextExtraction, proposal: ExtractedClaim
+) -> None:
     blocks = segment_verbatim(document)
     blocks.blocks = blocks.blocks[1:]
     with pytest.raises(ValueError, match="inside a supplied"):
         document_steps.claim_source_pins(proposal, blocks, document)
 
 
-def test_retrieval_is_bounded_deterministic_and_preserves_seed_revisions():
+def test_retrieval_is_bounded_deterministic_and_preserves_seed_revisions() -> None:
     records = [claim_record(2, "Immediate scores"), claim_record(1, "Delayed scores")]
     result = retrieve_knowledge("scores", records, limit=1)
     assert result.corpus_size == 2
@@ -135,7 +150,7 @@ def test_retrieval_is_bounded_deterministic_and_preserves_seed_revisions():
     assert records[0].revision == 2
 
 
-def test_selection_requires_explicit_choice_for_each_exact_retrieved_revision():
+def test_selection_requires_explicit_choice_for_each_exact_retrieved_revision() -> None:
     result = retrieve_knowledge("scores", [claim_record(1, "Immediate scores")])
     entry = EntrySelection(
         reference=result.hits[0].record.reference(),
@@ -156,7 +171,7 @@ def test_selection_requires_explicit_choice_for_each_exact_retrieved_revision():
             validate_selection(KnowledgeSelection(entries=entries), result)
 
 
-def test_writing_rejects_invented_sources_and_changed_goal(document):
+def test_writing_rejects_invented_sources_and_changed_goal(document: TextExtraction) -> None:
     blocks = segment_verbatim(document)
     points = WritingPoints(
         goal="Explain limits",
@@ -175,8 +190,11 @@ def test_writing_rejects_invented_sources_and_changed_goal(document):
 
 
 def test_shared_import_and_workbench_use_same_adapter_contract(
-    document, proposal, tmp_path, monkeypatch
-):
+    document: TextExtraction,
+    proposal: ExtractedClaim,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     seed_defaults()
     _, recipe, _, _ = resolve_recipe("formulate_claims")
     bibliography = Bibliography(title="Fixture", authors=[], year="2026", doi="", url="")
@@ -189,7 +207,7 @@ def test_shared_import_and_workbench_use_same_adapter_contract(
     )
     requests = []
 
-    def respond(request_path, response_path, log_path, **kwargs):
+    def respond(request_path: Path, response_path: Path, log_path: Path, **kwargs: object) -> None:
         request = json.loads(request_path.read_text())
         requests.append(request)
         response_path.write_text(
@@ -218,7 +236,7 @@ def test_shared_import_and_workbench_use_same_adapter_contract(
     assert document.revision in requests[1]["input"]
 
 
-def test_cancellation_stops_before_model(tmp_path):
+def test_cancellation_stops_before_model(tmp_path: Path) -> None:
     seed_defaults()
     _, recipe, _, _ = resolve_recipe("extract_text")
     with pytest.raises(InterruptedError):
@@ -246,7 +264,9 @@ def test_cancellation_stops_before_model(tmp_path):
         ("draft_text", {"temperature": 0.2}),
     ],
 )
-def test_unsupported_or_mistyped_parameters_reject_before_execution(step, parameters):
+def test_unsupported_or_mistyped_parameters_reject_before_execution(
+    step: str, parameters: dict[str, JsonValue]
+) -> None:
     seed_defaults()
     _, recipe, _, _ = resolve_recipe(step)
     recipe.parameters = parameters
@@ -254,7 +274,7 @@ def test_unsupported_or_mistyped_parameters_reject_before_execution(step, parame
         experiment_step_catalog.get_step_definition(step).validate_recipe(recipe)
 
 
-def write_reviewed_pdf(path):
+def write_reviewed_pdf(path: Path) -> None:
     from pypdf import PdfWriter
     from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
@@ -277,8 +297,8 @@ def write_reviewed_pdf(path):
 
 
 def test_eight_manual_steps_keep_original_evidence_with_simulated_model_boundary(
-    proposal, tmp_path, monkeypatch
-):
+    proposal: ExtractedClaim, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     seed_defaults()
     pdf = tmp_path / "reviewed-fixture.pdf"
     write_reviewed_pdf(pdf)
@@ -325,7 +345,7 @@ def test_eight_manual_steps_keep_original_evidence_with_simulated_model_boundary
     }
     called = []
 
-    def respond(request_path, response_path, log_path, **kwargs):
+    def respond(request_path: Path, response_path: Path, log_path: Path, **kwargs: object) -> None:
         request = json.loads(request_path.read_text())
         schema = json.loads(request["input"].split("\n\nINPUT:", 1)[0].removeprefix("SCHEMA:\n"))
         called.append(schema["title"])

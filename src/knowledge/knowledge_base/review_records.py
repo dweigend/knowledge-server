@@ -24,7 +24,7 @@ def reference_identities(references: Iterable[models.Reference]) -> list[tuple[U
 
 
 def direct_dependencies(ledger: store.Ledger, record: models.Record) -> list[models.Reference]:
-    """Read the immediate references that determine a record’s review state."""
+    """Read the immediate references that determine a record's review state."""
     payload = record.payload
     if record.kind == "claim":
         return evidence.for_claim(ledger, record.batch_id, record.reference())
@@ -197,7 +197,7 @@ def revision_is_current(record: models.Record, current: models.Record) -> bool:
         exclude={"bibliography", "original_path", "archive_path", "zotero"}
     )
     migrated_content = current.payload.model_dump(exclude={"zotero"})
-    return (
+    return bool(
         legacy_content == migrated_content
         and current.payload.zotero.original_sha256 == record.payload.sha256
     )

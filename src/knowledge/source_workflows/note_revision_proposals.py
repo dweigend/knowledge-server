@@ -123,17 +123,20 @@ def note_context(target: models.Record, records: list[models.Record]) -> list[mo
     selected = []
     for record in records:
         payload = record.payload
-        if record.kind in {"claim", "assessment"}:
-            selected.append(record)
-        elif isinstance(payload, models.Evidence) and (
-            str(record.entity_id) in cited
-            or (note.kind != "wiki" and payload.claim.entity_id in linked_claims)
-        ):
-            selected.append(record)
-        elif (
-            isinstance(payload, models.Note)
-            and record.entity_id != target.entity_id
-            and payload.kind in {"permanent", "wiki"}
+        if (
+            record.kind in {"claim", "assessment"}
+            or (
+                isinstance(payload, models.Evidence)
+                and (
+                    str(record.entity_id) in cited
+                    or (note.kind != "wiki" and payload.claim.entity_id in linked_claims)
+                )
+            )
+            or (
+                isinstance(payload, models.Note)
+                and record.entity_id != target.entity_id
+                and payload.kind in {"permanent", "wiki"}
+            )
         ):
             selected.append(record)
     return selected

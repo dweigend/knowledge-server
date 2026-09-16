@@ -1,19 +1,31 @@
 import json
 import re
+from collections.abc import Iterator
+from pathlib import Path
+from typing import Never
 
 import pytest
 from fastapi.testclient import TestClient
 from test_experimentation import fixture_pdf
 
 import knowledge.experiments.experiment_runner as experiments
-from knowledge.model_integration.prompt_registry import Recipe, get_default, get_revision
+from knowledge.literature.literature_models import Candidate
+from knowledge.literature.structured_paper_models import PaperReference
+from knowledge.model_integration.prompt_registry import (
+    ConfigRevision,
+    Recipe,
+    get_default,
+    get_revision,
+)
 from knowledge.runtime_support.environment_settings import Settings
 from knowledge.web_interface.fastapi_app import create_app
 
 
 @pytest.fixture
-def workbench(tmp_path, monkeypatch):
-    def unexpected_model(*args, **kwargs):
+def workbench(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[tuple[TestClient, Path, str]]:
+    def unexpected_model(*args: object, **kwargs: object) -> Never:
         raise AssertionError("Reading or deterministic operations must not request a model")
 
     monkeypatch.setattr(
@@ -24,14 +36,14 @@ def workbench(tmp_path, monkeypatch):
         page = client.get("/experiments")
         match = re.search(r'name="csrf" value="([^"]+)"', page.text)
         assert match
-        token = match[1]
+        token = str(match.group(1))
         yield client, root, token
 
 
 pytestmark = pytest.mark.usefixtures("poppler_extraction")
 
 
-def source(client, token):
+def source(client: TestClient, token: str) -> str:
     response = client.post(
         "/experiments",
         data={"csrf": token},
@@ -39,10 +51,10 @@ def source(client, token):
         follow_redirects=False,
     )
     assert response.status_code == 303, response.text
-    return response.headers["location"].rsplit("/", 1)[1]
+    return str(response.headers["location"]).rsplit("/", 1)[1]
 
 
-def step_form(token, step, action="run"):
+def step_form(token: str, step: str, action: str = "run") -> dict[str, str]:
     saved = get_revision("recipe", step)
     recipe = Recipe.model_validate(saved.payload)
     prompt = get_revision("prompt", recipe.prompt_name)
@@ -53,13 +65,15 @@ def step_form(token, step, action="run"):
         "csrf": token,
         "expected_revision": str(saved.revision),
         "prompt_revision": str(prompt.revision),
-        "instructions": prompt.payload["text"],
+        "instructions": str(prompt.payload["text"]),
         "parameters": json.dumps(parameters),
         "action": action,
     }
 
 
-def test_pages_render_without_template_syntax_or_model_requests(workbench):
+def test_pages_render_without_template_syntax_or_model_requests(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
     client, _, token = workbench
     for url in ("/experiments", "/experiments/compare", "/experiments/settings"):
         response = client.get(url)
@@ -70,7 +84,9 @@ def test_pages_render_without_template_syntax_or_model_requests(workbench):
     assert token
 
 
-def test_manual_pdf_blocks_history_comparison_and_cleanup(workbench):
+def test_manual_pdf_blocks_history_comparison_and_cleanup(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
     client, root, token = workbench
     run_id = source(client, token)
     base = f"/experiments/{run_id}"
@@ -94,20 +110,24 @@ def test_manual_pdf_blocks_history_comparison_and_cleanup(workbench):
     assert not (root.parent / "experiments" / run_id).exists()
 
 
-def test_mutations_require_csrf_and_dependency_failure_is_inspectable(workbench):
+def test_mutations_require_csrf_and_dependency_failure_is_inspectable(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
     client, root, token = workbench
     run_id = source(client, token)
     base = f"/experiments/{run_id}"
     rejected = client.post(f"{base}/delete", headers={"Origin": "https://example.org"})
     assert rejected.status_code == 403
-    assert experiments.read_manifest(root, run_id)
+    assert experiments.read_manifest(root, run_id)["id"] == run_id
     response = client.post(f"{base}/steps/segment_blocks", data=step_form(token, "segment_blocks"))
     assert response.status_code == 422
     assert "Run extract_text" in response.text
     assert experiments.read_attempts(root, run_id) == []
 
 
-def test_recipe_save_does_not_run_or_activate_and_stale_form_conflicts(workbench):
+def test_recipe_save_does_not_run_or_activate_and_stale_form_conflicts(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
     client, root, token = workbench
     run_id = source(client, token)
     previous = get_default("recipe", "extract_text")
@@ -119,7 +139,9 @@ def test_recipe_save_does_not_run_or_activate_and_stale_form_conflicts(workbench
     assert client.post(url, data=form).status_code == 409
 
 
-def test_duplicate_comparison_source_cannot_leave_orphan_queued_attempt(workbench):
+def test_duplicate_comparison_source_cannot_leave_orphan_queued_attempt(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
     client, root, token = workbench
     run_id = source(client, token)
     base = f"/experiments/{run_id}"
@@ -132,14 +154,16 @@ def test_duplicate_comparison_source_cannot_leave_orphan_queued_attempt(workbenc
             "csrf": token,
             "attempts": [f"{run_id}:{a['id']}" for a in attempts],
             "recipe_name": "extract_text",
-            "recipe_revision": get_revision("recipe", "extract_text").revision,
+            "recipe_revision": str(get_revision("recipe", "extract_text").revision),
         },
     )
     assert response.status_code == 422
     assert len(experiments.read_attempts(root, run_id)) == 2
 
 
-def test_invalid_second_upload_does_not_create_the_first_source(workbench):
+def test_invalid_second_upload_does_not_create_the_first_source(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
     client, root, token = workbench
     response = client.post(
         "/experiments",
@@ -155,7 +179,9 @@ def test_invalid_second_upload_does_not_create_the_first_source(workbench):
 
 
 @pytest.mark.parametrize("knowledge", ["null", "{}", '"not records"'])
-def test_invalid_knowledge_snapshot_shape_does_not_create_sources(workbench, knowledge):
+def test_invalid_knowledge_snapshot_shape_does_not_create_sources(
+    workbench: tuple[TestClient, Path, str], knowledge: str
+) -> None:
     client, root, token = workbench
     response = client.post(
         "/experiments",
@@ -177,7 +203,9 @@ def test_invalid_knowledge_snapshot_shape_does_not_create_sources(workbench, kno
         ("/compare", {"attempts": "placeholder:placeholder"}, "recipe_name"),
     ],
 )
-def test_missing_configuration_fields_return_validation_errors(workbench, route, fields, missing):
+def test_missing_configuration_fields_return_validation_errors(
+    workbench: tuple[TestClient, Path, str], route: str, fields: dict[str, str], missing: str
+) -> None:
     client, _, token = workbench
     response = client.post(f"/experiments{route}", data={"csrf": token, **fields})
     assert response.status_code == 422, response.text
@@ -185,7 +213,9 @@ def test_missing_configuration_fields_return_validation_errors(workbench, route,
 
 
 @pytest.mark.parametrize("missing", ["expected_revision", "prompt_revision", "instructions"])
-def test_missing_step_fields_do_not_save_any_configuration(workbench, missing):
+def test_missing_step_fields_do_not_save_any_configuration(
+    workbench: tuple[TestClient, Path, str], missing: str
+) -> None:
     client, _, token = workbench
     run_id = source(client, token)
     before = get_revision("recipe", "extract_text")
@@ -215,7 +245,9 @@ def test_missing_step_fields_do_not_save_any_configuration(workbench, missing):
         {"action": "unexpected"},
     ],
 )
-def test_invalid_model_recipe_or_parameters_do_not_leave_prompt_drafts(workbench, invalid):
+def test_invalid_model_recipe_or_parameters_do_not_leave_prompt_drafts(
+    workbench: tuple[TestClient, Path, str], invalid: dict[str, str]
+) -> None:
     client, _, token = workbench
     run_id = source(client, token)
     before = get_revision("recipe", "extract_text")
@@ -232,7 +264,9 @@ def test_invalid_model_recipe_or_parameters_do_not_leave_prompt_drafts(workbench
     assert get_revision("prompt", recipe.prompt_name) == prompt_before
 
 
-def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeypatch):
+def test_grobid_form_upgrades_recipe_and_renders_bibliography(
+    workbench: tuple[TestClient, Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     from test_grobid import TEI
 
     from knowledge.model_integration.prompt_registry import save_revision
@@ -262,7 +296,8 @@ def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeyp
     assert response.status_code == 200, response.text
     attempt = experiments.read_attempts(root, run_id)[0]
     assert attempt["status"] == "completed", attempt["error"]
-    assert attempt["recipe"]["payload"]["output_schema"] == "extraction.v4"
+    saved_recipe = ConfigRevision.model_validate(attempt["recipe"])
+    assert saved_recipe.payload["output_schema"] == "extraction.v4"
     assert "Ada Lovelace" in response.text
     assert "Run this step with literature matching" in response.text
     assert "<h1>A paper</h1>" in response.text
@@ -272,11 +307,11 @@ def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeyp
 
 
 def test_source_records_link_context_and_export_network_without_queries_on_read(
-    workbench, monkeypatch
-):
+    workbench: tuple[TestClient, Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     from test_grobid import TEI
 
-    from knowledge.literature.literature_models import Candidate, LiteratureMetadata
+    from knowledge.literature.literature_models import LiteratureMetadata
 
     client, root, token = workbench
     run_id = source(client, token)
@@ -286,7 +321,7 @@ def test_source_records_link_context_and_export_network_without_queries_on_read(
     )
     requests = []
 
-    def lookup(reference, *args):
+    def lookup(reference: PaperReference, *args: object) -> list[Candidate]:
         requests.append(reference.title)
         if reference.title != "A paper":
             return []
@@ -335,7 +370,7 @@ def test_source_records_link_context_and_export_network_without_queries_on_read(
     assert len(requests) == request_count
 
 
-def discovery_form(token):
+def discovery_form(token: str) -> dict[str, str]:
     return {
         **step_form(token, "extract_text", "save"),
         "document_provider": "grobid",
@@ -356,7 +391,9 @@ def discovery_form(token):
     }
 
 
-def test_discovery_settings_save_and_survive_legacy_provider_selection(workbench):
+def test_discovery_settings_save_and_survive_legacy_provider_selection(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
     from knowledge.literature.reference_discovery_models import DiscoverySettings
 
     client, root, token = workbench
@@ -405,7 +442,9 @@ def test_discovery_settings_save_and_survive_legacy_provider_selection(workbench
         {"discovery_required_fields": "unknown"},
     ],
 )
-def test_invalid_discovery_settings_do_not_save_revisions(workbench, invalid):
+def test_invalid_discovery_settings_do_not_save_revisions(
+    workbench: tuple[TestClient, Path, str], invalid: dict[str, str]
+) -> None:
     client, _, token = workbench
     run_id = source(client, token)
     before = get_revision("recipe", "extract_text")
@@ -420,7 +459,9 @@ def test_invalid_discovery_settings_do_not_save_revisions(workbench, invalid):
     assert get_revision("prompt", recipe.prompt_name) == prompt
 
 
-def test_discovery_trace_and_historical_output_render_without_network(workbench, monkeypatch):
+def test_discovery_trace_and_historical_output_render_without_network(
+    workbench: tuple[TestClient, Path, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
     from test_grobid import TEI
 
     from knowledge.literature.grobid_parser import parse_paper_tei
@@ -430,11 +471,13 @@ def test_discovery_trace_and_historical_output_render_without_network(workbench,
     base = f"/experiments/{run_id}"
     assert client.post(f"{base}/steps/extract_text", data=step_form(token, "extract_text"))
     attempts = experiments.read_attempts(root, run_id)
-    attempts[0]["output"]["paper"] = parse_paper_tei(TEI).model_dump()
-    attempts[0]["output"].pop("discovery", None)
+    output = attempts[0]["output"]
+    assert output is not None
+    output["paper"] = parse_paper_tei(TEI).model_dump()
+    output.pop("discovery", None)
     monkeypatch.setattr(experiments, "read_attempts", lambda *args: attempts)
 
-    def unexpected_request(*args, **kwargs):
+    def unexpected_request(*args: object, **kwargs: object) -> Never:
         raise AssertionError("GET must not request literature or document services")
 
     monkeypatch.setattr("knowledge.literature.crossref_client.request_model", unexpected_request)
@@ -444,7 +487,7 @@ def test_discovery_trace_and_historical_output_render_without_network(workbench,
     assert legacy.status_code == 200
     assert "A paper" in legacy.text
     assert "Discovery search trace" not in legacy.text
-    attempts[0]["output"]["bibliography"] = {
+    output["bibliography"] = {
         "original_count": 12,
         "detected_count": 19,
         "resulting_count": 19,
@@ -453,7 +496,7 @@ def test_discovery_trace_and_historical_output_render_without_network(workbench,
         "cache_reused": True,
         "unresolved_issues": ["Citation targets require review."],
     }
-    attempts[0]["output"]["discovery"] = {
+    output["discovery"] = {
         "requests": 3,
         "cache_hits": 2,
         "model_calls": 0,
@@ -498,7 +541,12 @@ def test_discovery_trace_and_historical_output_render_without_network(workbench,
         (None, False),
     ],
 )
-def test_open_access_links_allow_only_explicit_web_urls(workbench, monkeypatch, address, visible):
+def test_open_access_links_allow_only_explicit_web_urls(
+    workbench: tuple[TestClient, Path, str],
+    monkeypatch: pytest.MonkeyPatch,
+    address: str,
+    visible: bool,
+) -> None:
     from knowledge.literature import literature_resolution
     from knowledge.literature.structured_paper_models import PaperReference
 

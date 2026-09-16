@@ -13,6 +13,7 @@ from uuid import UUID
 from knowledge.document_processing import document_models, extraction_store
 from knowledge.knowledge_base import knowledge_service, review_records
 from knowledge.knowledge_domain import knowledge_record_models as models
+from knowledge.knowledge_domain import response_models
 
 MUTATIONS: Final[dict[str, type[models.Contract]]] = {
     "propose-note": models.Note,
@@ -24,12 +25,14 @@ SEARCH_PAGE_SIZE: Final[int] = 20
 TOOL_ACTOR: Final[str] = "hermes:knowledge-tool"
 
 
-def search_records(application: knowledge_service.Knowledge, arguments: argparse.Namespace) -> dict:
+def search_records(
+    application: knowledge_service.Knowledge, arguments: argparse.Namespace
+) -> response_models.SearchResponse:
     """Return one search page with review status and total count."""
     with application.database.transaction() as ledger:
         records = ledger.list(arguments.batch, query=arguments.query)
         page = records[arguments.offset : arguments.offset + SEARCH_PAGE_SIZE]
-        summaries = [
+        summaries: list[response_models.RecordSummary] = [
             {
                 "reference": record.reference().model_dump(mode="json"),
                 "kind": record.kind,
@@ -45,7 +48,7 @@ def read_passage(
     record: models.Record,
     page: int | None,
     snapshot: document_models.DocumentSnapshot | None = None,
-) -> dict:
+) -> response_models.PlainPassage | response_models.StructuredPassage:
     """Return a validated page from a stored source snapshot."""
     source = record.payload
     if not isinstance(source, models.Source) or not page:
@@ -61,7 +64,9 @@ def read_passage(
     }
 
 
-def structured_passage(snapshot: document_models.DocumentSnapshot, page: int) -> dict:
+def structured_passage(
+    snapshot: document_models.DocumentSnapshot, page: int
+) -> response_models.StructuredPassage:
     """Return located blocks with the pins and restrictions needed for new evidence."""
     if page not in snapshot.page_sizes:
         raise ValueError("Page is outside the extracted document")
@@ -77,7 +82,13 @@ def structured_passage(snapshot: document_models.DocumentSnapshot, page: int) ->
     }
 
 
-def read_record(application: knowledge_service.Knowledge, arguments: argparse.Namespace) -> dict:
+def read_record(
+    application: knowledge_service.Knowledge, arguments: argparse.Namespace
+) -> (
+    response_models.RecordResponse
+    | response_models.PlainPassage
+    | response_models.StructuredPassage
+):
     """Read a record or source page with its pinned dependencies."""
     if not arguments.entity:
         raise ValueError("--entity is required")

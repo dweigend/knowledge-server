@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 from knowledge.knowledge_domain import application_errors as errors
 from knowledge.model_integration import structured_generation
+from knowledge.model_integration.generation_response_models import ActiveRevision
 from knowledge.runtime_support import atomic_json_files
 
 ConfigKind = Literal["prompt", "recipe", "author_rules"]
@@ -135,9 +136,10 @@ class Recipe(BaseModel):
             raise ValueError("Author rules require both name and revision")
         name = self.parameters.get("note_prompt_name")
         revision = self.parameters.get("note_prompt_revision")
-        if name is not None or revision is not None:
-            if not isinstance(name, str) or not isinstance(revision, int) or revision < 1:
-                raise ValueError("Note prompt requires both name and positive revision")
+        if name is None and revision is None:
+            return self
+        if not isinstance(name, str) or not isinstance(revision, int) or revision < 1:
+            raise ValueError("Note prompt requires both name and positive revision")
         return self
 
 
@@ -255,7 +257,7 @@ def get_revision(kind: ConfigKind, name: str, revision: int | None = None) -> Co
 def active_revision(directory: Path) -> int:
     """Read the active revision number, using zero before first activation."""
     path = directory / "active.json"
-    return json.loads(path.read_text())["revision"] if path.exists() else 0
+    return ActiveRevision.model_validate_json(path.read_bytes()).revision if path.exists() else 0
 
 
 def activate_revision(

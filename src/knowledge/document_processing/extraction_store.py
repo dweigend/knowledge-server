@@ -11,6 +11,7 @@ from typing import Final
 from psycopg.types.json import Jsonb
 
 from knowledge.document_processing import document_models
+from knowledge.document_processing.extraction_input_models import ExtractionJob, SnapshotRevision
 from knowledge.knowledge_domain import (
     application_errors as errors,
 )
@@ -58,13 +59,14 @@ def request_extraction(
     return request_hash
 
 
-def claim_job(ledger: store.Ledger) -> dict | None:
+def claim_job(ledger: store.Ledger) -> ExtractionJob | None:
     """Claim one queued job during a short serialized transaction."""
-    return ledger.connection.execute(
+    row = ledger.connection.execute(
         "UPDATE extraction_jobs SET state='running', attempts=attempts+1, updated_at=now() "
         "WHERE request_hash=(SELECT request_hash FROM extraction_jobs "
         "WHERE state='queued' ORDER BY updated_at,request_hash LIMIT 1) RETURNING *"
     ).fetchone()
+    return ExtractionJob.model_validate(row) if row is not None else None
 
 
 def recover_jobs(ledger: store.Ledger) -> None:
@@ -121,16 +123,13 @@ def validate_snapshot_job(
     ledger: store.Ledger, request_hash: str, snapshot: document_models.DocumentSnapshot
 ) -> None:
     """Require the active job, source identity and PDF provenance to agree."""
-    job = ledger.connection.execute(
+    row = ledger.connection.execute(
         "SELECT * FROM extraction_jobs WHERE request_hash=%s",
         (request_hash,),
     ).fetchone()
+    job = ExtractionJob.model_validate(row) if row is not None else None
     expected = (snapshot.source.entity_id, snapshot.source.revision, snapshot.method, "running")
-    actual = (
-        (job["source_id"], job["source_revision"], job["configuration"], job["state"])
-        if job
-        else None
-    )
+    actual = (job.source_id, job.source_revision, job.configuration, job.state) if job else None
     if actual != expected:
         raise ValueError("Snapshot does not match its running extraction job")
     source = ledger.get(snapshot.source.entity_id, snapshot.source.revision).payload
@@ -148,7 +147,7 @@ def annotate_document(ledger: store.Ledger, annotation: document_models.Document
         (identity,),
     ).fetchone()
     if previous:
-        return previous["revision"]
+        return SnapshotRevision.model_validate(previous).revision
     snapshot = get_snapshot(ledger, annotation.source)
     if snapshot is None:
         raise errors.Missing("No extraction to annotate")

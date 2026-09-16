@@ -16,9 +16,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
+from pydantic import TypeAdapter
+
 from knowledge.experiments import experiment_models
+from knowledge.experiments.experiment_views import AttemptView
 from knowledge.knowledge_domain import application_errors
 from knowledge.runtime_support import atomic_json_files
+
+ATTEMPT_VIEW: Final[TypeAdapter[AttemptView]] = TypeAdapter(AttemptView)
 
 
 def now() -> str:
@@ -92,7 +97,7 @@ def attempt_directory(directory: Path, attempt_id: str) -> Path:
     return path
 
 
-def read_attempt(path: Path) -> dict:
+def read_attempt(path: Path) -> AttemptView:
     """Combine immutable inputs and a terminal result for inspection."""
     inputs = experiment_models.AttemptInputs.model_validate_json((path / "inputs.json").read_text())
     result = inputs.model_dump(mode="json")
@@ -110,7 +115,7 @@ def read_attempt(path: Path) -> dict:
             raise ValueError("Attempt output hash does not match its persisted result")
         result.update(terminal.model_dump(mode="json"))
     result["cancel_requested"] = (path / "cancel.json").exists()
-    return result
+    return ATTEMPT_VIEW.validate_python(result)
 
 
 def append_result(path: Path, result: experiment_models.AttemptResult) -> None:

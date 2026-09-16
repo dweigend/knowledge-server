@@ -10,7 +10,7 @@ import knowledge.web_interface.fastapi_app as web
 from knowledge.runtime_support.environment_settings import Settings
 
 
-def test_settings_use_configured_locations(tmp_path, monkeypatch):
+def test_settings_use_configured_locations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KNOWLEDGE_DATABASE_URL", "dbname=example")
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("KNOWLEDGE_ARCHIVE_ROOT", "archive")
@@ -24,7 +24,7 @@ def test_settings_use_configured_locations(tmp_path, monkeypatch):
         Settings()
 
 
-def test_postgres_utilities_default_to_path(monkeypatch):
+def test_postgres_utilities_default_to_path(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = []
     monkeypatch.delenv("KNOWLEDGE_POSTGRES_BIN", raising=False)
     monkeypatch.setattr(backup.subprocess, "run", lambda *args, **kwargs: calls.append(args))
@@ -34,7 +34,9 @@ def test_postgres_utilities_default_to_path(monkeypatch):
     assert calls == [(["pg_dump", "--version"],)]
 
 
-def test_postgres_utilities_allow_explicit_installation(tmp_path, monkeypatch):
+def test_postgres_utilities_allow_explicit_installation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls = []
     monkeypatch.setenv("KNOWLEDGE_POSTGRES_BIN", str(tmp_path))
     monkeypatch.setattr(backup.subprocess, "run", lambda *args, **kwargs: calls.append(args))
@@ -44,7 +46,7 @@ def test_postgres_utilities_allow_explicit_installation(tmp_path, monkeypatch):
     assert calls == [([str(tmp_path / "pg_dump"), "--version"],)]
 
 
-def test_runtime_resources_are_inside_package():
+def test_runtime_resources_are_inside_package() -> None:
     modeling_package = Path(prompt_registry.__file__).parent
     ledger_package = Path(database.__file__).parent
     presentation_package = Path(web.__file__).parent

@@ -23,6 +23,7 @@ from knowledge.knowledge_domain import (
 from knowledge.knowledge_domain import (
     knowledge_record_models as models,
 )
+from knowledge.revision_store.storage_models import CommandReceipt, EntityRow, RevisionRow
 
 _SOURCE_PAYLOAD: Final[TypeAdapter[models.Source | models.LegacySource]] = TypeAdapter(
     models.Source | models.LegacySource
@@ -32,7 +33,7 @@ _SOURCE_PAYLOAD: Final[TypeAdapter[models.Source | models.LegacySource]] = TypeA
 class Ledger:
     """Read and append revisioned records inside an existing transaction."""
 
-    def __init__(self, connection: psycopg.Connection[dict]) -> None:
+    def __init__(self, connection: psycopg.Connection[dict[str, object]]) -> None:
         """Use the active transaction connection for reads and writes."""
         self.connection = connection
 
@@ -45,9 +46,14 @@ class Ledger:
         ).fetchone()
         if row is None:
             raise errors.Missing(str(entity_id))
-        row["created_at"] = row["created_at"].isoformat()
-        row["payload"] = decode_payload(row["kind"], row["payload"])
-        return models.Record.model_validate(row)
+        stored = RevisionRow.model_validate(row)
+        return models.Record.model_validate(
+            {
+                **stored.model_dump(),
+                "created_at": stored.created_at.isoformat(),
+                "payload": decode_payload(stored.kind, stored.payload),
+            }
+        )
 
     def list(
         self,
@@ -63,13 +69,14 @@ class Ledger:
             "@@ plainto_tsquery('simple', %s)) ORDER BY kind, created_at, entity_id",
             (batch_id, kind, kind, query, query),
         ).fetchall()
-        return [self.get(row["entity_id"]) for row in rows]
+        return [self.get(EntityRow.model_validate(row).entity_id) for row in rows]
 
-    def get_receipt(self, request_id: str) -> dict | None:
+    def get_receipt(self, request_id: str) -> CommandReceipt | None:
         """Return a completed command receipt, or None if it has not been accepted."""
-        return self.connection.execute(
+        row = self.connection.execute(
             "SELECT * FROM requests WHERE request_id = %s", (request_id,)
         ).fetchone()
+        return CommandReceipt.model_validate(row) if row is not None else None
 
     def save_receipt(
         self,
@@ -147,7 +154,7 @@ class Database:
     @contextmanager
     def transaction(self) -> Iterator[Ledger]:
         """Serialize short database operations and roll back when an error escapes."""
-        with psycopg.Connection[dict].connect(
+        with psycopg.Connection[dict[str, object]].connect(
             self.database_url, row_factory=dict_row
         ) as connection:
             # Pilot writes are short and serialized; model/file work happens before entry.
@@ -183,11 +190,11 @@ class Database:
             return references
 
 
-def receipt_references(receipt: dict, payload_hash: str) -> list[models.Reference]:
+def receipt_references(receipt: CommandReceipt, payload_hash: str) -> list[models.Reference]:
     """Decode an existing receipt only when its command payload matches."""
-    if receipt["payload_hash"] != payload_hash:
+    if receipt.payload_hash != payload_hash:
         raise errors.Conflict("Idempotency key reused with different content")
-    return [models.Reference.model_validate(reference) for reference in receipt["result"]]
+    return receipt.result
 
 
 def decode_payload(kind: models.Kind, payload: Mapping[str, object]) -> models.Contract:

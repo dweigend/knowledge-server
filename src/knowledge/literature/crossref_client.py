@@ -5,7 +5,7 @@ to the resolver.
 """
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Final
 from urllib.parse import quote, urlencode
 
@@ -62,7 +62,9 @@ def lookup_url(reference: structured_paper_models.PaperMetadata, doi: str | None
     return API_URL + "?" + urlencode({"query.bibliographic": query[:2000], "rows": MAX_CANDIDATES})
 
 
-def parse_metadata(entry: crossref_models.Metadata | dict) -> literature_models.LiteratureMetadata:
+def parse_metadata(
+    entry: crossref_models.Metadata | Mapping[str, object],
+) -> literature_models.LiteratureMetadata:
     """Normalize deposited Crossref metadata without filling absent fields."""
     metadata = crossref_models.Metadata.model_validate(entry)
     return literature_models.LiteratureMetadata(
@@ -85,7 +87,7 @@ def parse_metadata(entry: crossref_models.Metadata | dict) -> literature_models.
     )
 
 
-def publication_year(entry: crossref_models.Metadata | dict) -> str | None:
+def publication_year(entry: crossref_models.Metadata | Mapping[str, object]) -> str | None:
     """Select a supplied publication year, excluding metadata deposit timestamps."""
     metadata = crossref_models.Metadata.model_validate(entry)
     dates = (

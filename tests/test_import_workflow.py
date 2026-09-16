@@ -1,6 +1,7 @@
 """Metadata reconciliation preserves known fields while filling later imprint details."""
 
 import json
+from pathlib import Path
 
 from knowledge.knowledge_domain.knowledge_record_models import Bibliography
 from knowledge.source_workflows.article_claim_extraction import (
@@ -9,13 +10,13 @@ from knowledge.source_workflows.article_claim_extraction import (
 )
 
 
-def extraction(bibliography):
+def extraction(bibliography: Bibliography) -> ArticleExtraction:
     return ArticleExtraction(
         bibliography=bibliography, claims=[], study_group="Report", overlap="Unknown", warnings=[]
     )
 
 
-def test_metadata_fills_gaps_logs_conflicts_and_drops_model_zotero_keys(tmp_path):
+def test_metadata_fills_gaps_logs_conflicts_and_drops_model_zotero_keys(tmp_path: Path) -> None:
     first = Bibliography(
         title="Report",
         authors=[],

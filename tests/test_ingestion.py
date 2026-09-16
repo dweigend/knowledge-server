@@ -3,7 +3,7 @@ import pytest
 from knowledge.document_processing.pdf_text_extraction import locate_passage, locate_quote
 
 
-def test_quote_restores_whitespace_but_not_wording():
+def test_quote_restores_whitespace_but_not_wording() -> None:
     assert locate_quote("A result\nwas  observed.", "A result was observed.") == (
         "A result\nwas  observed."
     )

@@ -5,26 +5,24 @@ evidence so examples cannot silently become factual support.
 """
 
 from collections.abc import Mapping
-from typing import cast
 
 from knowledge.experiments import pipeline_specification
+from knowledge.experiments.experiment_steps import parameter_models
 from knowledge.source_workflows import source_grounded_writing
 
 
 def validate_writing_parameters(parameters: Mapping[str, object]) -> None:
     """Validate the optional writing goal."""
-    goal = parameters.get("goal")
-    if goal is not None and not isinstance(goal, str):
-        raise ValueError("goal must be text")
+    parameter_models.WritingParameters.model_validate(parameters)
 
 
 def prepare_writing(
     execution: pipeline_specification.StepExecution,
 ) -> source_grounded_writing.WritingPoints:
     """Compose cited points from pinned proposals and source blocks."""
-    goal = cast(str, execution.recipe.parameters.get("goal", ""))
+    parameters = parameter_models.WritingParameters.model_validate(execution.recipe.parameters)
     return source_grounded_writing.prepare_writing_points(
-        goal,
+        parameters.goal or "",
         execution.inputs["extract_text"],
         execution.inputs["segment_blocks"],
         {

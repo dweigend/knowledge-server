@@ -4,10 +4,12 @@ The parser preserves raster-page regions and tables so Marker results can be
 reconciled with the primary Docling extraction.
 """
 
+from collections.abc import Mapping
 from html.parser import HTMLParser
-from typing import Literal
+from typing import Literal, override
 
 from knowledge.document_processing import document_models
+from knowledge.document_processing.extraction_input_models import MarkerNode
 
 
 class TableParser(HTMLParser):
@@ -24,6 +26,7 @@ class TableParser(HTMLParser):
         self.text: list[str] = []
         self.scripts: list[Literal["normal", "sup", "sub"]] = []
 
+    @override
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         """Keep row boundaries and explicit cell spans from the extraction."""
         if tag in {"sup", "sub"} and self.current is not None:
@@ -50,6 +53,7 @@ class TableParser(HTMLParser):
             row_header=tag == "th" and attributes.get("scope") == "row",
         )
 
+    @override
     def handle_endtag(self, tag: str) -> None:
         """Finish a cell and reserve every position covered by its spans."""
         if tag in {"sup", "sub"} and self.scripts:
@@ -67,6 +71,7 @@ class TableParser(HTMLParser):
         self.current = None
         self.scripts.clear()
 
+    @override
     def handle_data(self, data: str) -> None:
         """Preserve extracted characters, including superscript marker text."""
         self.text.append(data)
@@ -97,25 +102,30 @@ def _region(
     )
 
 
-def _leaf_nodes(node: dict) -> list[dict]:
-    if node.get("block_type") == "Table" or not node.get("children"):
+def _leaf_nodes(node: MarkerNode) -> list[MarkerNode]:
+    if node.block_type == "Table" or not node.children:
         return [node]
-    return [leaf for child in node["children"] for leaf in _leaf_nodes(child)]
+    return [leaf for child in (node.children or []) for leaf in _leaf_nodes(child)]
 
 
 def _block(
-    node: dict, original_page: int, page_polygon: list[list[float]], page_size: tuple[float, float]
+    node: MarkerNode,
+    original_page: int,
+    page_polygon: list[list[float]],
+    page_size: tuple[float, float],
 ) -> document_models.DocumentBlock:
-    html = node.get("html", "")
+    if node.id is None:
+        raise ValueError("Marker content block is missing its ID")
+    html = node.html
     text_parser = TableParser()
     text_parser.feed(html)
     cells = []
-    if node["block_type"] == "Table":
+    if node.block_type == "Table":
         text_parser.close()
         if text_parser.current is not None:
             raise ValueError("Marker table has an unclosed cell")
         cells = text_parser.cells
-    polygon = node.get("polygon")
+    polygon = node.polygon
     region = _region(polygon, page_polygon, page_size) if polygon else None
     issues = []
     if "<content-ref" in html:
@@ -123,8 +133,8 @@ def _block(
     if not cells and ("<sup" in html or "<sub" in html):
         issues.append("Superscript or subscript flattened into text; verify markers in PDF")
     return document_models.DocumentBlock(
-        id=f"marker:{original_page}:{node['id']}",
-        kind=node["block_type"].lower(),
+        id=f"marker:{original_page}:{node.id}",
+        kind=node.block_type.lower(),
         text="".join(text_parser.text),
         page=original_page,
         region=region,
@@ -138,15 +148,18 @@ def _block(
 
 
 def marker_blocks(
-    document: dict, original_page: int, page_size: tuple[float, float]
+    document: MarkerNode | Mapping[str, object], original_page: int, page_size: tuple[float, float]
 ) -> list[document_models.DocumentBlock]:
     """Convert one raster page, restoring original-page numbering and PDF coordinates."""
-    pages = [document] if document.get("block_type") == "Page" else document.get("children", [])
-    if len(pages) != 1 or pages[0].get("block_type") != "Page":
+    document = MarkerNode.model_validate(document)
+    pages = [document] if document.block_type == "Page" else (document.children or [])
+    if len(pages) != 1 or pages[0].block_type != "Page":
         raise ValueError("Marker comparison requires exactly one raster page")
     page = pages[0]
+    if not page.polygon:
+        raise ValueError("Marker page is missing its polygon")
     return [
-        _block(node, original_page, page["polygon"], page_size)
-        for child in page.get("children", [])
+        _block(node, original_page, page.polygon, page_size)
+        for child in (page.children or [])
         for node in _leaf_nodes(child)
     ]

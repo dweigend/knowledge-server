@@ -23,6 +23,7 @@ from knowledge.document_processing import (
     extraction_tool_runner,
     marker_parser,
 )
+from knowledge.document_processing.extraction_input_models import ExtractionJob
 from knowledge.knowledge_base import source_records as sources
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.literature import zotero_client as zotero
@@ -57,29 +58,31 @@ def drain_queue(database: postgresql_revision_store.Database, root: Path) -> Non
         execute_job(database, job, root)
 
 
-def execute_job(database: postgresql_revision_store.Database, job: dict, root: Path) -> None:
+def execute_job(
+    database: postgresql_revision_store.Database, job: ExtractionJob, root: Path
+) -> None:
     """Commit a completed snapshot or retain a bounded, classified failure."""
-    audit = root / "runs" / "extraction" / job["request_hash"]
-    workflow_event_log.record_event(audit, "extraction_started", source=str(job["source_id"]))
+    audit = root / "runs" / "extraction" / job.request_hash
+    workflow_event_log.record_event(audit, "extraction_started", source=str(job.source_id))
     try:
         snapshot = process_source(database, job, root, audit)
         with database.transaction() as ledger:
-            extraction_store.save_snapshot(ledger, job["request_hash"], snapshot)
+            extraction_store.save_snapshot(ledger, job.request_hash, snapshot)
         workflow_event_log.record_event(audit, "extraction_succeeded", blocks=len(snapshot.blocks))
     except Exception as error:
         transient = isinstance(error, (URLError, TimeoutError, subprocess.TimeoutExpired))
         with database.transaction() as ledger:
-            extraction_store.fail_job(ledger, job["request_hash"], str(error), transient)
+            extraction_store.fail_job(ledger, job.request_hash, str(error), transient)
         workflow_event_log.record_event(
             audit, "extraction_failed", error=str(error), transient=transient
         )
 
 
 def process_source(
-    database: postgresql_revision_store.Database, job: dict, root: Path, audit: Path
+    database: postgresql_revision_store.Database, job: ExtractionJob, root: Path, audit: Path
 ) -> document_models.DocumentSnapshot:
     """Resolve pinned Zotero bytes before extracting outside the transaction."""
-    reference = models.Reference(entity_id=job["source_id"], revision=job["source_revision"])
+    reference = models.Reference(entity_id=job.source_id, revision=job.source_revision)
     with database.transaction() as ledger:
         record = ledger.get(reference.entity_id, reference.revision)
         attachment = sources.zotero_reference(ledger, record)

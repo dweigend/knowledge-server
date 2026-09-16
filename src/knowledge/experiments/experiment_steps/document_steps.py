@@ -5,10 +5,9 @@ storage, production acceptance, Zotero, and database orchestration.
 """
 
 from collections.abc import Mapping
-from typing import cast
 
 from knowledge.experiments import pipeline_specification
-from knowledge.experiments.experiment_steps import step_contracts
+from knowledge.experiments.experiment_steps import parameter_models, step_contracts
 from knowledge.knowledge_domain import knowledge_record_models
 from knowledge.source_workflows import (
     article_claim_extraction,
@@ -19,12 +18,7 @@ from knowledge.source_workflows import (
 
 def validate_segmentation_parameters(parameters: Mapping[str, object]) -> None:
     """Validate segmentation mode and maximum block size."""
-    mode = parameters.get("mode", "paragraphs")
-    if not isinstance(mode, str) or mode not in {"paragraphs", "model"}:
-        raise ValueError("Segmentation mode must be paragraphs or model")
-    maximum = parameters.get("max_characters", 2000)
-    if type(maximum) is not int or not 1 <= maximum <= 120000:
-        raise ValueError("max_characters must be an integer between 1 and 120000")
+    parameter_models.SegmentationParameters.model_validate(parameters)
 
 
 def extract_text(
@@ -47,9 +41,9 @@ def segment_blocks(
 ) -> information_block_extraction.InformationBlocks:
     """Create verbatim paragraphs or source-validated model segments."""
     extraction = execution.inputs["extract_text"]
-    parameters = execution.recipe.parameters
-    maximum = cast(int, parameters.get("max_characters", 2000))
-    if parameters.get("mode", "paragraphs") == "paragraphs":
+    parameters = parameter_models.SegmentationParameters.model_validate(execution.recipe.parameters)
+    maximum = parameters.max_characters
+    if parameters.mode == "paragraphs":
         return information_block_extraction.segment_verbatim(extraction, maximum)
     return information_block_extraction.segment_information(
         extraction,
