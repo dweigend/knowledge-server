@@ -12,6 +12,7 @@ from typing import cast
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import TypeAdapter
 from starlette.datastructures import FormData, UploadFile
 
 from knowledge.experiments import (
@@ -32,7 +33,7 @@ STEP_LABELS = {
     name: definition.dashboard_label
     for name, definition in experiment_step_catalog.STEP_DEFINITIONS.items()
 }
-MAX_UPLOAD_BYTES = 64 * 1024 * 1024
+KNOWLEDGE_RECORDS = TypeAdapter(list[models.Record])
 
 
 def required_text(form: FormData, name: str, *, allow_empty: bool = False) -> str:
@@ -139,7 +140,6 @@ def save_step_configuration(step: str, form: FormData) -> prompt_registry.Config
 
 def selected_attempt(root: Path, run_id: str, attempt_id: str) -> dict:
     """Resolve one attempt only within its owned experiment."""
-    experiments.read_manifest(root, run_id)
     for attempt in experiments.read_attempts(root, run_id):
         if attempt["id"] == attempt_id:
             return attempt
@@ -186,8 +186,8 @@ async def validated_uploads(uploads: list[str | UploadFile]) -> list[tuple[str, 
     for upload in uploads:
         source = cast(UploadFile, upload)
         filename = source.filename or "source.pdf"
-        content = await source.read(MAX_UPLOAD_BYTES + 1)
-        if len(content) > MAX_UPLOAD_BYTES:
+        content = await source.read(experiments.MAX_PDF_BYTES + 1)
+        if len(content) > experiments.MAX_PDF_BYTES:
             raise ValueError("PDF exceeds the 64 MiB source limit")
         if not filename.lower().endswith(".pdf") or not content.startswith(b"%PDF-"):
             raise ValueError(f"{filename}: choose a .pdf file with a valid PDF header")
@@ -232,13 +232,10 @@ def experiment_router(  # noqa: C901
         """Copy bounded PDF sources and an optional reviewed knowledge snapshot."""
         form = await checked_form(request, csrf_token)
         uploads = await validated_uploads(form.getlist("sources"))
-        supplied_knowledge = json.loads(str(form.get("knowledge", "[]")))
-        if not isinstance(supplied_knowledge, list):
-            raise ValueError("Starting knowledge must be a JSON list of revisioned records")
-        knowledge = [models.Record.model_validate(record) for record in supplied_knowledge]
+        knowledge = KNOWLEDGE_RECORDS.validate_json(str(form.get("knowledge", "[]")))
         run_id = ""
         for filename, source in uploads:
-            content = await source.read(MAX_UPLOAD_BYTES + 1)
+            content = await source.read(experiments.MAX_PDF_BYTES + 1)
             run_id = experiments.create_experiment(root, filename, content, seed_records=knowledge)
         return RedirectResponse(f"/experiments/{run_id}", 303)
 

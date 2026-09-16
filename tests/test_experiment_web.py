@@ -20,7 +20,7 @@ def workbench(tmp_path, monkeypatch):
         "knowledge.model_integration.structured_generation.run_hermes", unexpected_model
     )
     root = tmp_path / "archive"
-    with TestClient(create_app(Settings("unused", root))) as client:
+    with TestClient(create_app(Settings(database_url="unused", archive_root=root))) as client:
         page = client.get("/experiments")
         match = re.search(r'name="csrf" value="([^"]+)"', page.text)
         assert match
@@ -163,7 +163,7 @@ def test_invalid_knowledge_snapshot_shape_does_not_create_sources(workbench, kno
         files={"sources": ("valid.pdf", fixture_pdf(), "application/pdf")},
     )
     assert response.status_code == 422
-    assert "JSON list" in response.text
+    assert "validation error" in response.text
     assert experiments.list_experiments(root) == []
 
 

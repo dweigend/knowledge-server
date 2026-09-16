@@ -56,7 +56,7 @@ def citation_links(text: str) -> Markup:
 # Route registration groups short endpoints; C901 also counts their branches.
 def create_app(settings: environment_settings.Settings | None = None) -> FastAPI:  # noqa: C901
     """Configure the local review interface and its application dependencies."""
-    settings = settings or environment_settings.Settings.from_environment()
+    settings = settings or environment_settings.Settings()
     database = postgresql_revision_store.Database(settings.database_url)
     application = knowledge_service.Knowledge(database)
     app = FastAPI(title="Knowledge pilot", docs_url=None, redoc_url=None)
@@ -164,7 +164,8 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
             decisions = [
                 candidate
                 for candidate in ledger.list(record.batch_id, "review")
-                if candidate.payload.model_dump().get("target", {}).get("entity_id") == entity_id
+                if isinstance(candidate.payload, models.Review)
+                and candidate.payload.target.entity_id == entity_id
             ]
             status = STATUS_LABELS[review.status(ledger, record)]
         literature = source_metadata([record, *dependencies], database)
@@ -174,7 +175,7 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
             context={
                 "record": record,
                 "literature": literature,
-                "payload": record.payload.model_dump(mode="json"),
+                "payload": record.payload,
                 "payload_json": record.payload.model_dump_json(indent=2),
                 "dependencies": dependencies,
                 "related": related,
@@ -325,26 +326,6 @@ def claim_records(
     ]
 
 
-def parse_edit(
-    record: models.Record,
-    expected: models.Reference,
-    content: str,
-) -> knowledge_service.EditNote | knowledge_service.AssessmentCommand:
-    """Validate submitted JSON against the editable record type."""
-    payload = json.loads(content)
-    if record.kind == "note":
-        return knowledge_service.EditNote(
-            expected=expected,
-            note=models.Note.model_validate(payload),
-        )
-    if record.kind == "assessment":
-        return knowledge_service.AssessmentCommand(
-            expected=expected,
-            assessment=models.Assessment.model_validate(payload),
-        )
-    raise ValueError("Only notes and assessments can be edited in this pilot UI")
-
-
 def save_edit(
     application: knowledge_service.Knowledge,
     record: models.Record,
@@ -355,12 +336,20 @@ def save_edit(
     """Apply a human edit and translate malformed content to HTTP errors."""
     expected = models.Reference(entity_id=record.entity_id, revision=revision)
     try:
-        command = parse_edit(record, expected, content)
-        if isinstance(command, knowledge_service.EditNote):
+        if record.kind == "note":
+            command = knowledge_service.EditNote(
+                expected=expected, note=models.Note.model_validate_json(content)
+            )
             application.edit_note(request_id, record.batch_id, command, "human:local")
             return
-        application.assess(request_id, record.batch_id, command, "human:local")
-    except (json.JSONDecodeError, ValidationError) as error:
+        if record.kind == "assessment":
+            assessment = knowledge_service.AssessmentCommand(
+                expected=expected, assessment=models.Assessment.model_validate_json(content)
+            )
+            application.assess(request_id, record.batch_id, assessment, "human:local")
+            return
+        raise ValueError("Only notes and assessments can be edited in this pilot UI")
+    except ValidationError as error:
         raise HTTPException(422, str(error)) from error
 
 

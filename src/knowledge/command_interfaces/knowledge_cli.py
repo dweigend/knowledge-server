@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from uuid import UUID
 
+from pydantic import TypeAdapter
+
 from knowledge.command_interfaces import json_command_api
 from knowledge.document_processing import document_models, extraction_store
 from knowledge.knowledge_base import knowledge_service
@@ -81,13 +83,12 @@ def export_record(
     """Write one revision history and, for notes, its current Markdown."""
     history = application.history(record.entity_id)
     (output / f"{record.kind}-{record.entity_id}.json").write_text(
-        json.dumps(history, ensure_ascii=False, indent=2),
+        TypeAdapter(list[models.Record]).dump_json(history, indent=2).decode(),
     )
-    if record.kind != "note":
+    if not isinstance(record.payload, models.Note):
         return
-    payload = record.payload.model_dump()
     (output / f"note-{record.entity_id}.md").write_text(
-        f"# {payload['title']}\n\n{payload['body']}\n",
+        f"# {record.payload.title}\n\n{record.payload.body}\n",
     )
 
 
@@ -200,7 +201,7 @@ def main() -> None:
     """Load configuration, validate arguments and run the selected command."""
     parser = create_parser()
     arguments = parser.parse_args()
-    settings = environment_settings.Settings.from_environment()
+    settings = environment_settings.Settings()
     application = knowledge_service.Knowledge(
         postgresql_revision_store.Database(settings.database_url)
     )

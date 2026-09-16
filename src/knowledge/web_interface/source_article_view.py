@@ -127,20 +127,12 @@ def related_knowledge(
         payload = record.payload
         if isinstance(payload, models.Assessment) and payload.claim in claim_references:
             selected.append(record)
-        if isinstance(payload, models.Note) and note_uses_source(ledger, record, source_record):
+        if isinstance(payload, models.Note) and any(
+            reference.entity_id == source_record.entity_id
+            for reference in review.dependencies(ledger, record)
+        ):
             selected.append(record)
     return [*claims, *[knowledge_entry(ledger, record, source_record) for record in selected]]
-
-
-def note_uses_source(
-    ledger: postgresql_revision_store.Ledger,
-    note: models.Record,
-    source: models.Record,
-) -> bool:
-    """Find notes whose pinned dependency paths reach this source."""
-    return any(
-        reference.entity_id == source.entity_id for reference in review.dependencies(ledger, note)
-    )
 
 
 def knowledge_entry(
