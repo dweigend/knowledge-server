@@ -23,6 +23,8 @@ from knowledge.knowledge_domain import (
     knowledge_record_models as models,
 )
 
+_SOURCE_PAYLOAD = TypeAdapter(models.Source | models.LegacySource)
+
 
 class Ledger:
     """Read and append revisioned records inside an existing transaction."""
@@ -188,5 +190,5 @@ def receipt_references(receipt: dict, payload_hash: str) -> list[models.Referenc
 def decode_payload(kind: models.Kind, payload: dict) -> models.Contract:
     """Decode new sources and immutable legacy sources through their respective contracts."""
     if kind == "source":
-        return TypeAdapter(models.Source | models.LegacySource).validate_python(payload)
+        return _SOURCE_PAYLOAD.validate_python(payload)
     return models.PAYLOAD_TYPES[kind].model_validate(payload)

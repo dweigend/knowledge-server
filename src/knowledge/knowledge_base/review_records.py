@@ -39,20 +39,19 @@ def direct_dependencies(ledger: store.Ledger, record: models.Record) -> list[mod
 
 def dependencies(ledger: store.Ledger, record: models.Record) -> list[models.Reference]:
     """Resolve a finite transitive set, including the current evidence for claims."""
-    result: dict[tuple[str, int], models.Reference] = {}
-    visited = {(str(record.entity_id), record.revision)}
+    result: list[models.Reference] = []
+    visited = {(record.entity_id, record.revision)}
     pending = [record]
     while pending:
         current = pending.pop()
-        direct = direct_dependencies(ledger, current)
-        for reference in direct:
-            key = (str(reference.entity_id), reference.revision)
+        for reference in direct_dependencies(ledger, current):
+            key = (reference.entity_id, reference.revision)
             if key in visited:
                 continue
             visited.add(key)
-            result[key] = reference
+            result.append(reference)
             pending.append(ledger.require(reference, record.batch_id))
-    return list(result.values())
+    return result
 
 
 def is_current(ledger: store.Ledger, record: models.Record) -> bool:

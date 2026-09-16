@@ -157,11 +157,8 @@ class Knowledge:
             ],
         )
 
-    def history(self, entity_id: UUID) -> list[dict]:
+    def history(self, entity_id: UUID) -> list[models.Record]:
         """Return all revisions in chronological revision order."""
         with self.database.transaction() as ledger:
             current = ledger.get(entity_id)
-            return [
-                ledger.get(entity_id, revision).model_dump(mode="json")
-                for revision in range(1, current.revision + 1)
-            ]
+            return [ledger.get(entity_id, revision) for revision in range(1, current.revision + 1)]
