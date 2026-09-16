@@ -177,7 +177,7 @@ def test_input_file_changes_fail_before_execution(experiment: tuple[Path, str], 
         (directory / filename).write_text('{"records": ["modified"]}')
     result = experiments.execute_attempt(*experiment, attempt_id)
     assert result["status"] == "failed"
-    assert result["error"]
+    assert "snapshot changed" in result["error"]
     assert result["output"] is None
 
 

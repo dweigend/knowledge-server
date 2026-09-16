@@ -121,9 +121,7 @@ def list_experiments(archive_root: Path) -> list[dict]:
 
 
 def _select_inputs(
-    attempts: list[dict],
-    dependencies: tuple[str, ...],
-    supplied: dict[str, str] | None,
+    attempts: list[dict], dependencies: tuple[str, ...], supplied: dict[str, str] | None
 ) -> tuple[dict[str, str], dict[str, str]]:
     selected = (
         supplied
