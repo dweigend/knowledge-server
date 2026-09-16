@@ -49,7 +49,10 @@ def page_chunks(pages: list[str]) -> list[dict[int, str]]:
 
 
 def validate_extraction(
-    extraction: ArticleExtraction, pages: list[str], supplied: dict[int, str]
+    extraction: ArticleExtraction,
+    pages: list[str],
+    supplied: dict[int, str],
+    validate: Callable[[ArticleExtraction], None] | None = None,
 ) -> None:
     """Restore exact quote typography and reject quotations outside the supplied pages."""
     for claim in extraction.claims:
@@ -62,17 +65,8 @@ def validate_extraction(
         if claimed_page != claim.page:
             extraction.warnings.append(f"Corrected PDF page {claimed_page} to {claim.page}")
 
-
-def validate_import_proposal(
-    proposal: ArticleExtraction,
-    pages: list[str],
-    supplied: dict[int, str],
-    validate: Callable[[ArticleExtraction], None] | None,
-) -> None:
-    """Apply exact import citation checks and optional additional source-boundary checks."""
-    validate_extraction(proposal, pages, supplied)
     if validate is not None:
-        validate(proposal)
+        validate(extraction)
 
 
 def extract_document(
@@ -109,9 +103,7 @@ def extract_document(
             packet,
             ArticleExtraction,
             run_directory / "proposals",
-            lambda result, supplied=chunk: validate_import_proposal(
-                result, pages, supplied, validate
-            ),
+            lambda result, supplied=chunk: validate_extraction(result, pages, supplied, validate),
             configuration=configuration,
             cancelled=cancelled,
         )
@@ -132,7 +124,11 @@ def merge_extracted_metadata(
     """Fill metadata gaps from later chunks and log conflicts without overwriting known fields."""
     merged = {}
     for field in ("title", "authors", "year", "doi", "url"):
-        values = distinct_metadata_values(extractions, field)
+        values = []
+        for extraction in extractions:
+            value = getattr(extraction.bibliography, field)
+            if value and value not in values:
+                values.append(value)
         merged[field] = values[0] if values else ([] if field == "authors" else "")
         if len(values) > 1:
             workflow_event_log.record_event(
@@ -143,13 +139,3 @@ def merge_extracted_metadata(
                 distinct_values=values,
             )
     return models.Bibliography.model_validate(merged)
-
-
-def distinct_metadata_values(extractions: list[ArticleExtraction], field: str) -> list:
-    """Keep distinct nonempty values in source-chunk order."""
-    values = []
-    for extraction in extractions:
-        value = getattr(extraction.bibliography, field)
-        if value and value not in values:
-            values.append(value)
-    return values

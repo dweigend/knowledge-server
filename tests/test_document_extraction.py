@@ -215,3 +215,16 @@ def test_page_map_rejects_unexplained_removed_pages(tmp_path):
     truncated = write_pdf(tmp_path / "truncated.pdf", [0.8])
     with pytest.raises(ValueError, match="explicit verified page map"):
         verified_page_map(original, truncated)
+
+
+def test_import_preparation_resumes_persisted_source_without_repeating_extraction(
+    source, tmp_path, monkeypatch
+):
+    from knowledge.source_workflows import source_import
+
+    prepared = source_import.PreparedImport(source=source[1], extractions=[])
+    document = source_import.ImportDocument(path="source.pdf")
+    monkeypatch.setattr(source_import, "prepare_document", lambda *args: prepared)
+    assert source_import.load_prepared_document(document, "pilot", tmp_path) == prepared
+    monkeypatch.delattr(source_import, "prepare_document")
+    assert source_import.load_prepared_document(document, "pilot", tmp_path) == prepared

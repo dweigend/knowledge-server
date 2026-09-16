@@ -35,15 +35,6 @@ class ConsolidateNote(models.Contract):
     proposal: NoteRevision
 
 
-def knowledge_packet(records: list[models.Record]) -> list[dict]:
-    """Provide claims, evidence and assessments without copying entire source texts."""
-    return [
-        record.model_dump(mode="json")
-        for record in records
-        if record.kind in {"claim", "evidence", "assessment"}
-    ]
-
-
 def validate_note_revision(
     proposal: NoteRevision, target: models.Record, records: list[models.Record]
 ) -> None:
@@ -107,8 +98,8 @@ def propose_note_revision(
         NoteRevision,
         run_directory / "proposals",
         lambda result: validate_note_revision(result, target, supplied),
-        **({"configuration": configuration} if configuration is not None else {}),
-        **({"cancelled": cancelled} if cancelled is not None else {}),
+        configuration=configuration,
+        cancelled=cancelled,
     )
     return ConsolidateNote(
         target=target.reference(),
@@ -166,7 +157,11 @@ def note_packet(
     packet = json.dumps(
         {
             "target": target.model_dump(mode="json"),
-            "knowledge": knowledge_packet(supplied),
+            "knowledge": [
+                record.model_dump(mode="json")
+                for record in supplied
+                if record.kind in {"claim", "evidence", "assessment"}
+            ],
             "related_notes": related_notes,
             "coverage": {
                 "method": "All claims and assessments. Wiki: inline-cited evidence only. "

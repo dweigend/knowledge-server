@@ -42,7 +42,7 @@ class PreparedImport(models.Contract):
 
 def prepare_document(
     document: ImportDocument, batch_id: str, run_directory: Path
-) -> tuple[models.Source, list[article_claim_extraction.ArticleExtraction]]:
+) -> PreparedImport:
     """Prepare temporary PDF derivatives and transfer ownership to verified Zotero storage."""
     original = Path(document.path)
     pages = pdf_text_extraction.extract_pdf_pages(original)
@@ -60,7 +60,7 @@ def prepare_document(
         study_group=extractions[0].study_group,
         overlap=extractions[0].overlap,
     )
-    return source, extractions
+    return PreparedImport(source=source, extractions=extractions)
 
 
 def store_document_pdfs(
@@ -89,7 +89,8 @@ def import_document(
         (document_directory / "prepared.json").unlink(missing_ok=True)
         workflow_event_log.record_event(run_directory, "document_already_completed", sha256=digest)
         return
-    source, extractions = load_prepared_document(document, batch_id, document_directory)
+    prepared = load_prepared_document(document, batch_id, document_directory)
+    source, extractions = prepared.source, prepared.extractions
     reference = register_document_source(application, batch_id, digest, source)
     accept_contributions(application, batch_id, reference, extractions, document_directory, digest)
     complete_document(application, batch_id, digest, source, reference, document, run_directory)
@@ -97,17 +98,15 @@ def import_document(
 
 def load_prepared_document(
     document: ImportDocument, batch_id: str, document_directory: Path
-) -> tuple[models.Source, list[article_claim_extraction.ArticleExtraction]]:
+) -> PreparedImport:
     """Resume the transient preparation snapshot or create it before database writes."""
     document_directory.mkdir(parents=True, exist_ok=True)
     prepared_path = document_directory / "prepared.json"
     if not prepared_path.exists():
-        source, extractions = prepare_document(document, batch_id, document_directory)
-        prepared_path.write_text(
-            PreparedImport(source=source, extractions=extractions).model_dump_json()
-        )
-    prepared = PreparedImport.model_validate_json(prepared_path.read_text())
-    return prepared.source, prepared.extractions
+        prepared = prepare_document(document, batch_id, document_directory)
+        prepared_path.write_text(prepared.model_dump_json())
+        return prepared
+    return PreparedImport.model_validate_json(prepared_path.read_text())
 
 
 def register_document_source(
