@@ -11,6 +11,11 @@
 - Remove helpers that only forward arguments without clarifying a boundary.
 - Keep FastAPI route registration together; route bodies should remain short.
 
+## Typed data
+
+- Use Pydantic for all structured data boundaries; validate once and keep data typed internally.
+- Prefer documented existing functions over custom code; simplifications should delete more code than they add.
+
 ## Names and documentation
 
 - Use English names that identify domain meaning, units and revision semantics.
