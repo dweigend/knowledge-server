@@ -171,12 +171,14 @@ def test_crossref_lookup_uses_encoded_exact_doi_and_bounded_search(monkeypatch):
 
     requests = []
 
-    def request(url, timeout, cancelled):
+    def request(url, response_type, timeout, cancelled):
         requests.append(url)
         entry = {"DOI": "10.1234/work", "title": ["A scientific paper"]}
-        return {"message": entry if "/10." in url else {"items": [entry]}}
+        return response_type.model_validate(
+            {"message": entry if "/10." in url else {"items": [entry]}}
+        )
 
-    monkeypatch.setattr(crossref_client, "request_json", request)
+    monkeypatch.setattr(crossref_client, "request_model", request)
     exact = crossref_client.lookup_crossref(reference(doi="10.1234/work"), 2, lambda: False)
     searched = crossref_client.lookup_crossref(reference(), 2, lambda: False)
     assert exact[0].method == "doi"
@@ -273,11 +275,11 @@ def test_bibliographic_query_uses_raw_reference_when_title_is_missing(monkeypatc
 
     urls = []
 
-    def request(url, *_):
+    def request(url, response_type, *_):
         urls.append(url)
-        return {"message": {"items": []}}
+        return response_type.model_validate({"message": {"items": []}})
 
-    monkeypatch.setattr(crossref_client, "request_json", request)
+    monkeypatch.setattr(crossref_client, "request_model", request)
     ref = PaperReference(id="b1", raw="Smith (2020). Full original reference.")
     crossref_client.lookup_crossref(ref, 2, lambda: False)
     assert parse_qs(urlsplit(urls[0]).query)["query.bibliographic"] == [ref.raw]

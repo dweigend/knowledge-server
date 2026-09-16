@@ -23,6 +23,10 @@ from knowledge.source_workflows.bibliography_recovery_models import (
     BibliographyAudit,
     BibliographyRecoveryResult,
 )
+from knowledge.source_workflows.reference_query_models import (
+    ReferenceQueryBatch,
+    ReferenceQueryEvidence,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -543,8 +547,7 @@ def test_failed_model_planning_is_cached_without_retrying_unchanged_evidence(tmp
     first, second = DiscoveryReport(), DiscoveryReport()
     for report in (first, second):
         plan = planning.plan_reference_queries(
-            [reference()],
-            {"r1": []},
+            ReferenceQueryBatch([ReferenceQueryEvidence(reference=reference(), candidates=[])]),
             tmp_path,
             settings,
             report,
@@ -707,8 +710,7 @@ def test_pre_refactor_query_cache_preserves_exact_evidence_without_model_calls(t
     report = DiscoveryReport()
 
     result = planning.plan_reference_queries(
-        [ref],
-        {ref.id: []},
+        ReferenceQueryBatch([ReferenceQueryEvidence(reference=ref, candidates=[])]),
         tmp_path,
         DiscoverySettings(max_model_calls=0),
         report,
@@ -736,3 +738,52 @@ def test_pre_refactor_query_cache_preserves_exact_evidence_without_model_calls(t
 def test_discovery_settings_reject_invalid_search_requirements(settings):
     with pytest.raises(ValueError):
         DiscoverySettings.model_validate(settings)
+
+
+@pytest.mark.parametrize("error_type", [KeyError, TypeError, InterruptedError])
+def test_provider_defects_and_cancellation_are_not_cached_as_missing_sources(tmp_path, error_type):
+    def fail(*_args):
+        raise error_type("provider stopped")
+
+    session = reference_search.ReferenceSearchSession(
+        tmp_path,
+        DiscoverySettings(),
+        DiscoveryReport(),
+        monotonic() + 5,
+        lambda: False,
+        {"crossref": fail},
+    )
+    trace = ReferenceSearch(reference_id="r1", trigger="Unmatched")
+
+    with pytest.raises(error_type):
+        session.search("crossref", reference(), trace)
+
+    assert not list(tmp_path.glob("*.json"))
+    assert session.state.backoff == set()
+
+
+def test_planning_bounds_model_input_without_discarding_collected_evidence(tmp_path, monkeypatch):
+    import json
+
+    packets = []
+
+    def plan(_instructions, packet, *_args, **_kwargs):
+        packets.append(json.loads(packet))
+        return planning.ReferenceQueries()
+
+    def lookup(ref, *_args):
+        return [candidate(ref, identifier=f"work-{index}", year="1900") for index in range(7)]
+
+    monkeypatch.setattr(planning.structured_generation, "generate", plan)
+    result = run_discovery(
+        tmp_path,
+        document(*(reference(f"r{index}") for index in range(55))),
+        {"crossref": lookup},
+        DiscoverySettings(providers=[], max_requests=100, max_model_calls=1),
+    )
+
+    assert len(packets) == 1
+    assert len(packets[0]) == 50
+    assert all(len(entry["candidates"]) == 6 for entry in packets[0])
+    assert all(len(record.resolution.candidates) == 7 for record in result.literature)
+    assert len(result.literature) == 56

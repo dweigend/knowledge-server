@@ -1,10 +1,13 @@
 """Define grounded query proposals and their typed source evidence."""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, RootModel
 
 from knowledge.knowledge_domain.knowledge_record_models import Contract
 from knowledge.literature.literature_models import Candidate
 from knowledge.literature.structured_paper_models import PaperReference
+
+MAX_QUERY_REFERENCES = 50
+MAX_QUERY_CANDIDATES = 6
 
 
 class ReferenceQuery(Contract):
@@ -20,7 +23,7 @@ class ReferenceQuery(Contract):
 class ReferenceQueries(Contract):
     """Return a bounded set of evidence-grounded alternative searches."""
 
-    queries: list[ReferenceQuery] = Field(default_factory=list, max_length=50)
+    queries: list[ReferenceQuery] = Field(default_factory=list, max_length=MAX_QUERY_REFERENCES)
 
 
 class CachedQueryPlan(BaseModel):
@@ -34,4 +37,10 @@ class ReferenceQueryEvidence(BaseModel):
     """Pair exact extracted reference evidence with bounded provider candidates."""
 
     reference: PaperReference
-    candidates: list[Candidate]
+    candidates: list[Candidate] = Field(max_length=MAX_QUERY_CANDIDATES)
+
+
+class ReferenceQueryBatch(RootModel[list[ReferenceQueryEvidence]]):
+    """Bound the evidence sent to one planning call without changing its JSON array format."""
+
+    root: list[ReferenceQueryEvidence] = Field(max_length=MAX_QUERY_REFERENCES)

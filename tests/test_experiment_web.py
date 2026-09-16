@@ -437,7 +437,7 @@ def test_discovery_trace_and_historical_output_render_without_network(workbench,
     def unexpected_request(*args, **kwargs):
         raise AssertionError("GET must not request literature or document services")
 
-    monkeypatch.setattr("knowledge.literature.crossref_client.request_json", unexpected_request)
+    monkeypatch.setattr("knowledge.literature.crossref_client.request_model", unexpected_request)
     monkeypatch.setattr("knowledge.literature.grobid_client.request_tei", unexpected_request)
     saved = get_revision("recipe", "extract_text")
     legacy = client.get(base)

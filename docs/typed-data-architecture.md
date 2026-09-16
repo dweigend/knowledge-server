@@ -49,6 +49,16 @@ share one provider loop. `LookupState` owns per-run pacing and request counters;
 the session remains ordinary Python orchestration with explicit provider and
 cancellation dependencies. Query proposals and their evidence packets reuse
 `PaperReference` and `Candidate` instead of constructing untyped dictionaries.
+`ReferenceQueryBatch` bounds the planning input to 50 references and six candidates
+per reference. Planning receives this model directly, rather than separate reference
+and candidate collections. These limits affect model input only; the source audit
+retains all collected candidates.
+
+Crossref now shares the bounded HTTP transport with the other discovery providers.
+Its response schemas validate deposited fields before normalization. Provider
+transport and validation failures remain cacheable; unexpected `KeyError` and
+`TypeError` propagate instead of masquerading as unresolved sources. Cancellation
+also propagates and is never written to the negative cache.
 
 Existing output schemas, field defaults, whitespace policies and cache hashes
 remain unchanged. Planning packets deliberately retain the previous `json.dumps`
@@ -56,6 +66,22 @@ representation: replacing it with `model_dump_json()` would change cache keys.
 Trusted internal copies use `model_copy`; external input and constrained settings
 use validation. `Contract` is not a universal base because its whitespace trimming
 would change exact evidence. No generic model or cache hierarchy is introduced.
+
+### Review comment coverage
+
+| Comment | Applied change |
+| --- | --- |
+| 1–2 | Keep settings declarative; separate field validators with early returns. |
+| 3 | Use independent guard clauses when selecting the richest matching candidate. |
+| 4–5 | Centralize mutable counters in `LookupState`; remove repetitive constructor assignments. Executable provider dependencies remain in the session. |
+| 6 | Separate lookup orchestration, cached results and pacing/budget checks. |
+| 7 | Keep request accounting separate from redacted provider failure handling; catch only recoverable transport/validation errors. |
+| 8 | Separate initial identity lookup from the shared fallback provider loop. |
+| 9–10 | Apply one proposal at a time through the same provider loop as ordinary searches. |
+| 11 | Retain one typed state per source throughout recovery, identification, refinement and persistence; read its source hash instead of passing duplicate parameters. |
+| 12–13 | Restore original IDs before collection; handle duplicate-ID collisions with a flat guarded loop. |
+| 14 | Use a bounded planning schema and typed Crossref response schemas; reuse the existing HTTP implementation. |
+| 15 | Validate extraction settings once and separate document analysis from literature enrichment. |
 
 References: [Pydantic models](https://docs.pydantic.dev/latest/concepts/models/),
 [validators](https://docs.pydantic.dev/latest/concepts/validators/),

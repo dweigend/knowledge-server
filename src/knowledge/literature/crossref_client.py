@@ -4,18 +4,14 @@ The client normalizes metadata and DOI values while leaving identity decisions
 to the resolver.
 """
 
-import json
 import re
-import subprocess
 from collections.abc import Callable
-from time import monotonic
 from urllib.parse import quote, urlencode
 
-from knowledge.literature import literature_models, structured_paper_models
+from knowledge.literature import crossref_models, literature_models, structured_paper_models
+from knowledge.literature.provider_http import MAX_CANDIDATES, request_model
 
 API_URL = "https://api.crossref.org/works"
-MAX_RESPONSE_BYTES = 2_000_000
-USER_AGENT = "knowledge-server/0.1 (https://github.com/dweigend/knowledge-server)"
 
 
 def normalize_doi(doi: str | None) -> str | None:
@@ -32,120 +28,75 @@ def lookup_crossref(
 ) -> list[literature_models.Candidate]:
     """Look up an exact DOI or retrieve at most three bibliographic candidates."""
     doi = normalize_doi(reference.doi)
-    if doi:
-        url = API_URL + "/" + quote(doi, safe="")
-        method = "doi"
-    else:
-        raw = (
-            reference.raw if isinstance(reference, structured_paper_models.PaperReference) else None
-        )
-        query = raw or " ".join(filter(None, [reference.title, *reference.authors, reference.year]))
-        if not query:
-            return []
-        url = API_URL + "?" + urlencode({"query.bibliographic": query[:2000], "rows": 3})
-        method = "bibliographic"
-    response = request_json(url, timeout_seconds, cancelled)
+    url = lookup_url(reference, doi)
+    if url is None:
+        return []
+    method = "doi" if doi else "bibliographic"
+    response = request_model(url, crossref_models.Response, timeout_seconds, cancelled)
     if response is None:
         return []
-    message = response["message"]
-    entries = [message] if method == "doi" else message["items"]
+    message = response.message
+    if (method == "doi") != isinstance(message, crossref_models.Work):
+        raise ValueError("Crossref returned an unexpected response type")
+    entries = [message] if isinstance(message, crossref_models.Work) else message.items
     return [
         literature_models.Candidate(
             metadata=parse_metadata(entry),
             provider="crossref",
-            provider_id=entry["DOI"],
+            provider_id=entry.doi,
             method=method,
         )
-        for entry in entries[:3]
+        for entry in entries[:MAX_CANDIDATES]
     ]
 
 
-def request_json(url: str, timeout_seconds: float, cancelled: Callable[[], bool]) -> dict | None:
-    """Bound HTTP time and size while checking cancellation during transfer."""
-    deadline = monotonic() + timeout_seconds
-    arguments = [
-        "curl",
-        "--disable",
-        "--silent",
-        "--show-error",
-        "--proto",
-        "=https",
-        "--max-time",
-        str(timeout_seconds),
-        "--max-filesize",
-        str(MAX_RESPONSE_BYTES),
-        "--user-agent",
-        USER_AGENT,
-        "--header",
-        "Accept: application/json",
-        "--write-out",
-        "\n%{http_code}",
-        url,
-    ]
-    with subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
-        try:
-            output = read_response(process, deadline, cancelled)
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate()
-        if process.returncode:
-            raise ValueError("Crossref request failed or exceeded its response limits")
-    body, _, status = output.rpartition(b"\n")
-    if status == b"404":
+def lookup_url(reference: structured_paper_models.PaperMetadata, doi: str | None) -> str | None:
+    """Build an exact identifier query or retain the original bibliographic evidence."""
+    if doi:
+        return API_URL + "/" + quote(doi, safe="")
+    raw = reference.raw if isinstance(reference, structured_paper_models.PaperReference) else None
+    query = raw or " ".join(filter(None, [reference.title, *reference.authors, reference.year]))
+    if not query:
         return None
-    if status != b"200":
-        raise ValueError(f"Crossref returned HTTP {status.decode(errors='replace')}")
-    if len(body) > MAX_RESPONSE_BYTES:
-        raise ValueError("Crossref response exceeded its size limit")
-    return json.loads(body)
+    return API_URL + "?" + urlencode({"query.bibliographic": query[:2000], "rows": MAX_CANDIDATES})
 
 
-def read_response(
-    process: subprocess.Popen[bytes], deadline: float, cancelled: Callable[[], bool]
-) -> bytes:
-    """Collect a response while preserving prompt cancellation and a total deadline."""
-    while True:
-        if cancelled():
-            raise InterruptedError("Literature lookup cancelled")
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise TimeoutError("Crossref lookup exceeded its time limit")
-        try:
-            output, _ = process.communicate(timeout=min(0.2, remaining))
-            return output
-        except subprocess.TimeoutExpired:
-            continue
-
-
-def parse_metadata(entry: dict) -> literature_models.LiteratureMetadata:
+def parse_metadata(entry: crossref_models.Metadata | dict) -> literature_models.LiteratureMetadata:
     """Normalize deposited Crossref metadata without filling absent fields."""
-    year = publication_year(entry)
+    metadata = crossref_models.Metadata.model_validate(entry)
     return literature_models.LiteratureMetadata(
-        title=next(iter(entry.get("title", [])), None),
+        title=next(iter(metadata.title), None),
         authors=[
-            " ".join(filter(None, [author.get("given"), author.get("family")]))
-            or author.get("name", "")
-            for author in entry.get("author", [])
+            " ".join(filter(None, [author.given, author.family])) or author.name
+            for author in metadata.author
         ],
-        year=year,
-        venue=next(iter(entry.get("container-title", [])), None),
-        doi=normalize_doi(entry.get("DOI")),
-        publisher=entry.get("publisher"),
-        volume=entry.get("volume"),
-        issue=entry.get("issue"),
-        pages=entry.get("page"),
-        work_type=entry.get("type"),
-        url=entry.get("URL"),
-        isbn=entry.get("ISBN", []),
-        issn=entry.get("ISSN", []),
+        year=publication_year(metadata),
+        venue=next(iter(metadata.container_title), None),
+        doi=normalize_doi(metadata.doi),
+        publisher=metadata.publisher,
+        volume=metadata.volume,
+        issue=metadata.issue,
+        pages=metadata.page,
+        work_type=metadata.type,
+        url=metadata.url,
+        isbn=metadata.isbn,
+        issn=metadata.issn,
     )
 
 
-def publication_year(entry: dict) -> str | None:
+def publication_year(entry: crossref_models.Metadata | dict) -> str | None:
     """Select a supplied publication year, excluding metadata deposit timestamps."""
-    for field in ("published", "published-print", "published-online", "issued"):
-        dates = entry.get(field, {}).get("date-parts", [])
-        if dates and dates[0] and type(dates[0][0]) is int and 1000 <= dates[0][0] <= 9999:
-            return str(dates[0][0])
+    metadata = crossref_models.Metadata.model_validate(entry)
+    dates = (
+        metadata.published,
+        metadata.published_print,
+        metadata.published_online,
+        metadata.issued,
+    )
+    for date in dates:
+        if not date.date_parts or not date.date_parts[0]:
+            continue
+        year = date.date_parts[0][0]
+        if type(year) is int and 1000 <= year <= 9999:
+            return str(year)
     return None

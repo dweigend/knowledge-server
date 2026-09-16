@@ -6,7 +6,7 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 
-from knowledge.literature import literature_models, literature_resolution
+from knowledge.literature import literature_resolution
 from knowledge.literature.reference_discovery_models import DiscoveryReport, DiscoverySettings
 from knowledge.literature.structured_paper_models import PaperReference
 from knowledge.model_integration import structured_generation
@@ -15,7 +15,7 @@ from knowledge.source_workflows.reference_query_models import (
     CachedQueryPlan,
     ReferenceQueries,
     ReferenceQuery,
-    ReferenceQueryEvidence,
+    ReferenceQueryBatch,
 )
 
 SEARCH_INSTRUCTIONS = """Propose focused bibliographic searches for unresolved references.
@@ -61,17 +61,6 @@ def validate_query_evidence(query: ReferenceQuery, original: PaperReference) -> 
         raise ValueError("Search author tokens must occur in the original bibliography evidence")
 
 
-def query_packet(
-    references: list[PaperReference], candidates: dict[str, list[literature_models.Candidate]]
-) -> str:
-    """Serialize typed planning evidence while preserving the existing cache representation."""
-    evidence = [
-        ReferenceQueryEvidence(reference=reference, candidates=candidates[reference.id][:6])
-        for reference in references[:50]
-    ]
-    return json.dumps([entry.model_dump() for entry in evidence], ensure_ascii=False)
-
-
 def query_plan_directory(
     packet: str,
     cache_directory: Path,
@@ -95,8 +84,7 @@ def query_plan_directory(
 
 
 def plan_reference_queries(
-    references: list[PaperReference],
-    candidates: dict[str, list[literature_models.Candidate]],
+    evidence: ReferenceQueryBatch,
     cache_directory: Path,
     settings: DiscoverySettings,
     report: DiscoveryReport,
@@ -104,7 +92,8 @@ def plan_reference_queries(
     cancelled: Callable[[], bool],
 ) -> ReferenceQueries:
     """Request one grounded planning batch only after ordinary searches remain unresolved."""
-    packet = query_packet(references, candidates)
+    packet = json.dumps(evidence.model_dump(), ensure_ascii=False)
+    references = {entry.reference.id: entry.reference for entry in evidence.root}
     directory = query_plan_directory(packet, cache_directory, settings, configuration)
     path = directory / "plan.json"
     if path.exists():
@@ -118,13 +107,13 @@ def plan_reference_queries(
         return ReferenceQueries()
     if outcome.error:
         report.warnings.append(outcome.error)
-    validate_queries(outcome.plan, {ref.id: ref for ref in references})
+    validate_queries(outcome.plan, references)
     return outcome.plan
 
 
 def generate_query_plan(
     packet: str,
-    references: list[PaperReference],
+    references: dict[str, PaperReference],
     directory: Path,
     configuration: structured_generation.ModelConfiguration,
     cancelled: Callable[[], bool],
@@ -136,7 +125,7 @@ def generate_query_plan(
             packet,
             ReferenceQueries,
             directory,
-            validate=lambda result: validate_queries(result, {ref.id: ref for ref in references}),
+            validate=lambda result: validate_queries(result, references),
             configuration=configuration,
             cancelled=cancelled,
         )

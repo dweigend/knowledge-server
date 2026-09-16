@@ -145,23 +145,29 @@ class ReferenceSearchSession:
             self.state.reference_requests.get(reference_id, 0) + 1
         )
         self.state.last_requests[provider] = monotonic()
-        result = models.CachedLookup(checked_at=datetime.now(UTC).isoformat())
+        checked_at = datetime.now(UTC).isoformat()
         try:
-            result.candidates = self.providers[provider](
+            candidates = self.providers[provider](
                 reference,
                 max(MIN_LOOKUP_SECONDS, min(literature_resolution.MAX_LOOKUP_SECONDS, remaining)),
                 self.cancelled,
             )
         except InterruptedError:
             raise
-        except (OSError, ValueError, KeyError, TypeError) as error:
-            limited = "429" in str(error)
-            result.error = (
-                f"{provider}: HTTP 429" if limited else f"{provider}: {type(error).__name__}"
+        except (OSError, ValueError) as error:
+            return self.failed_lookup(provider, error, checked_at)
+        return models.CachedLookup(candidates=candidates, checked_at=checked_at)
+
+    def failed_lookup(
+        self, provider: str, error: OSError | ValueError, checked_at: str
+    ) -> models.CachedLookup:
+        """Redact provider failure details and pause only a rate-limited provider."""
+        if "429" not in str(error):
+            return models.CachedLookup(
+                error=f"{provider}: {type(error).__name__}", checked_at=checked_at
             )
-            if limited:
-                self.state.backoff.add(provider)
-        return result
+        self.state.backoff.add(provider)
+        return models.CachedLookup(error=f"{provider}: HTTP 429", checked_at=checked_at)
 
     def wait_for_provider(self, provider: str) -> None:
         """Pace sequential requests while remaining responsive to cancellation."""
