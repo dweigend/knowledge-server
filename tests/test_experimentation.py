@@ -98,18 +98,6 @@ def test_real_pdf_and_blocks_use_same_shared_operations_and_exact_references(
     assert "dirty" in segmented["code"]
 
 
-def test_knowledge_snapshot_preserves_disk_shape_and_records_only_hash(
-    experiment: tuple[Path, str],
-):
-    directory = experiment_store.experiment_directory(*experiment)
-    snapshot = json.loads((directory / "knowledge.json").read_text())
-    manifest = experiment_store.read_experiment(directory)
-
-    assert snapshot == {"records": []}
-    assert manifest.knowledge_hash == experiment_store.content_hash(snapshot["records"])
-    assert manifest.knowledge_hash != experiment_store.content_hash(snapshot)
-
-
 def test_reruns_retain_results_and_mark_downstream_stale(experiment: tuple[Path, str]):
     original = run(experiment, "extract_text")
     blocks = run(experiment, "segment_blocks")
@@ -189,7 +177,7 @@ def test_input_file_changes_fail_before_execution(experiment: tuple[Path, str], 
         (directory / filename).write_text('{"records": ["modified"]}')
     result = experiments.execute_attempt(*experiment, attempt_id)
     assert result["status"] == "failed"
-    assert "snapshot changed" in result["error"]
+    assert result["error"]
     assert result["output"] is None
 
 

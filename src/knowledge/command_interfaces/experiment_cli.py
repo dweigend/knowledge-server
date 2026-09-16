@@ -9,8 +9,11 @@ import json
 import os
 from pathlib import Path
 
-from knowledge.experiments import experiment_models, experiment_step_catalog
+from pydantic import TypeAdapter
+
 from knowledge.experiments import experiment_runner as experiments
+from knowledge.experiments import experiment_step_catalog
+from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import prompt_registry
 
 
@@ -58,9 +61,7 @@ def create_from_file(arguments: argparse.Namespace) -> dict:
         raise ValueError("Experiment PDFs must not exceed 64 MiB")
     records = []
     if arguments.seed_json:
-        records = experiment_models.RECORD_LIST_ADAPTER.validate_json(
-            arguments.seed_json.read_text()
-        )
+        records = TypeAdapter(list[models.Record]).validate_json(arguments.seed_json.read_text())
     prompt_registry.seed_defaults()
     identifier = experiments.create_experiment(
         arguments.archive_root, arguments.pdf.name, arguments.pdf.read_bytes(), records
@@ -75,7 +76,7 @@ def run_saved_step(arguments: argparse.Namespace) -> dict:
         arguments.recipe or arguments.step, arguments.revision
     )
     inputs = (
-        experiment_models.STEP_ATTEMPT_MAPPING_ADAPTER.validate_json(arguments.inputs.read_text())
+        TypeAdapter(dict[str, str]).validate_json(arguments.inputs.read_text())
         if arguments.inputs
         else None
     )

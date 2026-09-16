@@ -5,24 +5,24 @@ resolved once when an interface starts.
 """
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
-
-from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Self
 
 DEFAULT_BATCH = os.environ.get("KNOWLEDGE_DEFAULT_BATCH", "default")
 
 
-class Settings(BaseSettings):
+@dataclass(frozen=True)
+class Settings:
     """Required server locations; credentials remain in the process environment."""
-
-    model_config = SettingsConfigDict(env_prefix="KNOWLEDGE_", extra="ignore", frozen=True)
 
     database_url: str
     archive_root: Path
 
-    @field_validator("archive_root", mode="after")
     @classmethod
-    def resolve_archive_root(cls, archive_root: Path) -> Path:
-        """Resolve the archive path once at startup."""
-        return archive_root.expanduser().resolve()
+    def from_environment(cls) -> Self:
+        """Load required settings and resolve the archive path once at startup."""
+        return cls(
+            database_url=os.environ["KNOWLEDGE_DATABASE_URL"],
+            archive_root=Path(os.environ["KNOWLEDGE_ARCHIVE_ROOT"]).resolve(),
+        )

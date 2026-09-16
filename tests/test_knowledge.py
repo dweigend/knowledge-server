@@ -195,9 +195,7 @@ def test_html_escapes_source_and_blocks_csrf(application, article, tmp_path, mon
     )
     article.zettel_body = "<script>alert('unsafe')</script>"
     references = import_article(application, article)
-    client = TestClient(
-        create_app(Settings(database_url=application.database.database_url, archive_root=tmp_path))
-    )
+    client = TestClient(create_app(Settings(application.database.database_url, tmp_path)))
     page = client.get(f"/records/{references.zettel.entity_id}")
     assert page.status_code == 200
     assert "<script>alert" not in page.text

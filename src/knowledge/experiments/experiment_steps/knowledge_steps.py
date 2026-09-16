@@ -157,9 +157,9 @@ def _propose_note_changes(
         return []
     if not isinstance(name, str) or not isinstance(revision, int):
         raise ValueError("Note proposals require a pinned note_prompt_name and revision")
-    prompt = prompt_registry.get_revision("prompt", name, revision).payload["text"]
-    if not isinstance(prompt, str):
-        raise ValueError("Note prompt must contain text")
+    prompt = prompt_registry.Prompt.model_validate(
+        prompt_registry.get_revision("prompt", name, revision).payload
+    ).text
     return [_propose_note_change(execution, record, records, prompt) for record in notes]
 
 

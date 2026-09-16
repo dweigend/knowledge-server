@@ -20,7 +20,7 @@ def workbench(tmp_path, monkeypatch):
         "knowledge.model_integration.structured_generation.run_hermes", unexpected_model
     )
     root = tmp_path / "archive"
-    with TestClient(create_app(Settings(database_url="unused", archive_root=root))) as client:
+    with TestClient(create_app(Settings("unused", root))) as client:
         page = client.get("/experiments")
         match = re.search(r'name="csrf" value="([^"]+)"', page.text)
         assert match

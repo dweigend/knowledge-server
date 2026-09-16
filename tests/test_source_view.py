@@ -247,7 +247,7 @@ def test_source_route_reads_without_models_or_knowledge_writes(
             "bibtex": "@misc{source}",
         },
     )
-    client = TestClient(create_app(Settings(database_url="unused", archive_root=tmp_path)))
+    client = TestClient(create_app(Settings("unused", tmp_path)))
     response = client.get(f"/records/{source_record.entity_id}?revision=2&extraction_revision=3")
     assert response.status_code == 200
     assert "Article title" in response.text

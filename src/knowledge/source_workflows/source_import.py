@@ -40,9 +40,6 @@ class PreparedImport(models.Contract):
     extractions: list[article_claim_extraction.ArticleExtraction]
 
 
-IMPORT_DOCUMENTS = TypeAdapter(list[ImportDocument])
-
-
 def prepare_document(
     document: ImportDocument, batch_id: str, run_directory: Path
 ) -> tuple[models.Source, list[article_claim_extraction.ArticleExtraction]]:
@@ -183,7 +180,7 @@ def import_manifest(
     run_directory: Path,
 ) -> None:
     """Import explicitly selected documents and log any failure before stopping."""
-    documents = IMPORT_DOCUMENTS.validate_json(manifest.read_text())
+    documents = TypeAdapter(list[ImportDocument]).validate_json(manifest.read_text())
     for document in documents:
         workflow_event_log.record_event(run_directory, "document_started", path=document.path)
         try:

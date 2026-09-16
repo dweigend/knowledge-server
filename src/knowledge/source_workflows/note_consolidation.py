@@ -9,8 +9,6 @@ import hashlib
 import json
 from pathlib import Path
 
-from pydantic import TypeAdapter
-
 from knowledge.knowledge_base import (
     claim_evidence_records,
     knowledge_service,
@@ -24,7 +22,6 @@ from knowledge.runtime_support import workflow_event_log
 from knowledge.source_workflows import note_revision_proposals
 
 CONSOLIDATION_ACTOR = "hermes:consolidate-v1"
-REFERENCES = TypeAdapter(list[models.Reference])
 
 
 def apply_note_revision(
@@ -248,11 +245,13 @@ def consolidation_targets(
     manifest = run_directory / "targets.json"
     if not manifest.exists():
         targets = [
-            record.reference()
+            record.reference().model_dump(mode="json")
             for record in ledger.list(batch_id, "note")
             if isinstance(record.payload, models.Note)
             and record.payload.kind in {"permanent", "wiki"}
         ]
-        manifest.write_bytes(REFERENCES.dump_json(targets))
-    references = REFERENCES.validate_json(manifest.read_bytes())
+        manifest.write_text(json.dumps(targets))
+    references = [
+        models.Reference.model_validate(entry) for entry in json.loads(manifest.read_text())
+    ]
     return [ledger.require(reference, batch_id, "note") for reference in references]

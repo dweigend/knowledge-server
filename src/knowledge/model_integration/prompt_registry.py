@@ -92,10 +92,17 @@ STEP_DEFAULTS: dict[Step, tuple[str, str, dict[str, JsonValue]]] = {
 }
 
 
+class Prompt(BaseModel):
+    """Store exact model instructions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    text: str = Field(min_length=1)
+
+
 class AuthorRules(BaseModel):
     """Keep author instructions and deliberately selected private writing examples."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
     text: str = Field(min_length=1)
     examples: list[str] = Field(default_factory=list)
 
@@ -209,8 +216,6 @@ def append_revision(
         raise errors.Conflict(
             f"Configuration changed: expected {expected_revision}, found {current}"
         )
-    if kind == "prompt" and (not isinstance(payload.get("text"), str) or not payload["text"]):
-        raise ValueError("Prompt payload requires nonempty text")
     record = ConfigRevision(
         kind=kind, name=name, revision=current + 1, payload=payload, hash=payload_hash(payload)
     )
@@ -279,8 +284,7 @@ def validate_payload(root: Path, kind: ConfigKind, payload: dict[str, JsonValue]
         AuthorRules.model_validate(payload)
         return
     if kind == "prompt":
-        if not isinstance(payload.get("text"), str) or not payload["text"]:
-            raise ValueError("Prompt payload requires nonempty text")
+        Prompt.model_validate(payload)
         return
     recipe = Recipe.model_validate(payload)
     prompt = read_revision(
@@ -356,10 +360,7 @@ def operation_configuration(
         if not isinstance(name, str) or not isinstance(revision, int):
             raise ValueError("This recipe has no pinned note prompt")
         prompt = get_revision("prompt", name, revision)
-    text = prompt.payload["text"]
-    if not isinstance(text, str):
-        raise ValueError("Prompt payload requires text")
-    return text, recipe.model.resolved()
+    return Prompt.model_validate(prompt.payload).text, recipe.model.resolved()
 
 
 def seed_configuration(
@@ -416,7 +417,4 @@ def load_prompt(name: str) -> str:
             append_revision(directory, "prompt", name, {"text": text}, 0)
             atomic_json_files.write_json_atomically(directory / "active.json", {"revision": 1})
         prompt = read_revision(directory, active_revision(directory))
-        text = prompt.payload.get("text")
-        if not isinstance(text, str) or not text:
-            raise ValueError("Active prompt does not contain text")
-        return text
+        return Prompt.model_validate(prompt.payload).text
