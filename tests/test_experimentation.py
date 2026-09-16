@@ -284,24 +284,6 @@ def test_cleanup_is_isolated_idempotent_and_preserves_saved_recipes(experiment: 
     assert report["attempts"][0]["output"] == result["output"]
 
 
-def test_cleanup_failure_is_reported_and_can_be_retried(experiment: tuple[Path, str], monkeypatch):
-    with monkeypatch.context() as failed_filesystem:
-
-        def fail_remove(path):
-            (path / "manifest.json").unlink()
-            raise PermissionError("fixture filesystem failure")
-
-        failed_filesystem.setattr(
-            "knowledge.experiments.experiment_runner.shutil.rmtree", fail_remove
-        )
-        with pytest.raises(ValueError, match="retry deletion"):
-            experiments.delete_experiment(*experiment)
-    assert experiments.list_experiments(experiment[0])[0]["status"] == "cleanup_failed"
-    assert experiments.read_attempts(*experiment) == []
-    experiments.delete_experiment(*experiment)
-    assert experiments.list_experiments(experiment[0]) == []
-
-
 def test_disk_changes_require_restart_before_preparing_or_executing(
     experiment: tuple[Path, str], monkeypatch
 ):
@@ -362,17 +344,6 @@ def test_trace_shows_actual_requests_without_raw_reasoning_or_secret_fields(
         "input": "First observation.",
     }
     assert model["response"] == {"response": "A concise result", "execution": "simulated"}
-
-
-def test_legacy_run_is_inspectable_and_cannot_be_silently_reexecuted(experiment: tuple[Path, str]):
-    manifest = experiment_store.experiment_directory(*experiment) / "manifest.json"
-    manifest.write_text(json.dumps({"id": experiment[1], "filename": "legacy.pdf", "steps": {}}))
-    assert experiments.read_manifest(*experiment)["legacy"] is True
-    assert experiments.export_experiment(*experiment)["manifest"]["filename"] == "legacy.pdf"
-    with pytest.raises(ValueError, match="Legacy experiment is read-only"):
-        experiments.prepare_attempt(
-            *experiment, "extract_text", get_default("recipe", "extract_text")
-        )
 
 
 def test_invalid_sources_and_traversal_are_rejected(tmp_path):

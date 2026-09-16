@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 from test_experimentation import fixture_pdf
 
 import knowledge.experiments.experiment_runner as experiments
-from knowledge.experiments import experiment_store
 from knowledge.model_integration.prompt_registry import Recipe, get_default, get_revision
 from knowledge.runtime_support.environment_settings import Settings
 from knowledge.web_interface.fastapi_app import create_app
@@ -231,46 +230,6 @@ def test_invalid_model_recipe_or_parameters_do_not_leave_prompt_drafts(workbench
     assert response.status_code in {404, 422}, response.text
     assert get_revision("recipe", "extract_text") == before
     assert get_revision("prompt", recipe.prompt_name) == prompt_before
-
-
-def test_legacy_source_remains_readable_and_does_not_break_comparison(workbench):
-    client, root, token = workbench
-    run_id = source(client, token)
-    path = experiment_store.experiment_directory(root, run_id) / "manifest.json"
-    legacy = json.loads(path.read_text())
-    legacy.pop("version")
-    path.write_text(json.dumps(legacy))
-    assert client.get(f"/experiments/{run_id}").status_code == 200
-    assert client.get("/experiments/compare").status_code == 200
-    assert client.get(f"/experiments/{run_id}/export").status_code == 200
-    before = get_revision("recipe", "extract_text")
-    response = client.post(
-        f"/experiments/{run_id}/steps/extract_text", data=step_form(token, "extract_text")
-    )
-    assert response.status_code == 409
-    assert get_revision("recipe", "extract_text") == before
-
-
-def test_partial_cleanup_remains_visible_and_retriable_in_dashboard(workbench, monkeypatch):
-    client, root, token = workbench
-    run_id = source(client, token)
-    with monkeypatch.context() as failed_filesystem:
-
-        def fail_after_manifest_removed(path):
-            (path / "manifest.json").unlink()
-            raise PermissionError("simulated partial filesystem deletion")
-
-        failed_filesystem.setattr(
-            "knowledge.experiments.experiment_runner.shutil.rmtree", fail_after_manifest_removed
-        )
-        response = client.post(f"/experiments/{run_id}/delete", data={"csrf": token})
-        assert response.status_code == 422
-    assert client.get(f"/experiments/{run_id}").status_code == 200
-    assert client.get("/experiments/compare").status_code == 200
-    assert client.get(f"/experiments/{run_id}/pdf").status_code == 409
-    assert client.get(f"/experiments/{run_id}/export").status_code == 409
-    assert client.post(f"/experiments/{run_id}/delete", data={"csrf": token}).status_code == 200
-    assert experiments.list_experiments(root) == []
 
 
 def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeypatch):

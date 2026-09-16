@@ -9,7 +9,6 @@ from support import seed_article
 import knowledge.knowledge_base.review_records as review
 from knowledge.knowledge_base.knowledge_service import (
     AssessmentCommand,
-    CompareEvidence,
     EditNote,
     ReviewCommand,
 )
@@ -249,32 +248,3 @@ def test_claim_review_and_note_review_pin_evidence_set(application, article):
     with application.database.transaction() as ledger:
         assert review.status(ledger, ledger.get(references.claim.entity_id)) == "needs_review"
         assert review.status(ledger, ledger.get(references.zettel.entity_id)) == "needs_review"
-
-
-def test_comparison_is_atomic_on_invalid_second_quote(application, article):
-    references = import_article(application, article)
-    valid = Evidence(
-        claim=references.claim,
-        source=references.source,
-        page=1,
-        quote="No retention was measured.",
-        relation="qualifies",
-        rationale="Boundary",
-        directness="direct",
-        methodology="Same study",
-        limitations="Same data",
-    )
-    invalid = valid.model_copy(update={"quote": "Fabricated"})
-    with pytest.raises(ValueError):
-        application.import_comparison(
-            "compare",
-            "pilot",
-            CompareEvidence(
-                relations=[valid, invalid],
-                search_summary="Test",
-                selected_pages={},
-            ),
-            "hermes:test",
-        )
-    with application.database.transaction() as ledger:
-        assert len(ledger.list("pilot", "evidence")) == 1

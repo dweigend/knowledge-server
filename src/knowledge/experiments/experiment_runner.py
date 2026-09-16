@@ -59,8 +59,6 @@ def create_experiment(
 
 def read_attempts(archive_root: Path, experiment_id: str) -> list[dict]:
     """Read history and derive stale inputs against the latest successful attempts."""
-    if _cleanup_path(archive_root, experiment_id).exists():
-        return []
     directory = experiment_store.experiment_directory(archive_root, experiment_id)
     experiment_store.read_experiment(directory)
     attempts = sorted(
@@ -88,19 +86,12 @@ def read_attempts(archive_root: Path, experiment_id: str) -> list[dict]:
 
 
 def read_manifest(archive_root: Path, experiment_id: str) -> dict:
-    """Read the source and latest step statuses, retaining legacy metadata access."""
-    cleanup = _cleanup_path(archive_root, experiment_id)
-    if cleanup.exists():
-        return json.loads(cleanup.read_text())
+    """Read one current experiment with its latest step statuses."""
     directory = experiment_store.experiment_directory(archive_root, experiment_id)
-    payload = json.loads((directory / "manifest.json").read_text())
-    if payload.get("version") != 2:
-        return {**payload, "legacy": True, "status": "legacy", "steps": payload.get("steps", {})}
-    manifest = experiment_models.ExperimentManifest.model_validate(payload).model_dump(mode="json")
+    manifest = experiment_store.read_experiment(directory).model_dump(mode="json")
     attempts = read_attempts(archive_root, experiment_id)
     manifest["steps"] = {attempt["step"]: attempt for attempt in attempts}
     manifest["status"] = attempts[-1]["status"] if attempts else "created"
-    manifest["legacy"] = False
     return manifest
 
 
@@ -109,20 +100,19 @@ def list_experiments(archive_root: Path) -> list[dict]:
     root = experiment_store.experiments_root(archive_root)
     if not root.exists():
         return []
-    manifests = [
-        read_manifest(archive_root, path.name)
-        for path in root.iterdir()
-        if not path.name.startswith(".")
-        and not path.is_symlink()
-        and path.is_dir()
-        and (path / "manifest.json").exists()
-    ]
-    listed = {manifest["id"] for manifest in manifests}
-    manifests.extend(
-        json.loads(path.read_text())
-        for path in (root / ".cleanup").glob("*.json")
-        if path.stem not in listed
-    )
+    manifests = []
+    for path in root.iterdir():
+        manifest_path = path / "manifest.json"
+        if (
+            path.name.startswith(".")
+            or path.is_symlink()
+            or not path.is_dir()
+            or not manifest_path.exists()
+        ):
+            continue
+        if json.loads(manifest_path.read_text()).get("version") != 2:
+            continue
+        manifests.append(read_manifest(archive_root, path.name))
     return sorted(
         manifests,
         key=lambda manifest: manifest["created_at"],
@@ -200,8 +190,6 @@ def prepare_attempt(
         raise ValueError("Recipe differs from its saved immutable revision")
     with experiment_store.experiment_lock(archive_root, experiment_id):
         directory = experiment_store.experiment_directory(archive_root, experiment_id)
-        if _cleanup_path(archive_root, experiment_id).exists():
-            raise application_errors.Conflict("Experiment cleanup is pending; retry deletion")
         manifest = experiment_store.read_experiment(directory)
         attempts = read_attempts(archive_root, experiment_id)
         if any(attempt["status"] in {"queued", "running"} for attempt in attempts):
@@ -318,8 +306,6 @@ def execute_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> 
     """Execute one pinned attempt while excluding concurrent workers and deletion."""
     with experiment_store.experiment_lock(archive_root, experiment_id):
         directory = experiment_store.experiment_directory(archive_root, experiment_id)
-        if _cleanup_path(archive_root, experiment_id).exists():
-            raise application_errors.Conflict("Experiment cleanup is pending; retry deletion")
         path = experiment_store.attempt_directory(directory, attempt_id)
         if (path / "result.json").exists():
             return experiment_store.read_attempt(path)
@@ -362,7 +348,6 @@ def request_cancel(archive_root: Path, experiment_id: str, attempt_id: str) -> N
     path = experiment_store.attempt_directory(directory, attempt_id)
     if (path / "result.json").exists():
         raise application_errors.Conflict("Completed attempts cannot be cancelled")
-    # Exclusive creation never recreates a directory concurrently removed by cleanup.
     try:
         with (path / "cancel.json").open("x") as stream:
             json.dump({"requested_at": experiment_store.now()}, stream)
@@ -393,41 +378,13 @@ def recover_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> 
 
 
 def delete_experiment(archive_root: Path, experiment_id: str) -> None:
-    """Remove only this run's files and allow cleanup retries after a filesystem error."""
+    """Remove one idle experiment directory."""
     experiment_store.validate_id(experiment_id)
     with experiment_store.experiment_lock(archive_root, experiment_id):
         directory = experiment_store.experiments_root(archive_root) / experiment_id
-        marker = _cleanup_path(archive_root, experiment_id)
         if not directory.exists():
-            marker.unlink(missing_ok=True)
             return
-        directory = experiment_store.experiment_directory(archive_root, experiment_id)
-        manifest = read_manifest(archive_root, experiment_id)
-        cleanup = {
-            "id": experiment_id,
-            "filename": manifest["filename"],
-            "created_at": manifest.get("created_at", experiment_store.now()),
-            "legacy": False,
-            "cleanup_pending": True,
-            "status": "cleanup_pending",
-            "steps": {},
-        }
-        atomic_json_files.write_json_atomically(marker, cleanup)
-        try:
-            shutil.rmtree(directory)
-        except OSError as failure:
-            atomic_json_files.write_json_atomically(
-                marker, {**cleanup, "status": "cleanup_failed", "error": str(failure)}
-            )
-            raise ValueError(
-                f"Experiment cleanup incomplete; retry deletion: {failure}"
-            ) from failure
-        marker.unlink()
-
-
-def _cleanup_path(archive_root: Path, experiment_id: str) -> Path:
-    experiment_store.validate_id(experiment_id)
-    return experiment_store.experiments_root(archive_root) / ".cleanup" / f"{experiment_id}.json"
+        shutil.rmtree(experiment_store.experiment_directory(archive_root, experiment_id))
 
 
 def read_attempt_trace(archive_root: Path, experiment_id: str, attempt_id: str) -> list[dict]:
@@ -490,15 +447,7 @@ def _trace_event(directory: Path, event: dict) -> dict:
 
 def export_experiment(archive_root: Path, experiment_id: str) -> dict:
     """Return an explicitly requested private report without writing repository files."""
-    directory = experiment_store.experiment_directory(archive_root, experiment_id)
     manifest = read_manifest(archive_root, experiment_id)
-    if manifest["legacy"]:
-        return {
-            "manifest": manifest,
-            "legacy_files": {
-                path.name: json.loads(path.read_text()) for path in directory.glob("*.json")
-            },
-        }
     attempts = read_attempts(archive_root, experiment_id)
     for attempt in attempts:
         attempt["events"] = read_attempt_trace(archive_root, experiment_id, attempt["id"])

@@ -17,16 +17,14 @@ from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import environment_settings
 from knowledge.source_workflows import (
     document_extraction_worker,
-    evidence_comparison,
     note_consolidation,
-    pilot_source_import,
     source_import,
 )
 from knowledge.system_maintenance import backup_and_restore, zotero_source_migration
 
 
 def create_parser() -> argparse.ArgumentParser:
-    """Declare the pilot commands and their shared command-line options."""
+    """Declare knowledge commands and their shared command-line options."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "command",
@@ -38,8 +36,6 @@ def create_parser() -> argparse.ArgumentParser:
             "consolidate",
             "import",
             "migrate-zotero",
-            "pilot",
-            "compare",
             "export",
             "backup",
             "read",
@@ -50,7 +46,6 @@ def create_parser() -> argparse.ArgumentParser:
         ],
     )
     parser.add_argument("--batch", default=environment_settings.DEFAULT_BATCH)
-    parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--entity")
     parser.add_argument("--revision", type=int)
@@ -67,13 +62,11 @@ def create_parser() -> argparse.ArgumentParser:
 
 
 def validate_arguments(parser: argparse.ArgumentParser, arguments: argparse.Namespace) -> None:
-    """Reject missing output paths and unsupported pilot sizes before dispatch."""
+    """Reject missing paths required by the selected command."""
     if arguments.command in {"consolidate", "import"} and arguments.output is None:
         parser.error("--output is required for the private run log")
     if arguments.command == "import" and arguments.input is None:
         parser.error("import requires --input manifest.json")
-    if arguments.command == "pilot" and not 1 <= arguments.limit <= 10:
-        parser.error("--limit must be 1..10")
     if arguments.command in {"backup", "export"} and arguments.output is None:
         parser.error(f"{arguments.command} requires --output")
     if arguments.command == "extract" and arguments.entity is None:
@@ -131,8 +124,8 @@ def dispatch_command(
     if arguments.command in {"extract", "extract-worker", "annotate-document"}:
         run_document_command(application, settings, arguments)
         return
-    if arguments.command in {"pilot", "import", "consolidate", "compare"}:
-        run_workflow(application, settings, arguments)
+    if arguments.command in {"import", "consolidate"}:
+        run_workflow(application, arguments)
         return
     if arguments.command in {"init", "migrate-zotero", "backup", "export"}:
         run_storage_command(application, settings, arguments)
@@ -169,13 +162,9 @@ def run_document_command(
 
 def run_workflow(
     application: knowledge_service.Knowledge,
-    settings: environment_settings.Settings,
     arguments: argparse.Namespace,
 ) -> None:
-    """Run the selected import or evidence workflow through its existing entry point."""
-    if arguments.command == "pilot":
-        pilot_source_import.run_pilot(settings, arguments.batch, arguments.limit)
-        return
+    """Run the selected source workflow through its existing entry point."""
     if arguments.command == "import":
         source_import.import_manifest(
             application, arguments.batch, arguments.input, arguments.output
@@ -183,12 +172,6 @@ def run_workflow(
         return
     if arguments.command == "consolidate":
         note_consolidation.consolidate(application, arguments.batch, arguments.output)
-        return
-    evidence_comparison.enrich(
-        application,
-        arguments.batch,
-        settings.archive_root / arguments.batch,
-    )
 
 
 def run_storage_command(

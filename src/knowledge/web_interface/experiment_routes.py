@@ -139,9 +139,7 @@ def save_step_configuration(step: str, form: FormData) -> prompt_registry.Config
 
 def selected_attempt(root: Path, run_id: str, attempt_id: str) -> dict:
     """Resolve one attempt only within its owned experiment."""
-    manifest = experiments.read_manifest(root, run_id)
-    if manifest.get("legacy") or manifest.get("cleanup_pending"):
-        raise application_errors.Missing("This source has no current experiment attempts")
+    experiments.read_manifest(root, run_id)
     for attempt in experiments.read_attempts(root, run_id):
         if attempt["id"] == attempt_id:
             return attempt
@@ -296,8 +294,6 @@ def experiment_router(  # noqa: C901
             raise ValueError("Unknown pipeline step")
         rows = []
         for run in experiments.list_experiments(root):
-            if run.get("legacy") or run.get("cleanup_pending"):
-                continue
             attempts = [a for a in experiments.read_attempts(root, run["id"]) if a["step"] == step]
             if attempts:
                 rows.append({"run": run, "attempts": attempts})
@@ -362,22 +358,19 @@ def experiment_router(  # noqa: C901
     def detail(request: Request, run_id: str) -> HTMLResponse:
         """Read source-specific results and dependency state without executing steps."""
         manifest = experiments.read_manifest(root, run_id)
-        unavailable = manifest.get("legacy") or manifest.get("cleanup_pending")
-        attempts = [] if unavailable else experiments.read_attempts(root, run_id)
+        attempts = experiments.read_attempts(root, run_id)
         return render(
             request,
             "experiments.html",
             experiment=manifest,
             runs=experiments.list_experiments(root),
-            cards=[] if unavailable else step_cards(attempts),
+            cards=step_cards(attempts),
         )
 
     @router.get("/{run_id}/pdf")
     def pdf(run_id: str) -> FileResponse:
         """Serve the owned source PDF for manual evidence inspection."""
-        manifest = experiments.read_manifest(root, run_id)
-        if manifest.get("cleanup_pending"):
-            raise application_errors.Conflict("Source cleanup is pending; retry deletion")
+        experiments.read_manifest(root, run_id)
         source = experiment_store.experiment_directory(root, run_id) / "source.pdf"
         if not source.is_file():
             raise application_errors.Missing("Original experiment PDF is no longer available")
@@ -392,11 +385,7 @@ def experiment_router(  # noqa: C901
     ) -> RedirectResponse:
         """Save the submitted recipe and optionally run exactly one explicit step."""
         form = await checked_form(request, csrf_token)
-        manifest = experiments.read_manifest(root, run_id)
-        if manifest.get("legacy") or manifest.get("cleanup_pending"):
-            raise application_errors.Conflict(
-                "This source is read-only; create a new experiment or finish cleanup"
-            )
+        experiments.read_manifest(root, run_id)
         action = str(form.get("action", "save"))
         if action not in {"run", "save"}:
             raise ValueError("Choose whether to save the recipe or run the step")
@@ -434,9 +423,7 @@ def experiment_router(  # noqa: C901
 
     @router.get("/{run_id}/export")
     def export(run_id: str) -> JSONResponse:
-        """Export only on explicit request, preserving a report outside experiment cleanup."""
-        if experiments.read_manifest(root, run_id).get("cleanup_pending"):
-            raise application_errors.Conflict("Cleanup is pending; results may already be removed")
+        """Export an experiment report only on explicit request."""
         return JSONResponse(
             experiments.export_experiment(root, run_id),
             headers={"Content-Disposition": f'attachment; filename="experiment-{run_id}.json"'},

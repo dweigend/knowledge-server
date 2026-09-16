@@ -37,14 +37,6 @@ class AssessmentCommand(models.Contract):
     expected: models.Reference | None = None
 
 
-class CompareEvidence(models.Contract):
-    """Import selected cross-source evidence with its search coverage."""
-
-    relations: list[models.Evidence]
-    search_summary: str
-    selected_pages: dict[str, list[int]]
-
-
 class Knowledge:
     """Coordinate domain writes within one idempotent database transaction."""
 
@@ -136,26 +128,6 @@ class Knowledge:
                     actor,
                     command.expected,
                 )
-            ],
-        )
-
-    def import_comparison(
-        self,
-        request_id: str,
-        batch_id: str,
-        command: CompareEvidence,
-        actor: str,
-    ) -> list[models.Reference]:
-        """Accept every comparison relation or roll back the entire request."""
-        return self.database.command(
-            request_id,
-            batch_id,
-            "compare",
-            command,
-            actor,
-            lambda ledger: [
-                claim_evidence_records.link(ledger, batch_id, relation, actor)
-                for relation in command.relations
             ],
         )
 

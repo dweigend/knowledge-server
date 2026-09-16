@@ -14,8 +14,6 @@ def literature_catalog(root: Path) -> list[dict]:
     """Group stable work identities while retaining each document's citation observations."""
     catalog: dict[str, dict] = {}
     for source in list_experiments(root):
-        if source.get("legacy") or source.get("cleanup_pending"):
-            continue
         attempts = [
             attempt
             for attempt in read_attempts(root, source["id"])

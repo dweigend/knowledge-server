@@ -22,7 +22,7 @@ from knowledge.runtime_support import atomic_json_files
 
 ConfigKind = Literal["prompt", "recipe", "author_rules"]
 KINDS = ("prompt", "recipe", "author_rules")
-PACKAGED_PROMPTS = ("import", "reconcile", "grounding", "consolidate", "compare", "assess")
+PACKAGED_PROMPTS = ("import", "reconcile", "grounding", "consolidate", "assess")
 PACKAGED_PROMPT_ROOT = Path(__file__).with_name("prompts")
 Step = Literal[
     "extract_text",

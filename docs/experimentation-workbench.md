@@ -208,9 +208,9 @@ Private run directories live beside the archive under `experiments/`. Source
 copies, knowledge snapshots, attempt inputs, outputs and traces belong to the
 experiment. Saved configurations live in `KNOWLEDGE_CONFIGURATION_ROOT` (or the
 private default configuration path) and survive deletion. Explicit report files
-written outside the run directory also survive. Cleanup only removes owned
-files, records partial failure separately and permits retry. Legacy first-slice
-runs can be exported/deleted; recreate a source to use immutable attempts.
+written outside the run directory also survive. Cleanup directly removes the
+owned experiment directory. Runs from older manifest formats are omitted from
+the workbench.
 
 The MVP has no human-rating form or review API. Earlier private review files
 remain untouched until their experiment is deleted; new attempt views and
@@ -226,7 +226,7 @@ forms to obtain a fresh form token.
 
 Automated coverage includes exact spans, tampered inputs/results, coherent
 dependency lineage, stale propagation, actual subprocess cancellation/timeouts,
-recovery, cleanup retries, optimistic configuration revisions, form
+recovery, isolated cleanup, optimistic configuration revisions, form
 protection and shared main/workbench domain calls. Database tests require the
 isolated test database described in `AGENTS.md`; fixtures isolate the private
 configuration registry too. Model test doubles validate integration, not quality.

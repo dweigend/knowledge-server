@@ -75,10 +75,10 @@ def experiment_lock(archive_root: Path, experiment_id: str) -> Iterator[None]:
 
 
 def read_experiment(directory: Path) -> experiment_models.ExperimentManifest:
-    """Read the supported manifest or explain how to preserve a legacy run."""
+    """Read a manifest in the current experiment format."""
     payload = json.loads((directory / "manifest.json").read_text())
     if payload.get("version") != 2:
-        raise ValueError("Legacy experiment is read-only; export its files and create a new run")
+        raise ValueError("Experiment manifest version is unsupported")
     return experiment_models.ExperimentManifest.model_validate(payload)
 
 
