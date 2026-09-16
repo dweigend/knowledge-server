@@ -75,8 +75,8 @@ PROMPT_SEEDS = {
 STEP_DEFAULTS: dict[Step, tuple[str, str, dict[str, JsonValue]]] = {
     "extract_text": (
         "extract",
-        "extraction.v3",
-        {"document_provider": "grobid", "literature_provider": "crossref"},
+        "extraction.v4",
+        {"document_provider": "grobid", "literature_provider": "discovery"},
     ),
     "segment_blocks": ("segment", "blocks.v1", {"mode": "model", "max_characters": 2000}),
     "formulate_claims": ("import", "claims.v1", {}),
@@ -395,7 +395,9 @@ def seed_defaults() -> None:
                 step=step,
                 prompt_name=prompt_name,
                 prompt_revision=active_revision(prompt_directory),
-                model=structured_generation.ModelConfiguration().resolved(),
+                model=structured_generation.ModelConfiguration(
+                    reasoning_effort="low" if step == "extract_text" else "max"
+                ).resolved(),
                 parameters=parameters,
                 output_schema=schema,
             )

@@ -243,7 +243,7 @@ def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeyp
     save_revision(
         "recipe",
         "extract_text",
-        {**previous.payload, "output_schema": "extraction.v1", "parameters": {}},
+        {**previous.payload, "output_schema": "extraction.v3", "parameters": {}},
         previous.revision,
     )
     monkeypatch.setattr(
@@ -262,9 +262,9 @@ def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeyp
     assert response.status_code == 200, response.text
     attempt = experiments.read_attempts(root, run_id)[0]
     assert attempt["status"] == "completed", attempt["error"]
-    assert attempt["recipe"]["payload"]["output_schema"] == "extraction.v3"
+    assert attempt["recipe"]["payload"]["output_schema"] == "extraction.v4"
     assert "Ada Lovelace" in response.text
-    assert "Run this step with Crossref matching" in response.text
+    assert "Run this step with literature matching" in response.text
     assert "<h1>A paper</h1>" in response.text
     assert "Original page text" not in response.text
     assert "PDF page 1" not in response.text
@@ -333,3 +333,191 @@ def test_source_records_link_context_and_export_network_without_queries_on_read(
     assert len(occurrences) == 2
     assert {occurrence["section"] for occurrence in occurrences} == {"Introduction", "Details"}
     assert len(requests) == request_count
+
+
+def discovery_form(token):
+    return {
+        **step_form(token, "extract_text", "save"),
+        "document_provider": "grobid",
+        "service_url": "http://localhost:8070",
+        "literature_provider": "discovery",
+        "discovery_settings": "1",
+        "discovery_providers": "dnb, openlibrary",
+        "discovery_max_requests": "12",
+        "discovery_max_requests_per_reference": "3",
+        "discovery_max_model_calls": "0",
+        "discovery_model_timeout_seconds": "30",
+        "discovery_required_fields": "title, authors, year",
+        "discovery_retry_generation": "2",
+        "discovery_find_open_access": "on",
+        "model": "test-search-model",
+        "provider": "test-provider",
+        "reasoning_effort": "high",
+    }
+
+
+def test_discovery_settings_save_and_survive_legacy_provider_selection(workbench):
+    from knowledge.literature.reference_discovery_models import DiscoverySettings
+
+    client, root, token = workbench
+    run_id = source(client, token)
+    url = f"/experiments/{run_id}/steps/extract_text"
+    previous_default = get_default("recipe", "extract_text")
+    response = client.post(url, data=discovery_form(token))
+    assert response.status_code == 200, response.text
+    saved = get_revision("recipe", "extract_text")
+    recipe = Recipe.model_validate(saved.payload)
+    settings = DiscoverySettings.model_validate(recipe.parameters["discovery"]).model_dump()
+    assert settings == {
+        "providers": ["dnb", "openlibrary"],
+        "max_requests": 12,
+        "max_requests_per_reference": 3,
+        "max_model_calls": 0,
+        "model_timeout_seconds": 30,
+        "required_fields": ["title", "authors", "year"],
+        "retry_generation": 2,
+        "find_open_access": True,
+    }
+    assert recipe.output_schema == "extraction.v4"
+    assert 'name="discovery_retry_generation" min="0" value="2"' in response.text
+    form = {
+        **step_form(token, "extract_text", "save"),
+        "document_provider": "grobid",
+        "service_url": "http://localhost:8070",
+        "literature_provider": "crossref",
+    }
+    assert client.post(url, data=form).status_code == 200
+    legacy_recipe = Recipe.model_validate(get_revision("recipe", "extract_text").payload)
+    assert legacy_recipe.parameters["discovery"] == settings
+    assert legacy_recipe.model.model == "test-search-model"
+    assert legacy_recipe.model.provider == "test-provider"
+    assert legacy_recipe.model.reasoning_effort == "high"
+    assert get_default("recipe", "extract_text") == previous_default
+    assert experiments.read_attempts(root, run_id) == []
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        {"discovery_providers": "unknown"},
+        {"discovery_max_requests": "-1"},
+        {"discovery_retry_generation": "-1"},
+        {"discovery_required_fields": "unknown"},
+    ],
+)
+def test_invalid_discovery_settings_do_not_save_revisions(workbench, invalid):
+    client, _, token = workbench
+    run_id = source(client, token)
+    before = get_revision("recipe", "extract_text")
+    recipe = Recipe.model_validate(before.payload)
+    prompt = get_revision("prompt", recipe.prompt_name)
+    response = client.post(
+        f"/experiments/{run_id}/steps/extract_text",
+        data={**discovery_form(token), **invalid},
+    )
+    assert response.status_code == 422, response.text
+    assert get_revision("recipe", "extract_text") == before
+    assert get_revision("prompt", recipe.prompt_name) == prompt
+
+
+def test_discovery_trace_and_historical_output_render_without_network(workbench, monkeypatch):
+    from test_grobid import TEI
+
+    from knowledge.literature.grobid_parser import parse_paper_tei
+
+    client, root, token = workbench
+    run_id = source(client, token)
+    base = f"/experiments/{run_id}"
+    assert client.post(f"{base}/steps/extract_text", data=step_form(token, "extract_text"))
+    attempts = experiments.read_attempts(root, run_id)
+    attempts[0]["output"]["paper"] = parse_paper_tei(TEI).model_dump()
+    attempts[0]["output"].pop("discovery", None)
+    monkeypatch.setattr(experiments, "read_attempts", lambda *args: attempts)
+
+    def unexpected_request(*args, **kwargs):
+        raise AssertionError("GET must not request literature or document services")
+
+    monkeypatch.setattr("knowledge.literature.crossref_client.request_json", unexpected_request)
+    monkeypatch.setattr("knowledge.literature.grobid_client.request_tei", unexpected_request)
+    saved = get_revision("recipe", "extract_text")
+    legacy = client.get(base)
+    assert legacy.status_code == 200
+    assert "A paper" in legacy.text
+    assert "Discovery search trace" not in legacy.text
+    attempts[0]["output"]["bibliography"] = {
+        "original_count": 12,
+        "detected_count": 19,
+        "resulting_count": 19,
+        "status": "needs_review",
+        "model_status": "completed",
+        "cache_reused": True,
+        "unresolved_issues": ["Citation targets require review."],
+    }
+    attempts[0]["output"]["discovery"] = {
+        "requests": 3,
+        "cache_hits": 2,
+        "model_calls": 0,
+        "warnings": ["Request budget exhausted."],
+        "searches": [
+            {
+                "reference_id": "b0",
+                "trigger": "unmatched",
+                "queries": [
+                    {
+                        "provider": "dnb",
+                        "query": "A book",
+                        "status": "success",
+                        "cached": True,
+                        "message": "No candidate found.",
+                        "candidate_count": 0,
+                    }
+                ],
+            }
+        ],
+    }
+    page = client.get(base)
+    assert page.status_code == 200, page.text
+    assert "3 requests · 2 cache hits · 0 model calls" in page.text
+    assert "Discovery search trace" in page.text
+    assert "12 extracted · 19 detected in text · 19 retained" in page.text
+    assert "Citation targets require review." in page.text
+    assert "Request budget exhausted." in page.text
+    assert "No candidate found." in page.text
+    assert "dnb · success · cached" in page.text
+    assert get_revision("recipe", "extract_text") == saved
+
+
+@pytest.mark.parametrize(
+    "address,visible",
+    [
+        ("https://example.org/open?article=1&format=pdf", True),
+        ("http://example.org/open", True),
+        ("javascript:alert(1)", False),
+        ("data:text/html,unsafe", False),
+        ("//example.org/open", False),
+        (None, False),
+    ],
+)
+def test_open_access_links_allow_only_explicit_web_urls(workbench, monkeypatch, address, visible):
+    from knowledge.literature import literature_resolution
+    from knowledge.literature.structured_paper_models import PaperReference
+
+    client, _, _ = workbench
+    reference = PaperReference(id="b0", title="An open work")
+    record = literature_resolution.build_record(
+        reference, literature_resolution.resolve_reference(reference, []), "source", "reference"
+    )
+    record.metadata.open_access_url = address
+    record.metadata.open_access_pdf_url = address
+    monkeypatch.setattr(
+        "knowledge.experiments.experiment_literature_catalog.literature_catalog",
+        lambda *args: [{"record": record, "documents": []}],
+    )
+    response = client.get("/experiments/literature")
+    assert response.status_code == 200, response.text
+    assert ("Open-access version ↗" in response.text) is visible
+    assert ("Open-access PDF ↗" in response.text) is visible
+    if visible:
+        assert f'href="{address.replace("&", "&amp;")}"' in response.text
+    elif address:
+        assert address not in response.text

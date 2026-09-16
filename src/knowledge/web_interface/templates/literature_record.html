@@ -6,9 +6,13 @@
 <p class="caption">{{ record.metadata.work_type or 'Publication type unknown' }}{% if record.metadata.doi %} · <a href="https://doi.org/{{ record.metadata.doi|urlencode }}" target="_blank" rel="noopener noreferrer">Publisher record ↗</a>{% endif %}</p>
 {% if record.metadata.isbn %}<p class="caption">ISBN: {{ record.metadata.isbn|join(', ') }}</p>{% endif %}
 {% if record.metadata.issn %}<p class="caption">ISSN: {{ record.metadata.issn|join(', ') }}</p>{% endif %}
+{% for field, label in [('open_access_url', 'Open-access version'), ('open_access_pdf_url', 'Open-access PDF')] %}
+{% set address = record.metadata[field] %}
+{% if address is string and (address.startswith('https://') or address.startswith('http://')) %}<p class="caption"><a href="{{ address }}" target="_blank" rel="noopener noreferrer">{{ label }} ↗</a></p>{% endif %}
+{% endfor %}
 {% if record.missing_fields %}<p class="caption">Missing: {{ record.missing_fields|join(', ') }}</p>{% endif %}
 {% if record.resolution.status != 'matched' %}<p class="notice">{{ record.resolution.message }}</p>{% endif %}
 <details><summary>Used here · {{ record.occurrences|length }}</summary>{% for occurrence in record.occurrences %}<div class="citation-occurrence"><p><strong>{{ occurrence.marker }}</strong>{% if occurrence.section %} · {{ occurrence.section }}{% endif %}</p><blockquote>{{ occurrence.context or 'No citation context extracted.' }}</blockquote>{% if occurrence.coordinates %}<p class="caption">PDF coordinates: {{ occurrence.coordinates }}</p>{% endif %}</div>{% else %}<p class="caption">No in-text citation linked to this record.</p>{% endfor %}</details>
-<details><summary>Matching evidence</summary><p class="caption">{{ record.resolution.message }} · {{ record.resolution.checked_at }}</p><code>{{ record.id }}</code>{% for original in record.extracted %}<blockquote>{{ original.raw or original.title or original.id }}</blockquote>{% endfor %}{% for candidate in record.resolution.candidates %}<p class="caption">{{ candidate.metadata.title }} · {{ candidate.metadata.year or '?' }} · {{ candidate.provider_id }}</p>{% endfor %}</details>
+<details><summary>Matching evidence</summary><p class="caption">{{ record.resolution.message }} · {{ record.resolution.checked_at }}</p><code>{{ record.id }}</code>{% for original in record.extracted %}<blockquote>{{ original.raw or original.title or original.id }}</blockquote>{% endfor %}{% for candidate in record.resolution.candidates %}<p class="caption">{{ candidate.metadata.title }} · {{ candidate.metadata.year or '?' }} · {{ candidate.provider }} · {{ candidate.provider_id }}</p>{% endfor %}</details>
 <a href="/experiments/literature?work_id={{ record.id|urlencode }}">See usage across documents →</a>
 </article>

@@ -36,6 +36,8 @@ def extract_text(
         execution.output_directory,
         cancelled=execution.cancelled,
         timeout_seconds=execution.recipe.model.timeout_seconds,
+        configuration=execution.recipe.model,
+        cache_directory=execution.pdf.parent / "reference-cache",
     )
 
 

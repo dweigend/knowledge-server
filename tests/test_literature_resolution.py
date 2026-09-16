@@ -281,3 +281,52 @@ def test_bibliographic_query_uses_raw_reference_when_title_is_missing(monkeypatc
     ref = PaperReference(id="b1", raw="Smith (2020). Full original reference.")
     crossref_client.lookup_crossref(ref, 2, lambda: False)
     assert parse_qs(urlsplit(urls[0]).query)["query.bibliographic"] == [ref.raw]
+
+
+@pytest.mark.parametrize(
+    "extracted_author, catalog_author",
+    [
+        ("Grunwald A", "Armin Grunwald"),
+        ("Gethmann C F", "Carl Friedrich Gethmann"),
+        ("Grunwald, A.", "Armin Grunwald"),
+    ],
+)
+def test_author_surnames_match_with_trailing_initials(extracted_author, catalog_author):
+    from knowledge.literature.literature_resolution import candidate_matches
+
+    original = reference().model_copy(update={"authors": [extracted_author]})
+    found = candidate()
+    found.metadata.authors = [catalog_author]
+    assert candidate_matches(original, found)
+
+
+def test_matching_given_name_does_not_confirm_different_author_surname():
+    from knowledge.literature.literature_resolution import candidate_matches
+
+    original = reference().model_copy(update={"authors": ["Alice Smith"]})
+    found = candidate()
+    found.metadata.authors = ["Alice Jones"]
+    assert not candidate_matches(original, found)
+
+
+@pytest.mark.parametrize(
+    "source_title, candidate_title, returned_isbn, expected",
+    [
+        (None, "Nachhaltigkeit", "9783593379784", True),
+        ("Nachhaltigkeit", "Nachhaltigkeit", "9783593413990", False),
+        ("Different book", "Nachhaltigkeit", "9783593379784", False),
+    ],
+)
+def test_exact_isbn_requires_matching_identifier_and_no_title_conflict(
+    source_title, candidate_title, returned_isbn, expected
+):
+    from knowledge.literature.literature_resolution import candidate_matches
+
+    original = PaperReference(id="isbn", title=source_title, raw="ISBN 3-593-37978-3")
+    found = Candidate(
+        provider="dnb",
+        provider_id="edition-one",
+        method="isbn",
+        metadata=LiteratureMetadata(title=candidate_title, isbn=[returned_isbn]),
+    )
+    assert candidate_matches(original, found) is expected

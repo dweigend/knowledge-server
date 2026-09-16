@@ -16,8 +16,10 @@ from pydantic import ConfigDict, Field, model_validator
 from knowledge.document_processing import pdf_text_extraction
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.literature import literature_models, structured_paper_models
+from knowledge.literature.reference_discovery_models import DiscoveryReport
 from knowledge.model_integration import structured_generation
 from knowledge.runtime_support import workflow_event_log
+from knowledge.source_workflows.bibliography_recovery_models import BibliographyAudit
 
 EXTRACTION_METHOD = "pdftotext reading-order; v3"
 MAX_INPUT_CHARACTERS = 120000
@@ -41,6 +43,8 @@ class TextExtraction(models.Contract):
     method: str = Field(min_length=1)
     paper: structured_paper_models.PaperDocument | None = None
     literature: list[literature_models.LiteratureRecord] = Field(default_factory=list)
+    discovery: DiscoveryReport | None = None
+    bibliography: BibliographyAudit | None = None
 
     @model_validator(mode="after")
     def validate_revision(self) -> Self:

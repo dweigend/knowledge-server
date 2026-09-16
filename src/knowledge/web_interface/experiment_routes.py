@@ -80,6 +80,41 @@ def step_cards(attempts: list[dict]) -> list[dict]:
     return cards
 
 
+def extraction_form_parameters(form: FormData, previous: dict) -> dict:
+    """Preserve saved extraction settings while applying explicit form edits."""
+    parameters = dict(previous)
+    parameters["document_provider"] = required_text(form, "document_provider")
+    parameters["literature_provider"] = str(form.get("literature_provider", "discovery"))
+    if parameters["document_provider"] == "grobid":
+        parameters["service_url"] = required_text(form, "service_url")
+    else:
+        parameters.pop("service_url", None)
+        parameters["literature_provider"] = "none"
+    if "discovery_settings" not in form:
+        return parameters
+
+    discovery = dict(parameters.get("discovery", {}))
+    for name in ("providers", "required_fields"):
+        discovery[name] = [
+            entry.strip()
+            for entry in required_text(form, f"discovery_{name}", allow_empty=True).split(",")
+            if entry.strip()
+        ]
+    for name in (
+        "max_requests",
+        "max_requests_per_reference",
+        "max_model_calls",
+        "retry_generation",
+    ):
+        discovery[name] = int(required_text(form, f"discovery_{name}"))
+    discovery["model_timeout_seconds"] = float(
+        required_text(form, "discovery_model_timeout_seconds")
+    )
+    discovery["find_open_access"] = form.get("discovery_find_open_access") == "on"
+    parameters["discovery"] = discovery
+    return parameters
+
+
 def save_step_configuration(step: str, form: FormData) -> prompt_registry.ConfigRevision:
     """Save typed prompt and recipe revisions with explicit optimistic revision checks."""
     if step not in STEP_LABELS:
@@ -94,11 +129,11 @@ def save_step_configuration(step: str, form: FormData) -> prompt_registry.Config
     if prompt_registry.get_revision("prompt", recipe.prompt_name).revision != prompt_revision:
         raise application_errors.Conflict("Prompt changed in another page; reload before saving.")
     configuration = structured_generation.ModelConfiguration(
-        model=str(form.get("model", "")) or None,
-        provider=str(form.get("provider", "")) or None,
+        model=str(form.get("model", recipe.model.model or "")) or None,
+        provider=str(form.get("provider", recipe.model.provider or "")) or None,
         reasoning_effort=cast(
             structured_generation.ReasoningEffort,
-            str(form.get("reasoning_effort", "max")),
+            str(form.get("reasoning_effort", recipe.model.reasoning_effort)),
         ),
         max_attempts=int(str(form.get("max_attempts", "2"))),
         timeout_seconds=float(str(form.get("timeout_seconds", "240"))),
@@ -106,10 +141,7 @@ def save_step_configuration(step: str, form: FormData) -> prompt_registry.Config
     )
     parameters = json.loads(str(form.get("parameters", "{}")))
     if step == "extract_text" and "document_provider" in form:
-        parameters = {"document_provider": required_text(form, "document_provider")}
-        if parameters["document_provider"] == "grobid":
-            parameters["service_url"] = required_text(form, "service_url")
-            parameters["literature_provider"] = str(form.get("literature_provider", "crossref"))
+        parameters = extraction_form_parameters(form, recipe.parameters)
     rules_name = str(form.get("author_rules_name", "")) or None
     rules_revision = int(required_text(form, "author_rules_revision")) if rules_name else None
     updated = prompt_registry.Recipe(

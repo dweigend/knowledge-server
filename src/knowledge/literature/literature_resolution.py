@@ -18,6 +18,7 @@ from knowledge.literature import literature_models
 from knowledge.literature import (
     structured_paper_models as papers,
 )
+from knowledge.literature.bibliographic_identifiers import extracted_isbn, normalize_isbn
 from knowledge.literature.crossref_client import lookup_crossref, normalize_doi
 
 Lookup = Callable[
@@ -39,7 +40,7 @@ def title_matches(original: papers.PaperMetadata, candidate: literature_models.C
     """Require strong title agreement even when an extracted DOI exists."""
     left, right = normalized_words(original.title), normalized_words(candidate.metadata.title)
     if not left or not right:
-        if candidate.method == "doi":
+        if candidate.method in {"doi", "isbn"}:
             return not left
         raw = normalized_words(original.raw) if isinstance(original, papers.PaperReference) else ""
         return len(right) >= 20 and len(right.split()) >= 3 and f" {right} " in f" {raw} "
@@ -61,27 +62,42 @@ def candidate_matches(
     if candidate.method == "doi":
         doi = normalize_doi(original.doi)
         return doi is not None and doi == normalize_doi(candidate.metadata.doi)
+    if candidate.method == "isbn":
+        isbn = extracted_isbn(original)
+        return isbn is not None and isbn in {
+            normalize_isbn(entry) for entry in candidate.metadata.isbn
+        }
     if not original.year or original.year != candidate.metadata.year or not original.authors:
         return False
     # Compare surnames independent of initials, retaining conservative year agreement.
-    surnames = {
-        normalized_words(author).split()[-1]
-        for author in candidate.metadata.authors
-        if normalized_words(author)
-    }
-    first_author = normalized_words(original.authors[0]).split()
-    return bool(first_author and first_author[-1] in surnames)
+    surnames = {author_surname(author) for author in candidate.metadata.authors}
+    first_author = author_surname(original.authors[0])
+    return bool(first_author and first_author in surnames)
+
+
+def author_surname(author: str) -> str:
+    """Recognize catalog commas and trailing initials without matching unrelated given names."""
+    words = normalized_words(author.split(",", 1)[0]).split()
+    if not words:
+        return ""
+    if "," in author or len(words[-1]) != 1:
+        return words[-1]
+    return next((word for word in reversed(words) if len(word) > 1), "")
 
 
 def resolve_reference(
     reference: papers.PaperReference, candidates: list[literature_models.Candidate]
 ) -> literature_models.Resolution:
     """Keep ambiguity and rejected candidates explicit instead of guessing an identity."""
-    matches = {
-        candidate.provider + ":" + candidate.provider_id.lower(): candidate
-        for candidate in candidates
-        if candidate_matches(reference, candidate)
-    }
+    matches: dict[str, literature_models.Candidate] = {}
+    for candidate in candidates:
+        if candidate_matches(reference, candidate):
+            identity = candidate_identity(candidate)
+            previous = matches.get(identity)
+            if previous is None or metadata_completeness(candidate) > metadata_completeness(
+                previous
+            ):
+                matches[identity] = candidate
     status = "matched" if len(matches) == 1 else "ambiguous" if len(matches) > 1 else "unmatched"
     accepted = next(iter(matches.values())) if status == "matched" else None
     return literature_models.Resolution(
@@ -98,6 +114,17 @@ def resolve_reference(
         if accepted
         else candidates,
     )
+
+
+def candidate_identity(candidate: literature_models.Candidate) -> str:
+    """Group matching DOI records across providers without conflating book editions."""
+    doi = normalize_doi(candidate.metadata.doi)
+    return f"doi:{doi}" if doi else candidate.provider + ":" + candidate.provider_id.lower()
+
+
+def metadata_completeness(candidate: literature_models.Candidate) -> int:
+    """Prefer the richest corroborated response for the same persistent identity."""
+    return sum(bool(field) for field in candidate.metadata.model_dump().values())
 
 
 def lookup_resolution(

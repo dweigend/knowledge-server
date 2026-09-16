@@ -12,7 +12,9 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 from knowledge.literature import grobid_client, literature_resolution, structured_paper_models
-from knowledge.source_workflows import information_block_extraction
+from knowledge.literature.reference_discovery_models import DiscoverySettings
+from knowledge.model_integration.structured_generation import ModelConfiguration
+from knowledge.source_workflows import information_block_extraction, reference_discovery
 
 
 class PaperAnalyzer(Protocol):
@@ -34,8 +36,9 @@ class PaperAnalyzer(Protocol):
 def validate_paper_parameters(parameters: dict) -> None:
     """Reject unsupported analyzers and malformed service locations before execution."""
     literature = parameters.get("literature_provider", "none")
-    if not isinstance(literature, str) or literature not in {"none", "crossref"}:
-        raise ValueError("literature_provider must be crossref or none")
+    if not isinstance(literature, str) or literature not in {"none", "crossref", "discovery"}:
+        raise ValueError("literature_provider must be discovery, crossref or none")
+    DiscoverySettings.model_validate(parameters.get("discovery", {}))
     provider = parameters.get("document_provider", "poppler")
     if not isinstance(provider, str) or provider not in {"poppler", "grobid"}:
         raise ValueError("document_provider must be grobid or poppler")
@@ -63,6 +66,8 @@ def extract_paper_document(
     timeout_seconds: float,
     cancelled: Callable[[], bool],
     analyzer: PaperAnalyzer = grobid_client.extract_paper,
+    configuration: ModelConfiguration | None = None,
+    cache_directory: Path | None = None,
 ) -> information_block_extraction.TextExtraction:
     """Preserve exact page evidence and attach provider-neutral document analysis."""
     validate_paper_parameters(parameters)
@@ -85,6 +90,29 @@ def extract_paper_document(
     if hashlib.sha256(pdf.read_bytes()).hexdigest() != extraction.pdf_sha256:
         raise ValueError("PDF changed during paper analysis")
     save_paper_artifacts(paper, output_directory)
+    if parameters.get("literature_provider") == "discovery":
+        remaining = timeout_seconds - (monotonic() - started)
+        if remaining <= 0:
+            raise TimeoutError("Paper extraction exceeded its time limit")
+        result = reference_discovery.discover_references(
+            paper,
+            list(extraction.pages),
+            extraction.pdf_sha256,
+            output_directory,
+            cache_directory or output_directory / "reference-cache",
+            settings=DiscoverySettings.model_validate(parameters.get("discovery", {})),
+            configuration=configuration or ModelConfiguration(),
+            timeout_seconds=max(0.1, remaining - 1),
+            cancelled=cancelled,
+        )
+        return extraction.model_copy(
+            update={
+                "paper": result.paper.model_copy(update={"raw_document": None}),
+                "literature": result.literature,
+                "discovery": result.report,
+                "bibliography": result.bibliography,
+            }
+        )
     records = []
     if parameters.get("literature_provider") == "crossref":
         records = literature_resolution.enrich_paper(

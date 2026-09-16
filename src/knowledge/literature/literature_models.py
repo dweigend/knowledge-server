@@ -22,6 +22,8 @@ class LiteratureMetadata(papers.PaperMetadata):
     url: str | None = None
     isbn: list[str] = Field(default_factory=list)
     issn: list[str] = Field(default_factory=list)
+    open_access_url: str | None = None
+    open_access_pdf_url: str | None = None
 
 
 class Candidate(BaseModel):
@@ -31,7 +33,7 @@ class Candidate(BaseModel):
     metadata: LiteratureMetadata
     provider: str
     provider_id: str
-    method: Literal["doi", "bibliographic"]
+    method: Literal["doi", "isbn", "bibliographic"]
 
 
 class Resolution(BaseModel):

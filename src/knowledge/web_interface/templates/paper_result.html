@@ -1,12 +1,26 @@
 {% if result.paper %}
 {% set paper = result.paper %}
+{% if result.bibliography is defined and result.bibliography %}
+{% set bibliography = result.bibliography %}
+<p class="caption">Bibliography · {{ bibliography.original_count }} extracted · {{ bibliography.detected_count }} detected in text · {{ bibliography.resulting_count }} retained · {{ bibliography.status }}</p>
+<details><summary>Bibliography recovery</summary><p class="caption">Model: {{ bibliography.model_status }}{% if bibliography.cache_reused %} · cached{% endif %}</p>{% for issue in bibliography.unresolved_issues %}<p class="notice">{{ issue }}</p>{% endfor %}</details>
+{% endif %}
+{% if result.discovery is defined and result.discovery %}
+<p class="caption">Discovery · {{ result.discovery.requests }} requests · {{ result.discovery.cache_hits }} cache hits · {{ result.discovery.model_calls }} model calls</p>
+{% for warning in result.discovery.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
+<details><summary>Discovery search trace</summary>
+{% for search in result.discovery.searches %}<details><summary>{{ search.reference_id }} · {{ search.trigger }}</summary>
+{% for query in search.queries %}<p class="caption">{{ query.provider }} · {{ query.status }}{% if query.cached %} · cached{% endif %} · {{ query.candidate_count }} candidates</p><blockquote>{{ query.query }}</blockquote>{% if query.message %}<p class="caption">{{ query.message }}</p>{% endif %}{% endfor %}
+</details>{% else %}<p class="caption">No searches recorded.</p>{% endfor %}
+</details>
+{% endif %}
 {% if result.literature %}
 {% set source_records = result.literature|selectattr('role', 'equalto', 'source')|list %}
 {% if source_records %}{% set record = source_records[0] %}{% include 'literature_record.html' %}{% endif %}
 <details open><summary>Cited sources · {{ result.literature|rejectattr('role', 'equalto', 'source')|list|length }}</summary>
 {% for record in result.literature %}{% if record.role != 'source' %}{% include 'literature_record.html' %}{% endif %}{% endfor %}
 </details>
-{% else %}<h3>{{ paper.metadata.title or 'Title not identified' }}</h3><p>{{ paper.metadata.authors|join(', ') }}</p><p class="notice">Run this step with Crossref matching to build source records and citation contexts.</p>{% endif %}
+{% else %}<h3>{{ paper.metadata.title or 'Title not identified' }}</h3><p>{{ paper.metadata.authors|join(', ') }}</p><p class="notice">Run this step with literature matching to build source records and citation contexts.</p>{% endif %}
 <details><summary>PDF extraction notes</summary>{% for warning in paper.warnings %}<p class="caption">{{ warning }}</p>{% endfor %}</details>
 <details open><summary>Document</summary><div class="paper-document">{{ paper.markdown|paper_markdown }}</div></details>
 <details><summary>Markdown source</summary><pre class="paper-source">{{ paper.markdown }}</pre></details>

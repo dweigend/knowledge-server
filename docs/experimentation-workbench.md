@@ -9,9 +9,15 @@ render the application.
 ## Document extraction
 
 Step 1 supports GROBID document analysis and an explicit Poppler-only baseline.
-New registries start with GROBID. Existing recipes remain immutable; saving the
-step creates an `extraction.v3` recipe. Old results stay readable, and downstream
+New registries start with GROBID and fallback literature discovery. Existing
+recipes remain immutable; saving the step creates an `extraction.v4` recipe.
+Old results stay readable, and downstream
 results become stale only after a successful rerun.
+
+Discovery runs can also report a bibliography recovery audit: the original
+analyzer count, independently detected text entries, retained entries, model
+status and unresolved issues. Recovered counts are evidence for manual review,
+not a guarantee that every reference or citation target is correct.
 
 The UI shows continuous document content, without individual page panels.
 GROBID processes the complete PDF and returns original document structure as
@@ -41,8 +47,9 @@ success. The HTTP client honors cancellation and the overall step deadline;
 remote computation
 may continue after its connection is closed.
 GROBID consolidation is disabled. A separate Crossref adapter now reconciles
-paper metadata and bibliography when `literature_provider` is `crossref` (the
-new default). Only bibliographic fields and identifiers are sent to Crossref;
+paper metadata and bibliography when `literature_provider` is `crossref` or
+`discovery`. Discovery adds bounded fallback searches after this first pass.
+Only bibliographic fields and identifiers are sent to Crossref;
 PDF content and citation contexts stay in the private experiment. Reads contact
 neither service.
 
@@ -79,12 +86,67 @@ also removes its observations from this view; nothing is silently accepted into
 the permanent knowledge database. The reusable contracts provide the foundation
 for that later integration without a separate persistent graph database.
 
-Crossref requests are sequential, cached within the run, individually bounded to
+In Crossref-only mode, requests are sequential, cached within the run, individually bounded to
 15 seconds and subject to the overall step budget. HTTP 429 stops further lookup
 requests in that run. A failed lookup remains visible on its source record.
 Crossref coverage and GROBID reference extraction are incomplete, particularly
 for older books: the interface does not claim all records are complete simply
 because execution finished.
+
+## Fallback discovery
+
+Select **Crossref + fallback discovery** to search additional catalogs when the
+initial resolution is unmatched, ambiguous or failed, or required metadata remains
+missing. The default required fields are title, authors and year. A successful
+Crossref match with those fields does not need another search. Additional
+catalogs do not replace PDF evidence or prove bibliography completeness.
+When a citation has a checksum-validated ISBN and no valid DOI, discovery tries
+a direct book-catalog lookup first. ISBN-10 and ISBN-13 identify the same edition
+after normalization; conflicting editions remain unresolved.
+
+`source_workflows/reference_discovery.py` is the callable workflow boundary;
+provider clients, grounded bibliography recovery and persistent search caching
+remain separate modules. Discovery preserves the exact PDF text revision.
+The completeness audit recognizes author/year and numbered bibliographies with
+explicit headings. Unrecognized layouts remain a review issue rather than a
+claim of complete extraction. Recovered references retain exact page spans;
+ambiguous citation targets stay unresolved.
+
+New extraction recipes use low reasoning effort for bounded metadata parsing.
+The existing Hermes runtime is required only when model assistance is needed;
+configure `KNOWLEDGE_HERMES_PYTHON` on the machine running the worker. Missing
+runtimes and timed-out model requests remain visible and cached, while grounded
+extraction and catalog results are retained. No model or network request runs
+when viewing an existing result.
+
+Advanced controls pin the provider order, request budgets, model-call budget,
+model timeout, required fields and search revision in the recipe. Defaults are
+DNB, OpenAlex and Open Library; Semantic Scholar and Google Books are optional.
+Optional credentials are listed in `.env.example`. Open-access lookup is opt-in;
+Unpaywall requires a contact email. Credentials are environment settings, never
+part of recipes or exported search traces.
+
+The default fallback limits are 40 requests per run, 5 per reference and 2 model
+calls, with a 60-second model timeout. The overall step deadline still applies.
+Model assistance may propose bounded search queries; candidates must pass the
+bibliographic identity checks before becoming confirmed records. Neither a model
+response nor an open-access URL is sufficient evidence for an identity.
+
+Search results are cached within the source experiment, including unsuccessful
+searches, so an ordinary rerun does not repeat unchanged failed queries
+indefinitely. Increase **Search revision**
+to explicitly retry negative cache entries. Confirmed complete references and
+successful bibliography recovery remain cached across search revisions.
+Changing budgets alone does not clear negative entries.
+The result shows request, cache-hit and model-call totals, warnings
+and a collapsed per-reference trace of provider, query, status and candidate count.
+Reading a result never starts another search. Provider failures and exhausted
+budgets remain visible; unresolved sources are retained for review.
+
+Existing saved recipes are not rewritten or activated automatically. Saving a
+legacy recipe creates a new `extraction.v4` revision; historical outputs without
+discovery reports remain readable. Selecting Crossref-only or extraction-only
+keeps the saved discovery settings available for a later run.
 
 ## Shared operations and boundaries
 
