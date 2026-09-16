@@ -1,12 +1,13 @@
 import hashlib
 import json
+from typing import cast
 from uuid import UUID
 
 import pytest
 
 from knowledge.experiments import experiment_step_catalog
 from knowledge.experiments.experiment_steps import document_steps
-from knowledge.experiments.pipeline_specification import StepExecution
+from knowledge.experiments.pipeline_specification import StepExecution, StepInputs
 from knowledge.knowledge_domain.knowledge_record_models import (
     Bibliography,
     Claim,
@@ -90,14 +91,13 @@ def step_execution(pdf, inputs, knowledge, recipe, output_directory, cancelled=l
         if recipe.author_rules_name and recipe.author_rules_revision
         else None
     )
+    validated_inputs = {
+        name: experiment_step_catalog.get_step_definition(name).output_contract.model_validate(output)
+        for name, output in inputs.items()
+    }
     return StepExecution(
         pdf=pdf,
-        inputs={
-            name: experiment_step_catalog.get_step_definition(name).output_contract.model_validate(
-                output
-            )
-            for name, output in inputs.items()
-        },
+        inputs=cast(StepInputs, validated_inputs),
         knowledge=knowledge,
         recipe=recipe,
         prompt_text=prompt,
