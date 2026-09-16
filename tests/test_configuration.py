@@ -11,7 +11,7 @@ def test_settings_use_configured_locations(tmp_path, monkeypatch):
     monkeypatch.setenv("KNOWLEDGE_DATABASE_URL", "dbname=example")
     monkeypatch.setenv("KNOWLEDGE_ARCHIVE_ROOT", str(tmp_path / "archive"))
 
-    settings = Settings.from_environment()
+    settings = Settings()
 
     assert settings.database_url == "dbname=example"
     assert settings.archive_root == tmp_path / "archive"

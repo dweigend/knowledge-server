@@ -33,6 +33,39 @@ Do not decode a document into a `dict`, validate individual pieces and then
 rebuild the same contract. Use `model_validate_json()` for one model and a
 reused `TypeAdapter` for a bare list, mapping or union.
 
+## Simplification mandate
+
+Pydantic is not an additional abstraction layer. It replaces parallel data
+representations, manual shape validation and repeated serialization logic. A
+refactor is only a simplification when the canonical model removes more
+dictionary plumbing, validators, compatibility branches and helper code than it
+introduces.
+
+All durable or module-spanning application data belongs to one of five concepts:
+
+1. `Record` represents revisioned domain knowledge.
+2. `ConfigurationRevision` represents one immutable typed configuration.
+3. `ExperimentManifest` represents one isolated experiment.
+4. `AttemptSpecification` represents one immutable execution request.
+5. `AttemptResult` represents one terminal outcome.
+
+Concrete domain payloads and step configurations are discriminated variants of
+these concepts, not additional generic envelopes. External provider formats are
+temporary adapter inputs and must not become a second internal representation.
+
+The following are architecture violations:
+
+- passing an unvalidated provider or persisted `dict` across a module boundary;
+- storing the same discriminator independently in an envelope and its payload;
+- parsing JSON into a dictionary before validating a model that can validate the
+  JSON directly;
+- validating the same document again in downstream workflow steps;
+- keeping both legacy and canonical readers after a migration is complete;
+- adding a wrapper, validator framework or service layer when Pydantic or an
+  installed library already provides the required operation;
+- introducing more permanent infrastructure than the old validation and
+  compatibility code being removed.
+
 ## Model policies and field types
 
 There are only two general schema policies:
@@ -196,6 +229,31 @@ class names, field names, field constraints and model docstrings can change
 include those schemas, so such edits deliberately invalidate affected prepared
 attempts or caches and require a versioned compatibility decision.
 
+## Iterative implementation method
+
+Each migration is implemented as a small vertical slice. Before changing code,
+read the current official documentation for Pydantic, FastAPI and any affected
+library, then inspect existing project utilities and installed dependencies.
+Prefer, in order: existing project code, an extension of existing code, the
+standard library, an installed dependency and a documented library feature.
+Custom parsing, validation infrastructure or wrappers are the final option.
+
+For every slice:
+
+1. identify one current boundary and its duplicate representations;
+2. introduce or reuse the canonical Pydantic contract at the owning boundary;
+3. migrate every caller to retain that typed value;
+4. delete the replaced dictionaries, casts, validators and compatibility paths;
+5. verify stored JSON, canonical hashes and generated JSON Schema;
+6. run formatting, linting, type checks and focused tests;
+7. update this document and the implementation-status table.
+
+A temporary compatibility path is allowed only inside the migration that removes
+it. Stored data is migrated and verified before the old reader is deleted.
+Changes should normally remove more executable code than they add. If a slice
+adds significant infrastructure without deleting an existing representation or
+validation path, reconsider the design before continuing.
+
 ## Implementation status
 
 | Area | Status |
@@ -208,7 +266,7 @@ attempts or caches and require a versioned compatibility decision.
 | Immutable attempt specification and terminal result union | Pending |
 | Explicit typed step inputs | Pending |
 | Canonical bibliography and private provider DTOs | Pending |
-| Central `BaseSettings` configuration | Pending |
+| Central `BaseSettings` configuration | Server paths implemented; provider/tool settings pending |
 
 ## Architecture checklist
 

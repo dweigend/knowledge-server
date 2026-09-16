@@ -35,7 +35,9 @@ def test_pdf_viewer_pins_revision_and_preserves_raw_endpoint(
     pdf = tmp_path / "source.pdf"
     pdf.write_bytes(b"%PDF-test")
     monkeypatch.setattr(zotero, "verified_pdf", lambda source, variant: pdf)
-    client = TestClient(create_app(Settings(application.database.database_url, tmp_path)))
+    client = TestClient(
+        create_app(Settings(database_url=application.database.database_url, archive_root=tmp_path))
+    )
     path = f"/sources/{first.entity_id}/{variant}"
 
     page = client.get(f"{path}/view?revision=1")

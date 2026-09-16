@@ -200,7 +200,7 @@ def main() -> None:
     """Load configuration, validate arguments and run the selected command."""
     parser = create_parser()
     arguments = parser.parse_args()
-    settings = environment_settings.Settings.from_environment()
+    settings = environment_settings.Settings()
     application = knowledge_service.Knowledge(
         postgresql_revision_store.Database(settings.database_url)
     )

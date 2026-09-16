@@ -56,7 +56,7 @@ def citation_links(text: str) -> Markup:
 # Route registration groups short endpoints; C901 also counts their branches.
 def create_app(settings: environment_settings.Settings | None = None) -> FastAPI:  # noqa: C901
     """Configure the local review interface and its application dependencies."""
-    settings = settings or environment_settings.Settings.from_environment()
+    settings = settings or environment_settings.Settings()
     database = postgresql_revision_store.Database(settings.database_url)
     application = knowledge_service.Knowledge(database)
     app = FastAPI(title="Knowledge pilot", docs_url=None, redoc_url=None)
