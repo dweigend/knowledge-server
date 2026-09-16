@@ -8,14 +8,15 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
 from pydantic import Field
 
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import structured_generation
 
-MAX_RETRIEVAL_RECORDS = 40
-MAX_KNOWLEDGE_CHARACTERS = 120000
+MAX_RETRIEVAL_RECORDS: Final[int] = 40
+MAX_KNOWLEDGE_CHARACTERS: Final[int] = 120000
 
 
 class RetrievalHit(models.Contract):

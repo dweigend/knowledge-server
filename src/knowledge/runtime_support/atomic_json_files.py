@@ -9,8 +9,10 @@ import os
 import tempfile
 from pathlib import Path
 
+from pydantic import JsonValue
 
-def write_json_atomically(path: Path, content: dict) -> None:
+
+def write_json_atomically(path: Path, content: dict[str, JsonValue]) -> None:
     """Publish a complete private JSON file and flush its directory entry."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent)

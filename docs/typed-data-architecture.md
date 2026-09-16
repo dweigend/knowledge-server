@@ -36,6 +36,30 @@ preserved; runtime settings gain their own schema. Source edits intentionally
 change the existing code fingerprint used by experiments. Production Hermes/OCR
 acceptance remains separate from fixture tests; the local Hermes runtime is absent.
 
+## Python annotations
+
+Use `Final[int]`, `Final[str]` and other concrete types for module constants that
+must not be rebound. `Literal` describes a restricted set of accepted values,
+such as provider names; it is not a substitute for constant declarations. A
+`Final` binding does not make the contents of a list or dictionary immutable.
+
+Keep function inputs and results concrete where their shape is known. Reuse
+existing Pydantic models for structured boundaries and `Mapping[str, object]`
+for untrusted objects that are immediately validated. Use `JsonValue` only for
+actual JSON values, not database rows or template contexts containing Python
+objects. Dynamic third-party payloads need schema work rather than unchecked
+casts or annotations that merely conceal missing validation.
+
+Pydantic schemas, FastAPI response handling, stored JSON and model-request hashes
+must remain stable during annotation-only changes. An annotation that changes
+runtime validation is a contract change and needs separate review.
+
+The annotation review covers application modules and test support. Remaining
+dynamic dictionaries are concentrated in external Docling/Marker/Zotero payloads,
+heterogeneous PostgreSQL rows, Jinja view contexts and merged experiment inspection
+results. Replacing these requires concrete boundary contracts; no blanket casts,
+type-check suppressions or misleading JSON annotations were added.
+
 ## Reference discovery
 
 Document extraction now validates recipe parameters once into

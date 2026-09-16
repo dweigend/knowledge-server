@@ -5,19 +5,19 @@ without importing the Docling runtime.
 """
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Final
 
 from knowledge.document_processing import document_models, extraction_quality
 
-ITEM_COLLECTIONS = ("texts", "tables", "pictures", "groups")
-SECTION_KINDS = {
+ITEM_COLLECTIONS: Final[tuple[str, ...]] = ("texts", "tables", "pictures", "groups")
+SECTION_KINDS: Final[dict[str, str]] = {
     "abstract": "abstract",
     "zusammenfassung": "abstract",
     "references": "reference",
     "bibliography": "reference",
     "literaturverzeichnis": "reference",
 }
-BLOCK_KINDS = {
+BLOCK_KINDS: Final[dict[str, str]] = {
     "section_header": "heading",
     "title": "heading",
     "picture": "figure",

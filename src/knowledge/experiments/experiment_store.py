@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 
 from knowledge.experiments import experiment_models
 from knowledge.knowledge_domain import application_errors
@@ -159,4 +160,4 @@ def code_fingerprint() -> experiment_models.CodeFingerprint:
     )
 
 
-LOADED_CODE = code_fingerprint()
+LOADED_CODE: Final[experiment_models.CodeFingerprint] = code_fingerprint()

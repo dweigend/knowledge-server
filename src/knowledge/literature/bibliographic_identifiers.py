@@ -1,13 +1,14 @@
 """Validate supplied ISBN evidence without inferring missing bibliographic facts."""
 
 import re
+from typing import Final
 
 from knowledge.literature.literature_models import LiteratureMetadata
 from knowledge.literature.structured_paper_models import PaperMetadata, PaperReference
 
-ISBN_LABEL = re.compile(r"\bISBN(?:-1[03])?\s*:?\s*", re.IGNORECASE)
-ISBN_13 = re.compile(r"(?<!\d)97[89](?:[\s-]*\d){10}(?!\d)")
-ISBN_10 = re.compile(r"\d(?:[\s-]*\d){8}[\s-]*[\dXx](?!\d)")
+ISBN_LABEL: Final[re.Pattern[str]] = re.compile(r"\bISBN(?:-1[03])?\s*:?\s*", re.IGNORECASE)
+ISBN_13: Final[re.Pattern[str]] = re.compile(r"(?<!\d)97[89](?:[\s-]*\d){10}(?!\d)")
+ISBN_10: Final[re.Pattern[str]] = re.compile(r"\d(?:[\s-]*\d){8}[\s-]*[\dXx](?!\d)")
 
 
 def normalize_isbn(identifier: str | None) -> str | None:

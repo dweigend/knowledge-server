@@ -8,13 +8,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Final
 from urllib.error import HTTPError
 from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from knowledge.knowledge_domain import knowledge_record_models as models
 
-BASE_URL = os.environ.get("KNOWLEDGE_ZOTERO_URL", "http://127.0.0.1:23119").rstrip("/")
+BASE_URL: Final[str] = os.environ.get("KNOWLEDGE_ZOTERO_URL", "http://127.0.0.1:23119").rstrip("/")
 
 
 def server_id() -> str:

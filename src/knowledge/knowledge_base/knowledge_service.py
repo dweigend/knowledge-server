@@ -40,7 +40,7 @@ class AssessmentCommand(models.Contract):
 class Knowledge:
     """Coordinate domain writes within one idempotent database transaction."""
 
-    def __init__(self, database: store.Database):
+    def __init__(self, database: store.Database) -> None:
         """Use the supplied database for all application commands."""
         self.database = database
 

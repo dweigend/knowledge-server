@@ -4,6 +4,8 @@ Each entry owns its label, dependencies, parameters, output schema, contract,
 and executor so callers cannot observe inconsistent parallel registries.
 """
 
+from typing import Final
+
 from knowledge.experiments import pipeline_specification
 from knowledge.experiments.experiment_steps import (
     document_steps,
@@ -18,7 +20,7 @@ from knowledge.source_workflows import (
     structured_paper_extraction,
 )
 
-STEP_DEFINITIONS = {
+STEP_DEFINITIONS: Final[dict[str, pipeline_specification.StepDefinition]] = {
     definition.name: definition
     for definition in (
         pipeline_specification.StepDefinition(

@@ -5,7 +5,7 @@ stores inspectable artifacts for downstream steps.
 """
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from time import monotonic
 from typing import Protocol
@@ -32,14 +32,14 @@ class PaperAnalyzer(Protocol):
         ...
 
 
-def validate_paper_parameters(parameters: dict) -> None:
+def validate_paper_parameters(parameters: Mapping[str, object]) -> None:
     """Reject unsupported analyzers and malformed service locations before execution."""
     PaperExtractionSettings.model_validate(parameters)
 
 
 def extract_paper_document(
     pdf: Path,
-    parameters: dict,
+    parameters: Mapping[str, object],
     output_directory: Path,
     *,
     timeout_seconds: float,

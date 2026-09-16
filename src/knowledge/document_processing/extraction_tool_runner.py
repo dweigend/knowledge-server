@@ -10,12 +10,13 @@ import subprocess
 import sys
 from pathlib import Path
 from time import monotonic
+from typing import Final
 from uuid import uuid4
 
 from knowledge.runtime_support import workflow_event_log as events
 
-RASTER_DPI = 200
-TOOL_TIMEOUT_SECONDS = 7200
+RASTER_DPI: Final[int] = 200
+TOOL_TIMEOUT_SECONDS: Final[int] = 7200
 
 
 def run_tool(arguments: list[str], directory: Path, runtime_root: Path) -> None:

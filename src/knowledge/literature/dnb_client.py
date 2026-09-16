@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Callable
+from typing import Final
 from urllib.parse import urlencode
 from xml.etree import ElementTree as ET
 
@@ -12,8 +13,8 @@ from knowledge.literature.literature_resolution import author_surname
 from knowledge.literature.provider_http import MAX_CANDIDATES, request_bytes
 from knowledge.literature.structured_paper_models import PaperMetadata
 
-API_URL = "https://services.dnb.de/sru/dnb"
-MARC = "{http://www.loc.gov/MARC21/slim}"
+API_URL: Final[str] = "https://services.dnb.de/sru/dnb"
+MARC: Final[str] = "{http://www.loc.gov/MARC21/slim}"
 
 
 def lookup_dnb(

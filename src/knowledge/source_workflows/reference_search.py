@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from time import monotonic, sleep
+from typing import Final
 
 from knowledge.literature import literature_resolution
 from knowledge.literature import reference_discovery_models as models
@@ -15,10 +16,10 @@ from knowledge.literature.literature_models import Candidate
 from knowledge.literature.structured_paper_models import PaperMetadata, PaperReference
 from knowledge.runtime_support.atomic_json_files import write_json_atomically
 
-CACHE_VERSION = "reference-search.v3"
-MIN_REQUEST_INTERVAL_SECONDS = 1
-CANCELLATION_POLL_SECONDS = 0.05
-MIN_LOOKUP_SECONDS = 0.001
+CACHE_VERSION: Final[str] = "reference-search.v3"
+MIN_REQUEST_INTERVAL_SECONDS: Final[int] = 1
+CANCELLATION_POLL_SECONDS: Final[float] = 0.05
+MIN_LOOKUP_SECONDS: Final[float] = 0.001
 
 
 def request_key(provider: str, reference: PaperMetadata, retry_generation: int) -> str:

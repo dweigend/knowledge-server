@@ -11,7 +11,7 @@ import shutil
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 from uuid import uuid4
 
 from knowledge.experiments import (
@@ -24,7 +24,7 @@ from knowledge.knowledge_domain import application_errors, knowledge_record_mode
 from knowledge.model_integration import prompt_registry
 from knowledge.runtime_support import atomic_json_files
 
-MAX_PDF_BYTES = 64 * 1024 * 1024
+MAX_PDF_BYTES: Final[int] = 64 * 1024 * 1024
 
 
 def create_experiment(

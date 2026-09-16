@@ -7,6 +7,7 @@ validated results through application commands.
 import hashlib
 import tempfile
 from pathlib import Path
+from typing import Final
 
 from pydantic import TypeAdapter
 
@@ -17,7 +18,7 @@ from knowledge.literature import zotero_client
 from knowledge.runtime_support import workflow_event_log
 from knowledge.source_workflows import article_claim_extraction, claim_reconciliation
 
-IMPORT_ACTOR = "hermes:import-v2"
+IMPORT_ACTOR: Final[str] = "hermes:import-v2"
 
 
 class ImportDocument(models.Contract):

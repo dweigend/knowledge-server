@@ -7,20 +7,21 @@ without bypassing application validation.
 import argparse
 import json
 from pathlib import Path
+from typing import Final
 from uuid import UUID
 
 from knowledge.document_processing import document_models, extraction_store
 from knowledge.knowledge_base import knowledge_service, review_records
 from knowledge.knowledge_domain import knowledge_record_models as models
 
-MUTATIONS = {
+MUTATIONS: Final[dict[str, type[models.Contract]]] = {
     "propose-note": models.Note,
     "edit-note": knowledge_service.EditNote,
     "link-evidence": models.Evidence,
     "assess": knowledge_service.AssessmentCommand,
 }
-SEARCH_PAGE_SIZE = 20
-TOOL_ACTOR = "hermes:knowledge-tool"
+SEARCH_PAGE_SIZE: Final[int] = 20
+TOOL_ACTOR: Final[str] = "hermes:knowledge-tool"
 
 
 def search_records(application: knowledge_service.Knowledge, arguments: argparse.Namespace) -> dict:

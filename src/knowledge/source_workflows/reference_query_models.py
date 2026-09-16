@@ -1,13 +1,15 @@
 """Define grounded query proposals and their typed source evidence."""
 
+from typing import Final
+
 from pydantic import BaseModel, Field, RootModel
 
 from knowledge.knowledge_domain.knowledge_record_models import Contract
 from knowledge.literature.literature_models import Candidate
 from knowledge.literature.structured_paper_models import PaperReference
 
-MAX_QUERY_REFERENCES = 50
-MAX_QUERY_CANDIDATES = 6
+MAX_QUERY_REFERENCES: Final[int] = 50
+MAX_QUERY_CANDIDATES: Final[int] = 6
 
 
 class ReferenceQuery(Contract):

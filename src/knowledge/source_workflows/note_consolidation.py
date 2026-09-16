@@ -8,6 +8,7 @@ import difflib
 import hashlib
 import json
 from pathlib import Path
+from typing import Final
 
 from pydantic import TypeAdapter
 
@@ -23,8 +24,8 @@ from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import workflow_event_log
 from knowledge.source_workflows import note_revision_proposals
 
-CONSOLIDATION_ACTOR = "hermes:consolidate-v1"
-REFERENCES = TypeAdapter(list[models.Reference])
+CONSOLIDATION_ACTOR: Final[str] = "hermes:consolidate-v1"
+REFERENCES: Final[TypeAdapter[list[models.Reference]]] = TypeAdapter(list[models.Reference])
 
 
 def apply_note_revision(

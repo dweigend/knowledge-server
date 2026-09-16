@@ -4,13 +4,14 @@ Both steps validate block references and keep author rules separate from source
 evidence so examples cannot silently become factual support.
 """
 
+from collections.abc import Mapping
 from typing import cast
 
 from knowledge.experiments import pipeline_specification
 from knowledge.source_workflows import source_grounded_writing
 
 
-def validate_writing_parameters(parameters: dict) -> None:
+def validate_writing_parameters(parameters: Mapping[str, object]) -> None:
     """Validate the optional writing goal."""
     goal = parameters.get("goal")
     if goal is not None and not isinstance(goal, str):

@@ -8,15 +8,16 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import structured_generation
 from knowledge.source_workflows import information_block_extraction
 
-MAX_WRITING_CHARACTERS = 120000
-BLOCK_CITATION = re.compile(r"\[block:(\d+)\]")
+MAX_WRITING_CHARACTERS: Final[int] = 120000
+BLOCK_CITATION: Final[re.Pattern[str]] = re.compile(r"\[block:(\d+)\]")
 
 
 class WritingPoint(models.Contract):
@@ -67,7 +68,7 @@ def prepare_writing_points(
     goal: str,
     extraction: information_block_extraction.TextExtraction,
     blocks: information_block_extraction.InformationBlocks,
-    context: dict,
+    context: dict[str, JsonValue],
     instructions: str,
     output_directory: Path,
     configuration: structured_generation.ModelConfiguration,
@@ -95,7 +96,7 @@ def draft_prose(
     points: WritingPoints,
     extraction: information_block_extraction.TextExtraction,
     blocks: information_block_extraction.InformationBlocks,
-    author_rules: dict,
+    author_rules: dict[str, JsonValue],
     instructions: str,
     output_directory: Path,
     configuration: structured_generation.ModelConfiguration,
@@ -125,7 +126,7 @@ def draft_prose(
     )
 
 
-def bounded_writing_packet(content: dict) -> str:
+def bounded_writing_packet(content: dict[str, JsonValue]) -> str:
     """Reject oversized writing context rather than silently truncating source evidence."""
     packet = json.dumps(
         {

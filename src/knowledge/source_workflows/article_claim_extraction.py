@@ -7,15 +7,16 @@ validates exact quotations without importing source registration or persistence.
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
-from pydantic import Field
+from pydantic import Field, JsonValue
 
 from knowledge.document_processing import pdf_text_extraction
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import prompt_registry, structured_generation
 from knowledge.runtime_support import workflow_event_log
 
-PAGE_BUDGET = 65000
+PAGE_BUDGET: Final[int] = 65000
 
 
 class ArticleExtraction(models.Contract):
@@ -76,7 +77,7 @@ def extract_document(
     instructions: str | None = None,
     configuration: structured_generation.ModelConfiguration | None = None,
     cancelled: Callable[[], bool] | None = None,
-    blocks_packet: dict | None = None,
+    blocks_packet: dict[str, JsonValue] | None = None,
     validate: Callable[[ArticleExtraction], None] | None = None,
 ) -> list[ArticleExtraction]:
     """Extract one inspectable contribution per complete page chunk."""

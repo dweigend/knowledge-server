@@ -12,7 +12,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from time import monotonic, sleep
-from typing import Literal
+from typing import Final, Literal
 
 from knowledge.literature import literature_models
 from knowledge.literature import (
@@ -24,8 +24,8 @@ from knowledge.literature.crossref_client import lookup_crossref, normalize_doi
 Lookup = Callable[
     [papers.PaperMetadata, float, Callable[[], bool]], list[literature_models.Candidate]
 ]
-MIN_REQUEST_INTERVAL = 0.5
-MAX_LOOKUP_SECONDS = 15
+MIN_REQUEST_INTERVAL: Final[float] = 0.5
+MAX_LOOKUP_SECONDS: Final[int] = 15
 
 
 def normalized_words(text: str | None) -> str:

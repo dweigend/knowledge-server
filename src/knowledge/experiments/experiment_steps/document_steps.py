@@ -4,6 +4,7 @@ The operations share exact source offsets but remain independent of experiment
 storage, production acceptance, Zotero, and database orchestration.
 """
 
+from collections.abc import Mapping
 from typing import cast
 
 from knowledge.experiments import pipeline_specification
@@ -16,7 +17,7 @@ from knowledge.source_workflows import (
 )
 
 
-def validate_segmentation_parameters(parameters: dict) -> None:
+def validate_segmentation_parameters(parameters: Mapping[str, object]) -> None:
     """Validate segmentation mode and maximum block size."""
     mode = parameters.get("mode", "paragraphs")
     if not isinstance(mode, str) or mode not in {"paragraphs", "model"}:

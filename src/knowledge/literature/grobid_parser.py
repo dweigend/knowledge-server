@@ -6,13 +6,14 @@ limitations without fabricating missing spans.
 
 import re
 from collections import Counter
+from typing import Final
 from xml.etree import ElementTree as ET
 
 from knowledge.literature import structured_paper_models as papers
 
-NS = {"tei": "http://www.tei-c.org/ns/1.0"}
-XML_ID = "{http://www.w3.org/XML/1998/namespace}id"
-MAX_TEI_BYTES = 32 * 1024 * 1024
+NS: Final[dict[str, str]] = {"tei": "http://www.tei-c.org/ns/1.0"}
+XML_ID: Final[str] = "{http://www.w3.org/XML/1998/namespace}id"
+MAX_TEI_BYTES: Final[int] = 32 * 1024 * 1024
 
 
 def element_text(element: ET.Element | None) -> str:

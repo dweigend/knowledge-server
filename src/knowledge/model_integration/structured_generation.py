@@ -11,14 +11,14 @@ import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import Field, ValidationError, model_validator
 
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.runtime_support import workflow_event_log as events
 
-HERMES_PYTHON = Path(
+HERMES_PYTHON: Final[Path] = Path(
     os.environ.get(
         "KNOWLEDGE_HERMES_PYTHON", str(Path.home() / ".hermes/hermes-agent/venv/bin/python")
     )

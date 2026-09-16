@@ -7,7 +7,7 @@ the shared experiment lifecycle without writing canonical knowledge.
 import json
 import secrets
 from pathlib import Path
-from typing import cast
+from typing import Final, cast
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -29,11 +29,11 @@ from knowledge.model_integration import prompt_registry, structured_generation
 from knowledge.runtime_support import environment_settings
 from knowledge.web_interface import paper_markdown_renderer
 
-STEP_LABELS = {
+STEP_LABELS: Final[dict[str, str]] = {
     name: definition.dashboard_label
     for name, definition in experiment_step_catalog.STEP_DEFINITIONS.items()
 }
-KNOWLEDGE_RECORDS = TypeAdapter(list[models.Record])
+KNOWLEDGE_RECORDS: Final[TypeAdapter[list[models.Record]]] = TypeAdapter(list[models.Record])
 
 
 def required_text(form: FormData, name: str, *, allow_empty: bool = False) -> str:

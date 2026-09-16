@@ -12,6 +12,7 @@ import sqlite3
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 from uuid import uuid4
 
 from psycopg.conninfo import make_conninfo
@@ -21,7 +22,7 @@ from knowledge.document_processing import document_models
 from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import environment_settings
 
-_MANIFEST = TypeAdapter(dict[str, str])
+_MANIFEST: Final[TypeAdapter[dict[str, str]]] = TypeAdapter(dict[str, str])
 
 
 def run_postgres(command: str, *arguments: str) -> None:

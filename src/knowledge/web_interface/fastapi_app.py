@@ -9,7 +9,7 @@ import re
 import secrets
 from html import escape
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Final
 from urllib.error import URLError
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -32,7 +32,7 @@ from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import environment_settings
 from knowledge.web_interface import experiment_routes, source_article_view
 
-STATUS_LABELS = {
+STATUS_LABELS: Final[dict[str, str]] = {
     "proposed": "Vorgeschlagen",
     "reviewed": "Geprüft",
     "revise": "Überarbeiten",

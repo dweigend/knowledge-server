@@ -4,7 +4,7 @@ These Pydantic contracts describe stable references, sources, claims, evidence,
 assessments, notes, reviews, and stored record envelopes.
 """
 
-from typing import Annotated, Literal, Self
+from typing import Annotated, Final, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -175,7 +175,7 @@ class ExtractedClaim(Contract):
     limitations: Text
 
 
-PAYLOAD_TYPES = {
+PAYLOAD_TYPES: Final[dict[Kind, type[Contract]]] = {
     "source": Source,
     "claim": Claim,
     "evidence": Evidence,

@@ -6,12 +6,13 @@ to the resolver.
 
 import re
 from collections.abc import Callable
+from typing import Final
 from urllib.parse import quote, urlencode
 
 from knowledge.literature import crossref_models, literature_models, structured_paper_models
 from knowledge.literature.provider_http import MAX_CANDIDATES, request_model
 
-API_URL = "https://api.crossref.org/works"
+API_URL: Final[str] = "https://api.crossref.org/works"
 
 
 def normalize_doi(doi: str | None) -> str | None:

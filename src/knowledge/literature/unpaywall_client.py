@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Callable
+from typing import Final
 from urllib.parse import quote, urlencode, urlsplit
 
 from pydantic import BaseModel
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 from knowledge.literature.crossref_client import normalize_doi
 from knowledge.literature.provider_http import request_model
 
-API_URL = "https://api.unpaywall.org/v2"
+API_URL: Final[str] = "https://api.unpaywall.org/v2"
 
 
 class OpenAccessLocation(BaseModel):

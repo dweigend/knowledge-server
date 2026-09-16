@@ -12,7 +12,7 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
@@ -21,9 +21,15 @@ from knowledge.model_integration import structured_generation
 from knowledge.runtime_support import atomic_json_files
 
 ConfigKind = Literal["prompt", "recipe", "author_rules"]
-KINDS = ("prompt", "recipe", "author_rules")
-PACKAGED_PROMPTS = ("import", "reconcile", "grounding", "consolidate", "assess")
-PACKAGED_PROMPT_ROOT = Path(__file__).with_name("prompts")
+KINDS: Final[tuple[ConfigKind, ...]] = ("prompt", "recipe", "author_rules")
+PACKAGED_PROMPTS: Final[tuple[str, ...]] = (
+    "import",
+    "reconcile",
+    "grounding",
+    "consolidate",
+    "assess",
+)
+PACKAGED_PROMPT_ROOT: Final[Path] = Path(__file__).with_name("prompts")
 Step = Literal[
     "extract_text",
     "segment_blocks",
@@ -34,7 +40,7 @@ Step = Literal[
     "prepare_writing",
     "draft_text",
 ]
-PROMPT_SEEDS = {
+PROMPT_SEEDS: Final[dict[str, str]] = {
     "extract": "Extract the PDF text deterministically. No model is called for this step.",
     "segment": (
         "Group supplied extracted text into coherent information blocks. Return only the requested "
@@ -72,7 +78,7 @@ PROMPT_SEEDS = {
         "do not add facts or use examples as evidence. Return only the requested JSON schema."
     ),
 }
-STEP_DEFAULTS: dict[Step, tuple[str, str, dict[str, JsonValue]]] = {
+STEP_DEFAULTS: Final[dict[Step, tuple[str, str, dict[str, JsonValue]]]] = {
     "extract_text": (
         "extract",
         "extraction.v4",

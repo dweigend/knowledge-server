@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 from html import escape, unescape
 from pathlib import Path
+from typing import Final
 from urllib.error import URLError
 from urllib.parse import quote, urlparse
 from uuid import UUID
@@ -24,9 +25,9 @@ from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.literature import zotero_client as zotero
 from knowledge.revision_store import postgresql_revision_store
 
-PREVIEW_DPI = 100
-LABEL_CHARACTER_LIMIT = 160
-RELATION_LABELS = {
+PREVIEW_DPI: Final[int] = 100
+LABEL_CHARACTER_LIMIT: Final[int] = 160
+RELATION_LABELS: Final[dict[str, str]] = {
     "supports": "stützt",
     "contradicts": "widerspricht",
     "qualifies": "schränkt ein",

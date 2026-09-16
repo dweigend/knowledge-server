@@ -3,6 +3,7 @@
 import os
 import re
 from collections.abc import Callable
+from typing import Final
 from urllib.parse import urlencode
 
 from pydantic import BaseModel, Field
@@ -12,7 +13,7 @@ from knowledge.literature.literature_models import Candidate, LiteratureMetadata
 from knowledge.literature.provider_http import MAX_CANDIDATES, request_model
 from knowledge.literature.structured_paper_models import PaperMetadata
 
-API_URL = "https://www.googleapis.com/books/v1/volumes"
+API_URL: Final[str] = "https://www.googleapis.com/books/v1/volumes"
 
 
 class _Identifier(BaseModel):

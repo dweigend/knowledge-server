@@ -6,12 +6,12 @@ resolved once when an interface starts.
 
 import os
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Final
 
 from pydantic import AfterValidator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_BATCH = os.environ.get("KNOWLEDGE_DEFAULT_BATCH", "default")
+DEFAULT_BATCH: Final[str] = os.environ.get("KNOWLEDGE_DEFAULT_BATCH", "default")
 
 
 class Settings(BaseSettings):

@@ -4,10 +4,14 @@ Document-supplied HTML remains inert so experiment views can display analysis
 output without executing embedded markup.
 """
 
+from typing import Final
+
 from markdown_it import MarkdownIt
 from markupsafe import Markup
 
-_MARKDOWN = MarkdownIt("commonmark", {"html": False}).enable("table").disable("image")
+_MARKDOWN: Final[MarkdownIt] = (
+    MarkdownIt("commonmark", {"html": False}).enable("table").disable("image")
+)
 
 
 def render_paper_markdown(markdown: str) -> Markup:

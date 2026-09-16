@@ -80,7 +80,9 @@ class TableParser(HTMLParser):
         self.current.runs.append(document_models.CellText(text=data, script=script))
 
 
-def _region(polygon: list, page_polygon: list, page_size: tuple[float, float]) -> tuple:
+def _region(
+    polygon: list[list[float]], page_polygon: list[list[float]], page_size: tuple[float, float]
+) -> tuple[float, float, float, float]:
     horizontal_scale = page_size[0] / (page_polygon[2][0] - page_polygon[0][0])
     vertical_scale = page_size[1] / (page_polygon[2][1] - page_polygon[0][1])
     left = min(point[0] for point in polygon) - page_polygon[0][0]
@@ -102,7 +104,7 @@ def _leaf_nodes(node: dict) -> list[dict]:
 
 
 def _block(
-    node: dict, original_page: int, page_polygon: list, page_size: tuple[float, float]
+    node: dict, original_page: int, page_polygon: list[list[float]], page_size: tuple[float, float]
 ) -> document_models.DocumentBlock:
     html = node.get("html", "")
     text_parser = TableParser()

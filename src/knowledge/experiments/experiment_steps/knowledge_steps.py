@@ -5,6 +5,7 @@ operations, so experiments never import production persistence workflows.
 """
 
 import difflib
+from collections.abc import Mapping
 from typing import cast
 
 from knowledge.experiments import pipeline_specification
@@ -18,7 +19,7 @@ from knowledge.source_workflows import (
 )
 
 
-def validate_retrieval_parameters(parameters: dict) -> None:
+def validate_retrieval_parameters(parameters: Mapping[str, object]) -> None:
     """Validate an optional query and bounded retrieval limit."""
     validate_selection_parameters(parameters)
     limit = parameters.get("limit", 20)
@@ -26,7 +27,7 @@ def validate_retrieval_parameters(parameters: dict) -> None:
         raise ValueError("limit must be an integer between 1 and 40")
 
 
-def validate_selection_parameters(parameters: dict) -> None:
+def validate_selection_parameters(parameters: Mapping[str, object]) -> None:
     """Validate an optional selection query."""
     query = parameters.get("query")
     if query is not None and not isinstance(query, str):

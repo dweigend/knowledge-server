@@ -6,14 +6,14 @@ import subprocess
 from collections.abc import Callable, Mapping
 from tempfile import TemporaryFile
 from time import monotonic, sleep
-from typing import BinaryIO
+from typing import BinaryIO, Final
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ValidationError
 
-MAX_RESPONSE_BYTES = 2_000_000
-MAX_CANDIDATES = 3
-USER_AGENT = "knowledge-server/0.1 (https://github.com/dweigend/knowledge-server)"
+MAX_RESPONSE_BYTES: Final[int] = 2_000_000
+MAX_CANDIDATES: Final[int] = 3
+USER_AGENT: Final[str] = "knowledge-server/0.1 (https://github.com/dweigend/knowledge-server)"
 
 
 def request_bytes(

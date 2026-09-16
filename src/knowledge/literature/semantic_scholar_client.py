@@ -2,6 +2,7 @@
 
 import os
 from collections.abc import Callable
+from typing import Final
 from urllib.parse import quote, urlencode
 
 from pydantic import BaseModel, Field
@@ -11,8 +12,8 @@ from knowledge.literature.literature_models import Candidate, LiteratureMetadata
 from knowledge.literature.provider_http import MAX_CANDIDATES, request_model
 from knowledge.literature.structured_paper_models import PaperMetadata
 
-API_URL = "https://api.semanticscholar.org/graph/v1/paper"
-FIELDS = "title,authors,year,venue,url,externalIds,publicationTypes"
+API_URL: Final[str] = "https://api.semanticscholar.org/graph/v1/paper"
+FIELDS: Final[str] = "title,authors,year,venue,url,externalIds,publicationTypes"
 
 
 class _Author(BaseModel):

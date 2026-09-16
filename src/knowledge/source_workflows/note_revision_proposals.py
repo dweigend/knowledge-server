@@ -8,7 +8,7 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import Field
 
@@ -16,7 +16,7 @@ from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.knowledge_domain import note_citation_rules
 from knowledge.model_integration import prompt_registry, structured_generation
 
-MAX_PACKET_CHARACTERS = 120000
+MAX_PACKET_CHARACTERS: Final[int] = 120000
 
 
 class NoteRevision(models.Contract):

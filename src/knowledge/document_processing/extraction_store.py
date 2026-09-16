@@ -6,6 +6,7 @@ heavyweight extraction runs outside database transactions.
 
 import hashlib
 import json
+from typing import Final
 
 from psycopg.types.json import Jsonb
 
@@ -18,8 +19,8 @@ from knowledge.knowledge_domain import (
 )
 from knowledge.revision_store import postgresql_revision_store as store
 
-CONFIGURATION = "docling-2.127.0-marker-2.0.0-raster-200dpi-v1"
-MAX_ATTEMPTS = 2
+CONFIGURATION: Final[str] = "docling-2.127.0-marker-2.0.0-raster-200dpi-v1"
+MAX_ATTEMPTS: Final[int] = 2
 
 
 def get_snapshot(

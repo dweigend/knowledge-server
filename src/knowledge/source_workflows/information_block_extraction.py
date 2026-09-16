@@ -9,7 +9,7 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
@@ -21,9 +21,9 @@ from knowledge.model_integration import structured_generation
 from knowledge.runtime_support import workflow_event_log
 from knowledge.source_workflows.bibliography_recovery_models import BibliographyAudit
 
-EXTRACTION_METHOD = "pdftotext reading-order; v3"
-MAX_INPUT_CHARACTERS = 120000
-MAX_BLOCKS = 500
+EXTRACTION_METHOD: Final[str] = "pdftotext reading-order; v3"
+MAX_INPUT_CHARACTERS: Final[int] = 120000
+MAX_BLOCKS: Final[int] = 500
 
 
 def text_revision(pdf_sha256: str, pages: tuple[str, ...], method: str) -> str:

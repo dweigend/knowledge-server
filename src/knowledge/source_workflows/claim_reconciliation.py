@@ -5,6 +5,9 @@ revision-safe application commands.
 """
 
 from pathlib import Path
+from typing import Final
+
+from pydantic import JsonValue
 
 from knowledge.knowledge_base import claim_evidence_records, knowledge_service, source_records
 from knowledge.knowledge_domain import knowledge_record_models as models
@@ -13,8 +16,8 @@ from knowledge.runtime_support import workflow_event_log
 from knowledge.source_workflows import claim_matching, knowledge_candidate_selection
 from knowledge.source_workflows.passage_grounding import check_passage
 
-CANDIDATE_LIMIT = 40
-RECONCILE_ACTOR = "hermes:reconcile-v1"
+CANDIDATE_LIMIT: Final[int] = 40
+RECONCILE_ACTOR: Final[str] = "hermes:reconcile-v1"
 
 
 class ReconcileClaim(models.Contract):
@@ -69,7 +72,7 @@ def accept_claim_decision(
     application: knowledge_service.Knowledge,
     batch_id: str,
     command: ReconcileClaim,
-    matching_decision: dict,
+    matching_decision: dict[str, JsonValue],
     run_directory: Path,
     request_id: str,
 ) -> list[models.Reference]:

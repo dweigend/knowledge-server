@@ -6,9 +6,10 @@ installation, and decoding of stored domain records.
 
 import hashlib
 import json
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Final
 from uuid import UUID, uuid4
 
 import psycopg
@@ -23,13 +24,15 @@ from knowledge.knowledge_domain import (
     knowledge_record_models as models,
 )
 
-_SOURCE_PAYLOAD = TypeAdapter(models.Source | models.LegacySource)
+_SOURCE_PAYLOAD: Final[TypeAdapter[models.Source | models.LegacySource]] = TypeAdapter(
+    models.Source | models.LegacySource
+)
 
 
 class Ledger:
     """Read and append revisioned records inside an existing transaction."""
 
-    def __init__(self, connection: psycopg.Connection[dict]):
+    def __init__(self, connection: psycopg.Connection[dict]) -> None:
         """Use the active transaction connection for reads and writes."""
         self.connection = connection
 
@@ -137,7 +140,7 @@ class Ledger:
 class Database:
     """Own transaction boundaries and idempotent command acceptance."""
 
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str) -> None:
         """Retain the supplied connection configuration without opening a transaction."""
         self.database_url = database_url
 
@@ -187,7 +190,7 @@ def receipt_references(receipt: dict, payload_hash: str) -> list[models.Referenc
     return [models.Reference.model_validate(reference) for reference in receipt["result"]]
 
 
-def decode_payload(kind: models.Kind, payload: dict) -> models.Contract:
+def decode_payload(kind: models.Kind, payload: Mapping[str, object]) -> models.Contract:
     """Decode new sources and immutable legacy sources through their respective contracts."""
     if kind == "source":
         return _SOURCE_PAYLOAD.validate_python(payload)
