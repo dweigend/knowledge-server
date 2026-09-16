@@ -31,6 +31,8 @@ client migration and end-to-end acceptance are pending.
 
 ## Reading order
 
+- [Typed data boundaries](typed-data-architecture.md): cleanup status and
+  migration limits.
 - [Experimentation workbench](experimentation-workbench.md): manual execution,
   immutable attempts, shared operations, configuration and current limitations.
 - [MVP](knowledge-mvp.md): product scope and incremental priorities.

@@ -13,8 +13,10 @@
 
 ## Typed data
 
-- Use Pydantic for all structured data boundaries; validate once and keep data typed internally.
-- Prefer documented existing functions over custom code; simplifications should delete more code than they add.
+- Use Pydantic for all structured data boundaries; validate once and keep data
+  typed internally.
+- Prefer documented existing functions over custom code; simplifications should
+  delete more code than they add.
 
 ## Names and documentation
 

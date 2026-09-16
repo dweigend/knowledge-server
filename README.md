@@ -156,12 +156,12 @@ The `knowledge` package exposes its architectural boundaries as subpackages:
 
 | Package | Responsibility |
 | --- | --- |
-| `knowledge_domain` | Dependency-free record contracts and shared application errors |
-| `knowledge_base` | Canonical source, claim, evidence, note and review operations |
-| `revision_store` | Immutable knowledge revisions, transactions and PostgreSQL schema |
-| `document_processing` | Parser adapters, extraction models, snapshots and quality checks |
+| `knowledge_domain` | Record contracts and application errors |
+| `knowledge_base` | Source, claim, evidence, note and review operations |
+| `revision_store` | Immutable revisions, transactions and PostgreSQL schema |
+| `document_processing` | Parsers, extraction snapshots and quality checks |
 | `literature` | Zotero, Crossref, GROBID and bibliographic models |
-| `source_workflows` | Multi-stage import, reconciliation, selection and writing workflows |
+| `source_workflows` | Import, reconciliation, selection and writing workflows |
 | `experiments` | Isolated attempts, pipeline definitions and private storage |
 | `model_integration` | Prompt registry, generation and the Hermes adapter |
 | `web_interface` | FastAPI routes, HTML, templates and static assets |
@@ -178,7 +178,7 @@ acceptance, PostgreSQL and Zotero.
 flowchart TD
   ENTRY["Composition roots<br/>command_interfaces · web_interface"]
   FLOW["Orchestration<br/>source_workflows · experiments · system_maintenance"]
-  CAP["Focused capabilities<br/>knowledge_base · document_processing · literature · model_integration"]
+  CAP["Capabilities: knowledge base, documents, literature, model integration"]
   STORE["Persistence adapter<br/>revision_store"]
   RUNTIME["Runtime support<br/>settings · logs · atomic files"]
   DOMAIN["Dependency-free center<br/>knowledge_domain"]
