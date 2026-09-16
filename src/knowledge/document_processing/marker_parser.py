@@ -80,16 +80,6 @@ class TableParser(HTMLParser):
         self.current.runs.append(document_models.CellText(text=data, script=script))
 
 
-def parse_table(html: str) -> list[document_models.TableCell]:
-    """Read table HTML, rejecting incomplete cells rather than losing their content."""
-    parser = TableParser()
-    parser.feed(html)
-    parser.close()
-    if parser.current is not None:
-        raise ValueError("Marker table has an unclosed cell")
-    return parser.cells
-
-
 def _region(polygon: list, page_polygon: list, page_size: tuple[float, float]) -> tuple:
     horizontal_scale = page_size[0] / (page_polygon[2][0] - page_polygon[0][0])
     vertical_scale = page_size[1] / (page_polygon[2][1] - page_polygon[0][1])
@@ -117,7 +107,12 @@ def _block(
     html = node.get("html", "")
     text_parser = TableParser()
     text_parser.feed(html)
-    cells = parse_table(html) if node["block_type"] == "Table" else []
+    cells = []
+    if node["block_type"] == "Table":
+        text_parser.close()
+        if text_parser.current is not None:
+            raise ValueError("Marker table has an unclosed cell")
+        cells = text_parser.cells
     polygon = node.get("polygon")
     region = _region(polygon, page_polygon, page_size) if polygon else None
     issues = []

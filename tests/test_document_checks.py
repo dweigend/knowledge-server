@@ -1,6 +1,17 @@
+import pytest
+
 from knowledge.document_processing.document_models import DocumentBlock, TableCell
 from knowledge.document_processing.extraction_quality import compare_tables, table_issues
-from knowledge.document_processing.marker_parser import marker_blocks, parse_table
+from knowledge.document_processing.marker_parser import marker_blocks
+
+
+def parse_table(html: str) -> list[TableCell]:
+    document = {
+        "block_type": "Page",
+        "polygon": [[0, 0], [600, 0], [600, 800], [0, 800]],
+        "children": [{"id": "table", "block_type": "Table", "html": html}],
+    }
+    return marker_blocks(document, 1, (600, 800))[0].cells
 
 
 def table(cells: list[TableCell], rows: int = 2, columns: int = 2) -> DocumentBlock:
@@ -129,3 +140,8 @@ def test_unmatched_marker_table_is_visible_with_review_warning():
     assert len(selected) == 2
     assert selected[-1].cells[0].text == "42"
     assert any("no unique Docling match" in issue for issue in selected[-1].issues)
+
+
+def test_marker_rejects_unclosed_table_cells():
+    with pytest.raises(ValueError, match="unclosed cell"):
+        parse_table("<table><tr><td>Original evidence")

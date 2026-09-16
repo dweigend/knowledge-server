@@ -118,7 +118,7 @@ def lookup_resolution(
         )
     except InterruptedError:
         raise
-    except (ValueError, OSError, TimeoutError, KeyError, TypeError) as error:
+    except (ValueError, OSError, KeyError, TypeError) as error:
         return literature_models.Resolution(
             status="error",
             checked_at=datetime.now(UTC).isoformat(),
@@ -233,9 +233,10 @@ def attach_occurrences(
         targets = citation.target_ids or [f"__unresolved_marker_{index}"]
         for target in targets:
             if target not in by_reference:
+                reference = papers.PaperReference(id=target)
                 stub = build_record(
-                    papers.PaperReference(id=target),
-                    resolve_reference(papers.PaperReference(id=target), []),
+                    reference,
+                    resolve_reference(reference, []),
                     source_sha256,
                     "reference",
                 )
@@ -250,8 +251,8 @@ def attach_occurrences(
                 citing_source_id=f"sha256:{source_sha256}",
                 occurrence_index=index + 1,
                 marker=citation.marker,
-                context=getattr(citation, "context", None),
-                section=getattr(citation, "section", None),
+                context=citation.context,
+                section=citation.section,
                 coordinates=citation.coordinates,
                 reference_ids=citation.target_ids,
             )

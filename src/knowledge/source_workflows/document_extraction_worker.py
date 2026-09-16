@@ -223,11 +223,7 @@ def rendered_page_hashes(pdf: Path, destination: Path) -> list[str]:
 
 def preserve_logs(staging: Path, audit: Path) -> None:
     """Retain only tool diagnostics while disposable PDFs and images are removed."""
-    for log in staging.rglob("*.log"):
-        destination = audit / log.relative_to(staging)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(log, destination)
-    for log in staging.rglob("events.jsonl"):
+    for log in (*staging.rglob("*.log"), *staging.rglob("events.jsonl")):
         destination = audit / log.relative_to(staging)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(log, destination)

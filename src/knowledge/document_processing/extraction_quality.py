@@ -7,14 +7,6 @@ provider output.
 from knowledge.document_processing import document_models
 
 
-def _positions(cell: document_models.TableCell) -> set[tuple[int, int]]:
-    return {
-        (row, column)
-        for row in range(cell.row, cell.row + cell.row_span)
-        for column in range(cell.column, cell.column + cell.column_span)
-    }
-
-
 def table_issues(table: document_models.DocumentBlock) -> list[str]:
     """Find missing, overlapping or out-of-bounds table cells deterministically."""
     if not table.cells or table.rows < 1 or table.columns < 1:
@@ -22,7 +14,11 @@ def table_issues(table: document_models.DocumentBlock) -> list[str]:
     occupied: set[tuple[int, int]] = set()
     issues: list[str] = []
     for cell in table.cells:
-        positions = _positions(cell)
+        positions = {
+            (row, column)
+            for row in range(cell.row, cell.row + cell.row_span)
+            for column in range(cell.column, cell.column + cell.column_span)
+        }
         if occupied.intersection(positions):
             issues.append(f"Overlapping cells at row {cell.row + 1}, column {cell.column + 1}")
         if cell.row + cell.row_span > table.rows or cell.column + cell.column_span > table.columns:
