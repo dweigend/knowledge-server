@@ -6,9 +6,13 @@ attempts for reproducible execution.
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
+from knowledge.knowledge_domain import knowledge_record_models
 from knowledge.model_integration import prompt_registry
+
+RECORD_LIST_ADAPTER = TypeAdapter(list[knowledge_record_models.Record])
+STEP_ATTEMPT_MAPPING_ADAPTER = TypeAdapter(dict[prompt_registry.Step, str])
 
 
 class ExperimentDocument(BaseModel):
@@ -34,6 +38,12 @@ class ExperimentManifest(ExperimentDocument):
     created_at: str
     source_hash: str
     knowledge_hash: str
+
+
+class KnowledgeSnapshot(ExperimentDocument):
+    """Store the complete knowledge records pinned by one experiment."""
+
+    records: list[knowledge_record_models.Record]
 
 
 class AttemptInputs(ExperimentDocument):

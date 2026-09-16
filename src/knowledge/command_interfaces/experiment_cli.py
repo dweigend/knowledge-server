@@ -9,9 +9,8 @@ import json
 import os
 from pathlib import Path
 
+from knowledge.experiments import experiment_models, experiment_step_catalog
 from knowledge.experiments import experiment_runner as experiments
-from knowledge.experiments import experiment_step_catalog
-from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import prompt_registry
 
 
@@ -59,10 +58,9 @@ def create_from_file(arguments: argparse.Namespace) -> dict:
         raise ValueError("Experiment PDFs must not exceed 64 MiB")
     records = []
     if arguments.seed_json:
-        supplied = json.loads(arguments.seed_json.read_text())
-        if not isinstance(supplied, list):
-            raise ValueError("Seed JSON must be a list of complete immutable records")
-        records = [models.Record.model_validate(record) for record in supplied]
+        records = experiment_models.RECORD_LIST_ADAPTER.validate_json(
+            arguments.seed_json.read_text()
+        )
     prompt_registry.seed_defaults()
     identifier = experiments.create_experiment(
         arguments.archive_root, arguments.pdf.name, arguments.pdf.read_bytes(), records
@@ -76,14 +74,11 @@ def run_saved_step(arguments: argparse.Namespace) -> dict:
     recipe, _, _, _ = prompt_registry.resolve_recipe(
         arguments.recipe or arguments.step, arguments.revision
     )
-    inputs = json.loads(arguments.inputs.read_text()) if arguments.inputs else None
-    if inputs is not None and (
-        not isinstance(inputs, dict)
-        or any(
-            not isinstance(step, str) or not isinstance(pin, str) for step, pin in inputs.items()
-        )
-    ):
-        raise ValueError("Input JSON must map step names to immutable attempt IDs")
+    inputs = (
+        experiment_models.STEP_ATTEMPT_MAPPING_ADAPTER.validate_json(arguments.inputs.read_text())
+        if arguments.inputs
+        else None
+    )
     identifier = experiments.prepare_attempt(
         arguments.archive_root, arguments.experiment, arguments.step, recipe, inputs
     )

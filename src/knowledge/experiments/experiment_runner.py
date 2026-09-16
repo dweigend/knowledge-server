@@ -9,9 +9,11 @@ import json
 import os
 import shutil
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from uuid import uuid4
+
+from pydantic import ValidationError
 
 from knowledge.experiments import (
     experiment_models,
@@ -37,7 +39,8 @@ def create_experiment(
         raise ValueError("Experiment sources must contain a PDF header and use a .pdf filename")
     if len(content) > MAX_PDF_BYTES:
         raise ValueError("Experiment PDFs must not exceed 64 MiB")
-    records = [record.model_dump(mode="json") for record in seed_records or []]
+    snapshot = experiment_models.KnowledgeSnapshot(records=seed_records or [])
+    snapshot_payload = snapshot.model_dump(mode="json")
     experiment_id = uuid4().hex
     with experiment_store.experiment_lock(archive_root, experiment_id):
         directory = experiment_store.experiments_root(archive_root) / experiment_id
@@ -48,9 +51,9 @@ def create_experiment(
             filename=Path(filename).name,
             created_at=experiment_store.now(),
             source_hash=hashlib.sha256(content).hexdigest(),
-            knowledge_hash=experiment_store.content_hash(records),
+            knowledge_hash=experiment_store.content_hash(snapshot_payload["records"]),
         )
-        atomic_json_files.write_json_atomically(directory / "knowledge.json", {"records": records})
+        atomic_json_files.write_json_atomically(directory / "knowledge.json", snapshot_payload)
         atomic_json_files.write_json_atomically(
             directory / "manifest.json", manifest.model_dump(mode="json")
         )
@@ -121,7 +124,9 @@ def list_experiments(archive_root: Path) -> list[dict]:
 
 
 def _select_inputs(
-    attempts: list[dict], dependencies: tuple[str, ...], supplied: dict[str, str] | None
+    attempts: list[dict],
+    dependencies: tuple[str, ...],
+    supplied: Mapping[prompt_registry.Step, str] | None,
 ) -> tuple[dict[str, str], dict[str, str]]:
     selected = (
         supplied
@@ -170,7 +175,7 @@ def prepare_attempt(
     experiment_id: str,
     step: str,
     recipe: prompt_registry.ConfigRevision,
-    input_attempts: dict[str, str] | None = None,
+    input_attempts: Mapping[prompt_registry.Step, str] | None = None,
 ) -> str:
     """Pin a manual attempt without making model requests or advancing dependencies."""
     definition = experiment_step_catalog.get_step_definition(step)
@@ -225,7 +230,15 @@ def _execution_inputs(
     directory: Path, specification: experiment_models.AttemptInputs
 ) -> tuple[dict, list[knowledge_record_models.Record]]:
     source_hash = hashlib.sha256((directory / "source.pdf").read_bytes()).hexdigest()
-    records = json.loads((directory / "knowledge.json").read_text())["records"]
+    try:
+        snapshot = experiment_models.KnowledgeSnapshot.model_validate_json(
+            (directory / "knowledge.json").read_text()
+        )
+    except ValidationError as error:
+        raise ValueError(
+            "Experiment source or knowledge snapshot changed after it was pinned"
+        ) from error
+    records = snapshot.model_dump(mode="json")["records"]
     if (
         source_hash != specification.source_hash
         or experiment_store.content_hash(records) != specification.knowledge_hash
@@ -242,7 +255,7 @@ def _execution_inputs(
         ):
             raise ValueError(f"Pinned {step} output changed or is no longer available")
         inputs[step] = attempt["output"]
-    return inputs, [knowledge_record_models.Record.model_validate(record) for record in records]
+    return inputs, snapshot.records
 
 
 def _attempt_cancellation(path: Path, started: float, timeout_seconds: float) -> Callable[[], bool]:

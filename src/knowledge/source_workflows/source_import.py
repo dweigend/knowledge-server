@@ -5,9 +5,10 @@ validated results through application commands.
 """
 
 import hashlib
-import json
 import tempfile
 from pathlib import Path
+
+from pydantic import TypeAdapter
 
 from knowledge.document_processing import pdf_text_extraction
 from knowledge.knowledge_base import knowledge_service, source_records
@@ -30,6 +31,16 @@ class RegisterSource(models.Contract):
     """Register the verified Zotero source independently of its optional contributions."""
 
     source: models.Source
+
+
+class PreparedImport(models.Contract):
+    """Persist one resumable source and its validated extraction proposals."""
+
+    source: models.Source
+    extractions: list[article_claim_extraction.ArticleExtraction]
+
+
+IMPORT_DOCUMENTS = TypeAdapter(list[ImportDocument])
 
 
 def prepare_document(
@@ -89,22 +100,17 @@ def import_document(
 
 def load_prepared_document(
     document: ImportDocument, batch_id: str, document_directory: Path
-) -> tuple[models.Source, list[dict]]:
+) -> tuple[models.Source, list[article_claim_extraction.ArticleExtraction]]:
     """Resume the transient preparation snapshot or create it before database writes."""
     document_directory.mkdir(parents=True, exist_ok=True)
     prepared_path = document_directory / "prepared.json"
     if not prepared_path.exists():
         source, extractions = prepare_document(document, batch_id, document_directory)
         prepared_path.write_text(
-            json.dumps(
-                {
-                    "source": source.model_dump(mode="json"),
-                    "extractions": [result.model_dump(mode="json") for result in extractions],
-                }
-            )
+            PreparedImport(source=source, extractions=extractions).model_dump_json()
         )
-    prepared = json.loads(prepared_path.read_text())
-    return models.Source.model_validate(prepared["source"]), prepared["extractions"]
+    prepared = PreparedImport.model_validate_json(prepared_path.read_text())
+    return prepared.source, prepared.extractions
 
 
 def register_document_source(
@@ -157,13 +163,12 @@ def accept_contributions(
     application: knowledge_service.Knowledge,
     batch_id: str,
     source: models.Reference,
-    extractions: list[dict],
+    extractions: list[article_claim_extraction.ArticleExtraction],
     run_directory: Path,
     digest: str,
 ) -> None:
     """Keep stable per-chunk identities while adding or reusing claims."""
-    for chunk_index, serialized in enumerate(extractions):
-        extraction = article_claim_extraction.ArticleExtraction.model_validate(serialized)
+    for chunk_index, extraction in enumerate(extractions):
         for claim_index, proposal in enumerate(extraction.claims):
             request_id = f"{batch_id}:contribution:{digest}:{chunk_index}:{claim_index}"
             claim_reconciliation.reconcile_claim(
@@ -178,7 +183,7 @@ def import_manifest(
     run_directory: Path,
 ) -> None:
     """Import explicitly selected documents and log any failure before stopping."""
-    documents = [ImportDocument.model_validate(entry) for entry in json.loads(manifest.read_text())]
+    documents = IMPORT_DOCUMENTS.validate_json(manifest.read_text())
     for document in documents:
         workflow_event_log.record_event(run_directory, "document_started", path=document.path)
         try:
