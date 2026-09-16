@@ -689,3 +689,50 @@ def test_complete_exact_isbn_match_skips_crossref_and_remaining_providers(tmp_pa
     assert record.resolution.method == "isbn"
     assert record.metadata.title == "Nachhaltigkeit"
     assert record.extracted[0] == ref
+
+
+def test_pre_refactor_query_cache_preserves_exact_evidence_without_model_calls(tmp_path):
+    ref = reference(
+        title="  Nachhaltigkeit – Grundlagen  ",
+        authors=["A. Müller"],
+        raw="  Müller (2020). Nachhaltigkeit – Grundlagen.\n",
+    )
+    # This directory was produced by the pre-refactor planning format.
+    directory = tmp_path / "1b2d5eda02d6afc42b52c020c2f5a7818baea5b237bc52c34250dea295ee42ea"
+    directory.mkdir()
+    (directory / "plan.json").write_text(
+        '{"plan":{"queries":[{"reference_id":"r1","title":"Nachhaltigkeit",'
+        '"authors":[],"year":"2020","reason":"Use the main title"}]},"error":null}'
+    )
+    report = DiscoveryReport()
+
+    result = planning.plan_reference_queries(
+        [ref],
+        {ref.id: []},
+        tmp_path,
+        DiscoverySettings(max_model_calls=0),
+        report,
+        ModelConfiguration(),
+        lambda: False,
+    )
+
+    assert len(result.queries) == 1
+    assert result.queries[0].title == "Nachhaltigkeit"
+    assert report.cache_hits == 1
+    assert report.model_calls == 0
+    assert ref.title == "  Nachhaltigkeit – Grundlagen  "
+    assert ref.raw == "  Müller (2020). Nachhaltigkeit – Grundlagen.\n"
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"providers": ["dnb", "dnb"]},
+        {"required_fields": []},
+        {"required_fields": ["title", "title"]},
+        {"max_requests": "10"},
+    ],
+)
+def test_discovery_settings_reject_invalid_search_requirements(settings):
+    with pytest.raises(ValueError):
+        DiscoverySettings.model_validate(settings)

@@ -91,13 +91,15 @@ def resolve_reference(
     """Keep ambiguity and rejected candidates explicit instead of guessing an identity."""
     matches: dict[str, literature_models.Candidate] = {}
     for candidate in candidates:
-        if candidate_matches(reference, candidate):
-            identity = candidate_identity(candidate)
-            previous = matches.get(identity)
-            if previous is None or metadata_completeness(candidate) > metadata_completeness(
-                previous
-            ):
-                matches[identity] = candidate
+        if not candidate_matches(reference, candidate):
+            continue
+        identity = candidate_identity(candidate)
+        previous = matches.get(identity)
+        if previous is not None and metadata_completeness(candidate) <= metadata_completeness(
+            previous
+        ):
+            continue
+        matches[identity] = candidate
     status = "matched" if len(matches) == 1 else "ambiguous" if len(matches) > 1 else "unmatched"
     accepted = next(iter(matches.values())) if status == "matched" else None
     return literature_models.Resolution(

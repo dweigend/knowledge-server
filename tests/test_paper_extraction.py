@@ -114,3 +114,50 @@ def test_document_markdown_renders_headings_without_executable_html_or_remote_im
     assert "<script>" not in rendered
     assert "<img" not in rendered
     assert 'href="javascript:' not in rendered
+
+
+@pytest.mark.parametrize("suffix", ["?token=secret", "#fragment"])
+def test_service_url_rejects_query_and_fragment(suffix):
+    with pytest.raises(ValueError, match="credentials, query or fragment"):
+        validate_paper_parameters(
+            {
+                "document_provider": "grobid",
+                "service_url": f"http://localhost:8070{suffix}",
+            }
+        )
+
+
+def test_extraction_settings_accept_unrelated_recipe_fields_without_coercing_limits():
+    from knowledge.source_workflows.paper_extraction_models import PaperExtractionSettings
+
+    settings = PaperExtractionSettings.model_validate({"max_characters": 200, "prompt": "custom"})
+    assert settings.document_provider == "poppler"
+    with pytest.raises(ValueError):
+        PaperExtractionSettings.model_validate({"discovery": {"max_requests": "10"}})
+
+
+@pytest.mark.parametrize("interrupt", ["source_changed", "cancelled"])
+def test_analysis_rejects_invalidated_evidence_before_writing_artifacts(tmp_path, interrupt):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(fixture_pdf())
+    stopped = False
+
+    def analyzer(source, **settings):
+        nonlocal stopped
+        if interrupt == "source_changed":
+            source.write_bytes(b"changed")
+        else:
+            stopped = True
+        return paper()
+
+    error = ValueError if interrupt == "source_changed" else InterruptedError
+    with pytest.raises(error):
+        extract_paper_document(
+            pdf,
+            {"document_provider": "grobid", "service_url": "http://localhost:8070"},
+            tmp_path / "trace",
+            timeout_seconds=10,
+            cancelled=lambda: stopped,
+            analyzer=analyzer,
+        )
+    assert not (tmp_path / "trace").exists()

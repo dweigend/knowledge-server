@@ -36,7 +36,29 @@ preserved; runtime settings gain their own schema. Source edits intentionally
 change the existing code fingerprint used by experiments. Production Hermes/OCR
 acceptance remains separate from fixture tests; the local Hermes runtime is absent.
 
+## Reference discovery
+
+Document extraction now validates recipe parameters once into
+`PaperExtractionSettings`, including nested `DiscoverySettings`. Shared recipe
+fields remain accepted; extraction only consumes its own validated settings.
+Independent discovery-field rules use Pydantic `AfterValidator` functions.
+
+`ReferenceSearchState` keeps each original reference, internal search identifier,
+candidates, resolution and trace together. Initial and model-refined searches
+share one provider loop. `LookupState` owns per-run pacing and request counters;
+the session remains ordinary Python orchestration with explicit provider and
+cancellation dependencies. Query proposals and their evidence packets reuse
+`PaperReference` and `Candidate` instead of constructing untyped dictionaries.
+
+Existing output schemas, field defaults, whitespace policies and cache hashes
+remain unchanged. Planning packets deliberately retain the previous `json.dumps`
+representation: replacing it with `model_dump_json()` would change cache keys.
+Trusted internal copies use `model_copy`; external input and constrained settings
+use validation. `Contract` is not a universal base because its whitespace trimming
+would change exact evidence. No generic model or cache hierarchy is introduced.
+
 References: [Pydantic models](https://docs.pydantic.dev/latest/concepts/models/),
+[validators](https://docs.pydantic.dev/latest/concepts/validators/),
 [TypeAdapter](https://docs.pydantic.dev/latest/concepts/type_adapter/),
 [BaseSettings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/),
 [record integrity](knowledge-contracts.md).

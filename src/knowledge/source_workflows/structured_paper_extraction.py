@@ -9,12 +9,11 @@ from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
 from typing import Protocol
-from urllib.parse import urlsplit
 
 from knowledge.literature import grobid_client, literature_resolution, structured_paper_models
-from knowledge.literature.reference_discovery_models import DiscoverySettings
 from knowledge.model_integration.structured_generation import ModelConfiguration
 from knowledge.source_workflows import information_block_extraction, reference_discovery
+from knowledge.source_workflows.paper_extraction_models import PaperExtractionSettings
 
 
 class PaperAnalyzer(Protocol):
@@ -35,27 +34,7 @@ class PaperAnalyzer(Protocol):
 
 def validate_paper_parameters(parameters: dict) -> None:
     """Reject unsupported analyzers and malformed service locations before execution."""
-    literature = parameters.get("literature_provider", "none")
-    if not isinstance(literature, str) or literature not in {"none", "crossref", "discovery"}:
-        raise ValueError("literature_provider must be discovery, crossref or none")
-    DiscoverySettings.model_validate(parameters.get("discovery", {}))
-    provider = parameters.get("document_provider", "poppler")
-    if not isinstance(provider, str) or provider not in {"poppler", "grobid"}:
-        raise ValueError("document_provider must be grobid or poppler")
-    if provider == "poppler":
-        if literature != "none":
-            raise ValueError("Literature matching requires structured document extraction")
-        if "service_url" in parameters:
-            raise ValueError("service_url is only supported for grobid")
-        return
-    location = parameters.get("service_url", "")
-    if not isinstance(location, str):
-        raise ValueError("service_url must be an HTTP service URL")
-    parsed = urlsplit(location)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("GROBID requires an HTTP service_url")
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        raise ValueError("service_url must not contain credentials, query or fragment")
+    PaperExtractionSettings.model_validate(parameters)
 
 
 def extract_paper_document(
@@ -70,63 +49,115 @@ def extract_paper_document(
     cache_directory: Path | None = None,
 ) -> information_block_extraction.TextExtraction:
     """Preserve exact page evidence and attach provider-neutral document analysis."""
-    validate_paper_parameters(parameters)
-    started = monotonic()
+    settings = PaperExtractionSettings.model_validate(parameters)
+    deadline = monotonic() + timeout_seconds
     extraction = information_block_extraction.extract_text(
         pdf, cancelled=cancelled, timeout_seconds=timeout_seconds
     )
-    if parameters.get("document_provider", "poppler") == "poppler":
+    if settings.document_provider == "poppler":
         return extraction
+
+    paper = analyze_document(pdf, extraction, settings, deadline, cancelled, analyzer)
+    save_paper_artifacts(paper, output_directory)
+    if settings.literature_provider == "discovery":
+        return discover_literature(
+            extraction,
+            paper,
+            settings,
+            output_directory,
+            cache_directory or output_directory / "reference-cache",
+            configuration or ModelConfiguration(),
+            deadline,
+            cancelled,
+        )
+    return attach_literature(extraction, paper, settings, deadline, cancelled)
+
+
+def analyze_document(
+    pdf: Path,
+    extraction: information_block_extraction.TextExtraction,
+    settings: PaperExtractionSettings,
+    deadline: float,
+    cancelled: Callable[[], bool],
+    analyzer: PaperAnalyzer,
+) -> structured_paper_models.PaperDocument:
+    """Analyze the pinned PDF and reject cancellation or a changed source."""
     if cancelled():
         raise InterruptedError("Paper extraction cancelled")
-    remaining = timeout_seconds - (monotonic() - started)
-    if remaining <= 0:
-        raise TimeoutError("Paper extraction exceeded its time limit")
     paper = analyzer(
-        pdf, base_url=parameters["service_url"], timeout_seconds=remaining, cancelled=cancelled
+        pdf,
+        base_url=settings.service_url,
+        timeout_seconds=remaining_analysis_seconds(deadline),
+        cancelled=cancelled,
     )
     if cancelled():
         raise InterruptedError("Paper extraction cancelled")
     if hashlib.sha256(pdf.read_bytes()).hexdigest() != extraction.pdf_sha256:
         raise ValueError("PDF changed during paper analysis")
-    save_paper_artifacts(paper, output_directory)
-    if parameters.get("literature_provider") == "discovery":
-        remaining = timeout_seconds - (monotonic() - started)
-        if remaining <= 0:
-            raise TimeoutError("Paper extraction exceeded its time limit")
-        result = reference_discovery.discover_references(
-            paper,
-            list(extraction.pages),
-            extraction.pdf_sha256,
-            output_directory,
-            cache_directory or output_directory / "reference-cache",
-            settings=DiscoverySettings.model_validate(parameters.get("discovery", {})),
-            configuration=configuration or ModelConfiguration(),
-            timeout_seconds=max(0.1, remaining - 1),
-            cancelled=cancelled,
-        )
-        return extraction.model_copy(
-            update={
-                "paper": result.paper.model_copy(update={"raw_document": None}),
-                "literature": result.literature,
-                "discovery": result.report,
-                "bibliography": result.bibliography,
-            }
-        )
-    records = []
-    if parameters.get("literature_provider") == "crossref":
-        records = literature_resolution.enrich_paper(
-            paper,
-            extraction.pdf_sha256,
-            timeout_seconds=max(0.1, timeout_seconds - (monotonic() - started) - 1),
-            cancelled=cancelled,
-        )
+    return paper
+
+
+def remaining_analysis_seconds(deadline: float) -> float:
+    """Reject a depleted extraction budget before starting further analysis."""
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise TimeoutError("Paper extraction exceeded its time limit")
+    return remaining
+
+
+def discover_literature(
+    extraction: information_block_extraction.TextExtraction,
+    paper: structured_paper_models.PaperDocument,
+    settings: PaperExtractionSettings,
+    output_directory: Path,
+    cache_directory: Path,
+    configuration: ModelConfiguration,
+    deadline: float,
+    cancelled: Callable[[], bool],
+) -> information_block_extraction.TextExtraction:
+    """Attach recovered bibliography and the bounded discovery audit to exact page evidence."""
+    remaining = remaining_analysis_seconds(deadline)
+    result = reference_discovery.discover_references(
+        paper,
+        list(extraction.pages),
+        extraction.pdf_sha256,
+        output_directory,
+        cache_directory,
+        settings=settings.discovery,
+        configuration=configuration,
+        timeout_seconds=max(0.1, remaining - 1),
+        cancelled=cancelled,
+    )
     return extraction.model_copy(
         update={
-            "paper": paper.model_copy(update={"raw_document": None}),
-            "literature": records,
+            "paper": result.paper.model_copy(update={"raw_document": None}),
+            "literature": result.literature,
+            "discovery": result.report,
+            "bibliography": result.bibliography,
         }
     )
+
+
+def attach_literature(
+    extraction: information_block_extraction.TextExtraction,
+    paper: structured_paper_models.PaperDocument,
+    settings: PaperExtractionSettings,
+    deadline: float,
+    cancelled: Callable[[], bool],
+) -> information_block_extraction.TextExtraction:
+    """Attach structured evidence and optional Crossref records without discovery."""
+    result = extraction.model_copy(
+        update={"paper": paper.model_copy(update={"raw_document": None})}
+    )
+    if settings.literature_provider != "crossref":
+        return result
+    literature = literature_resolution.enrich_paper(
+        paper,
+        extraction.pdf_sha256,
+        timeout_seconds=max(0.1, deadline - monotonic() - 1),
+        cancelled=cancelled,
+    )
+    return result.model_copy(update={"literature": literature})
 
 
 def save_paper_artifacts(

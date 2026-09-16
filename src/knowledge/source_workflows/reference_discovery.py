@@ -7,8 +7,6 @@ from collections.abc import Callable
 from pathlib import Path
 from time import monotonic
 
-from pydantic import BaseModel
-
 from knowledge.literature import (
     crossref_client,
     dnb_client,
@@ -32,21 +30,15 @@ from knowledge.literature.bibliographic_identifiers import extracted_isbn
 from knowledge.model_integration import structured_generation
 from knowledge.runtime_support.atomic_json_files import write_json_atomically
 from knowledge.source_workflows import bibliography_recovery, reference_query_planning
-from knowledge.source_workflows.bibliography_recovery_models import BibliographyAudit
+from knowledge.source_workflows.reference_discovery_models import (
+    ReferenceDiscoveryResult,
+    ReferenceSearchState,
+)
 from knowledge.source_workflows.reference_search import (
     ReferenceSearchSession,
     query_text,
     request_key,
 )
-
-
-class ReferenceDiscoveryResult(BaseModel):
-    """Return recovered source evidence, literature records and the bounded search audit."""
-
-    paper: papers.PaperDocument
-    literature: list[literature_models.LiteratureRecord]
-    report: models.DiscoveryReport
-    bibliography: BibliographyAudit
 
 
 def available_providers() -> dict[str, resolution.Lookup]:
@@ -133,13 +125,15 @@ def resolved_record(
     result = resolution.resolve_reference(corroborated, reference_candidates(reference, candidates))
     role = "source" if reference.id == "__source__" else "reference"
     record = resolution.build_record(reference, result, source_sha256, role)
-    if result.status == "matched":
-        for field in ("title", "authors", "year", "venue"):
-            if not getattr(record.metadata, field) and getattr(corroborated, field):
-                setattr(record.metadata, field, getattr(corroborated, field))
-        record.missing_fields = [
-            field for field in record.missing_fields if not getattr(record.metadata, field)
-        ]
+    if result.status != "matched":
+        return record
+    for field in ("title", "authors", "year", "venue"):
+        if getattr(record.metadata, field) or not getattr(corroborated, field):
+            continue
+        setattr(record.metadata, field, getattr(corroborated, field))
+    record.missing_fields = [
+        field for field in record.missing_fields if not getattr(record.metadata, field)
+    ]
     return record
 
 
@@ -163,54 +157,83 @@ def provider_order(
 
 
 def search_reference(
+    original: papers.PaperReference,
     reference: papers.PaperReference,
     source_sha256: str,
     session: ReferenceSearchSession,
-) -> tuple[literature_models.LiteratureRecord, list[literature_models.Candidate]]:
-    """Stop provider searches as soon as identity and required metadata are sufficient."""
-    trace = models.ReferenceSearch(reference_id=reference.id, trigger="Initial identification")
-    session.report.searches.append(trace)
+) -> ReferenceSearchState:
+    """Identify one source and search further only while required evidence is missing."""
+    state = ReferenceSearchState(
+        original=original,
+        reference=reference,
+        record=resolved_record(reference, [], source_sha256),
+        trace=models.ReferenceSearch(reference_id=reference.id, trigger="Initial identification"),
+    )
+    session.report.searches.append(state.trace)
     if not has_search_evidence(reference):
-        trace.trigger = "Insufficient bibliographic evidence; review required"
-        return resolved_record(reference, [], source_sha256), []
-    confirmed_path = confirmed_record_path(reference, source_sha256, session)
-    if confirmed_path.exists():
-        previous = literature_models.LiteratureRecord.model_validate_json(
-            confirmed_path.read_text()
-        )
-        session.report.cache_hits += 1
-        candidates = previous.resolution.candidates
-        trace.queries.append(
-            models.SearchQuery(
-                provider=previous.resolution.provider or "cache",
-                query=query_text(reference),
-                status="success",
-                cached=True,
-                candidate_count=len(candidates),
-                message="Reused confirmed identity.",
-            )
-        )
-        if not search_trigger(previous, session.settings):
-            trace.trigger = "Complete; fallback skipped"
-            return previous, candidates
-    else:
-        candidates = session.search(initial_provider(reference, session.settings), reference, trace)
-    record = resolved_record(reference, candidates, source_sha256)
-    trace.trigger = search_trigger(record, session.settings) or "Complete; fallback skipped"
-    if not search_trigger(record, session.settings):
-        return record, candidates
+        state.trace.trigger = "Insufficient bibliographic evidence; review required"
+        return state
+    identify_reference(state, source_sha256, session)
+    trigger = search_trigger(state.record, session.settings)
+    state.trace.trigger = trigger or "Complete; fallback skipped"
+    if not trigger:
+        return state
     query = evidence_reference(reference)
+    providers = provider_order(reference, session.settings)
     if query.doi:
         query.doi = None
-        candidates.extend(session.search("crossref", query, trace))
-        record = resolved_record(reference, candidates, source_sha256)
-    for provider in provider_order(reference, session.settings):
-        if not search_trigger(record, session.settings):
+        providers.insert(0, "crossref")
+    search_providers(state, query, providers, source_sha256, session)
+    return state
+
+
+def identify_reference(
+    state: ReferenceSearchState, source_sha256: str, session: ReferenceSearchSession
+) -> None:
+    """Reuse a confirmed identity or perform the initial provider lookup."""
+    path = confirmed_record_path(state.reference, source_sha256, session)
+    if not path.exists():
+        state.candidates = session.search(
+            initial_provider(state.reference, session.settings), state.reference, state.trace
+        )
+        state.record = resolved_record(state.reference, state.candidates, source_sha256)
+        return
+    previous = literature_models.LiteratureRecord.model_validate_json(path.read_text())
+    session.report.cache_hits += 1
+    state.candidates = previous.resolution.candidates
+    state.trace.queries.append(
+        models.SearchQuery(
+            provider=previous.resolution.provider or "cache",
+            query=query_text(state.reference),
+            status="success",
+            cached=True,
+            candidate_count=len(state.candidates),
+            message="Reused confirmed identity.",
+        )
+    )
+    state.record = previous
+    if not search_trigger(previous, session.settings):
+        return
+    state.record = resolved_record(state.reference, state.candidates, source_sha256)
+
+
+def search_providers(
+    state: ReferenceSearchState,
+    query: papers.PaperReference,
+    providers: list[str],
+    source_sha256: str,
+    session: ReferenceSearchSession,
+    refined: papers.PaperReference | None = None,
+) -> None:
+    """Accumulate provider evidence until deterministic resolution satisfies the requirements."""
+    for provider in providers:
+        if not search_trigger(state.record, session.settings):
             break
-        candidates.extend(session.search(provider, query, trace))
-        record = resolved_record(reference, candidates, source_sha256)
-    mark_lookup_failure(record, trace)
-    return record, candidates
+        state.candidates.extend(session.search(provider, query, state.trace))
+        state.record = resolved_record(
+            state.reference, state.candidates, source_sha256, refined=refined
+        )
+    mark_lookup_failure(state.record, state.trace)
 
 
 def confirmed_record_path(
@@ -228,24 +251,30 @@ def has_search_evidence(reference: papers.PaperReference) -> bool:
 
 def initial_provider(reference: papers.PaperReference, settings: models.DiscoverySettings) -> str:
     """Prefer a direct catalog ISBN lookup when the citation has no DOI."""
-    if not crossref_client.normalize_doi(reference.doi) and extracted_isbn(reference):
-        for provider in ("dnb", "openlibrary", "google_books"):
-            if provider in settings.providers:
-                return provider
-    return "crossref"
+    if crossref_client.normalize_doi(reference.doi) or not extracted_isbn(reference):
+        return "crossref"
+    return next(
+        (
+            provider
+            for provider in ("dnb", "openlibrary", "google_books")
+            if provider in settings.providers
+        ),
+        "crossref",
+    )
 
 
 def mark_lookup_failure(
     record: literature_models.LiteratureRecord, trace: models.ReferenceSearch
 ) -> None:
     """Distinguish unavailable providers and exhausted budgets from an ordinary no-match result."""
+    if record.resolution.status != "unmatched":
+        return
     failed = [query for query in trace.queries if query.status in {"error", "budget", "backoff"}]
-    if record.resolution.status == "unmatched" and failed:
-        record.resolution.message += " " + " ".join(
-            dict.fromkeys(query.message for query in failed)
-        )
-        if all(query.status != "success" for query in trace.queries):
-            record.resolution.status = "error"
+    if not failed:
+        return
+    record.resolution.message += " " + " ".join(dict.fromkeys(query.message for query in failed))
+    if all(query.status != "success" for query in trace.queries):
+        record.resolution.status = "error"
 
 
 def model_configuration(
@@ -264,52 +293,60 @@ def model_configuration(
 
 
 def refine_unresolved(
-    references: list[papers.PaperReference],
-    records: dict[str, literature_models.LiteratureRecord],
-    candidates: dict[str, list[literature_models.Candidate]],
+    searches: list[ReferenceSearchState],
     session: ReferenceSearchSession,
     configuration: structured_generation.ModelConfiguration,
     source_sha256: str,
 ) -> None:
-    """Use one cached model batch for unresolved sources with remaining search capacity."""
-    pending = [
-        ref
-        for ref in references
-        if search_trigger(records[ref.id], session.settings)
-        and has_search_evidence(ref)
-        and any(
-            not session.stop_reason(provider, ref.id)
-            for provider in ["crossref", *session.settings.providers]
-        )
-    ]
+    """Plan one bounded batch for unresolved sources with remaining search capacity."""
+    pending = {state.reference.id: state for state in searches if can_refine(state, session)}
     if not pending or session.deadline - monotonic() < 1:
         return
     plan = reference_query_planning.plan_reference_queries(
-        pending,
-        candidates,
+        [state.reference for state in pending.values()],
+        {state.reference.id: state.candidates for state in searches},
         session.cache_directory / "plans",
         session.settings,
         session.report,
         model_configuration(configuration, session.settings, session.deadline),
         session.cancelled,
     )
-    originals = {ref.id: ref for ref in pending}
-    traces = {trace.reference_id: trace for trace in session.report.searches}
     for proposal in plan.queries:
-        original = originals[proposal.reference_id]
-        refined = refine_search_evidence(original, proposal)
-        traces[original.id].trigger += "; " + proposal.reason
-        query = papers.PaperReference(
-            id=original.id, title=proposal.title, authors=proposal.authors, year=proposal.year
-        )
-        for provider in ["crossref", *provider_order(original, session.settings)]:
-            if not search_trigger(records[original.id], session.settings):
-                break
-            candidates[original.id].extend(session.search(provider, query, traces[original.id]))
-            records[original.id] = resolved_record(
-                original, candidates[original.id], source_sha256, refined=refined
-            )
-        mark_lookup_failure(records[original.id], traces[original.id])
+        refine_reference(pending[proposal.reference_id], proposal, source_sha256, session)
+
+
+def can_refine(state: ReferenceSearchState, session: ReferenceSearchSession) -> bool:
+    """Require unresolved evidence and capacity at at least one configured provider."""
+    if not search_trigger(state.record, session.settings) or not has_search_evidence(
+        state.reference
+    ):
+        return False
+    return any(
+        not session.stop_reason(provider, state.reference.id)
+        for provider in ["crossref", *session.settings.providers]
+    )
+
+
+def refine_reference(
+    state: ReferenceSearchState,
+    proposal: reference_query_planning.ReferenceQuery,
+    source_sha256: str,
+    session: ReferenceSearchSession,
+) -> None:
+    """Apply a grounded query proposal while preserving original author and edition evidence."""
+    refined = refine_search_evidence(state.reference, proposal)
+    state.trace.trigger += "; " + proposal.reason
+    query = papers.PaperReference(
+        id=state.reference.id, title=proposal.title, authors=proposal.authors, year=proposal.year
+    )
+    search_providers(
+        state,
+        query,
+        ["crossref", *provider_order(state.reference, session.settings)],
+        source_sha256,
+        session,
+        refined=refined,
+    )
 
 
 def refine_search_evidence(
@@ -346,63 +383,95 @@ def discover_references(
     if not 0 < timeout_seconds <= 240:
         raise ValueError("Reference discovery timeout must be between 0 and 240 seconds")
     deadline = monotonic() + timeout_seconds
-    report = models.DiscoveryReport()
+    session = ReferenceSearchSession(
+        cache_directory=cache_directory / "lookups",
+        settings=settings,
+        report=models.DiscoveryReport(),
+        deadline=deadline,
+        cancelled=cancelled,
+        providers=providers if providers is not None else available_providers(),
+    )
+    recovery = recover_source_bibliography(paper, pages, cache_directory, configuration, session)
+    searches = identify_sources(paper, recovery.paper, source_sha256, session)
+    refine_unresolved(searches, session, configuration, source_sha256)
+    save_confirmed_sources(searches, source_sha256, session)
+    collected = collect_literature(recovery.paper, searches, source_sha256)
+    if settings.find_open_access:
+        enrich_access(collected, session)
+    write_json_atomically(
+        output_directory / "reference-discovery.json", session.report.model_dump(mode="json")
+    )
+    return ReferenceDiscoveryResult(
+        paper=recovery.paper,
+        literature=collected,
+        report=session.report,
+        bibliography=recovery.report,
+    )
+
+
+def recover_source_bibliography(
+    paper: papers.PaperDocument,
+    pages: list[str],
+    cache_directory: Path,
+    configuration: structured_generation.ModelConfiguration,
+    session: ReferenceSearchSession,
+) -> bibliography_recovery.BibliographyRecoveryResult:
+    """Recover bibliography coverage and account for its bounded model work."""
     recovery = bibliography_recovery.recover_bibliography(
         paper,
         pages,
         cache_directory / "bibliography",
-        configuration=model_configuration(configuration, settings, deadline),
-        cancelled=cancelled,
-        allow_model=settings.max_model_calls > 0 and deadline - monotonic() >= 1,
-        timeout_seconds=max(0.1, deadline - monotonic()),
-        retry_generation=settings.retry_generation,
+        configuration=model_configuration(configuration, session.settings, session.deadline),
+        cancelled=session.cancelled,
+        allow_model=session.settings.max_model_calls > 0 and session.deadline - monotonic() >= 1,
+        timeout_seconds=max(0.1, session.deadline - monotonic()),
+        retry_generation=session.settings.retry_generation,
     )
-    report.cache_hits += int(recovery.report.cache_reused)
-    report.model_calls += int(
+    session.report.cache_hits += int(recovery.report.cache_reused)
+    session.report.model_calls += int(
         not recovery.report.cache_reused and recovery.report.model_status in {"completed", "failed"}
     )
-    report.warnings.extend(recovery.report.unresolved_issues)
-    session = ReferenceSearchSession(
-        cache_directory / "lookups",
-        settings,
-        report,
-        deadline,
-        cancelled,
-        providers if providers is not None else available_providers(),
+    session.report.warnings.extend(recovery.report.unresolved_issues)
+    return recovery
+
+
+def identify_sources(
+    paper: papers.PaperDocument,
+    recovered: papers.PaperDocument,
+    source_sha256: str,
+    session: ReferenceSearchSession,
+) -> list[ReferenceSearchState]:
+    """Assign distinct search identities and identify the source document and its references."""
+    configured = [*session.settings.providers]
+    if session.settings.find_open_access:
+        configured.append("unpaywall")
+    session.report.warnings.extend(
+        f"{provider} is not configured; add its documented credentials."
+        for provider in configured
+        if provider not in session.providers
     )
-    configured = [*settings.providers, *(["unpaywall"] if settings.find_open_access else [])]
-    for provider in configured:
-        if provider not in session.providers:
-            report.warnings.append(f"{provider} is not configured; add its documented credentials.")
-    original_references = [
+    originals = [
         papers.PaperReference(id="__source__", **paper.metadata.model_dump()),
-        *recovery.paper.references,
+        *recovered.references,
     ]
-    references = unique_search_references(original_references)
-    records: dict[str, literature_models.LiteratureRecord] = {}
-    candidates: dict[str, list[literature_models.Candidate]] = {}
-    for reference in references:
-        records[reference.id], candidates[reference.id] = search_reference(
-            reference, source_sha256, session
+    references = unique_search_references(originals)
+    return [
+        search_reference(original, reference, source_sha256, session)
+        for original, reference in zip(originals, references, strict=True)
+    ]
+
+
+def save_confirmed_sources(
+    searches: list[ReferenceSearchState], source_sha256: str, session: ReferenceSearchSession
+) -> None:
+    """Persist confirmed identities independently of unresolved-search retries."""
+    for state in searches:
+        if state.record.resolution.status != "matched":
+            continue
+        write_json_atomically(
+            confirmed_record_path(state.reference, source_sha256, session),
+            state.record.model_dump(mode="json"),
         )
-    refine_unresolved(references, records, candidates, session, configuration, source_sha256)
-    for reference in references:
-        if records[reference.id].resolution.status == "matched":
-            write_json_atomically(
-                confirmed_record_path(reference, source_sha256, session),
-                records[reference.id].model_dump(mode="json"),
-            )
-    collected = collect_literature(
-        recovery.paper, references, original_references, records, source_sha256
-    )
-    if settings.find_open_access:
-        enrich_access(collected, session)
-    write_json_atomically(
-        output_directory / "reference-discovery.json", report.model_dump(mode="json")
-    )
-    return ReferenceDiscoveryResult(
-        paper=recovery.paper, literature=collected, report=report, bibliography=recovery.report
-    )
 
 
 def enrich_access(
@@ -431,17 +500,15 @@ def enrich_access(
 
 def collect_literature(
     paper: papers.PaperDocument,
-    references: list[papers.PaperReference],
-    originals: list[papers.PaperReference],
-    records: dict[str, literature_models.LiteratureRecord],
+    searches: list[ReferenceSearchState],
     source_sha256: str,
 ) -> list[literature_models.LiteratureRecord]:
-    """Reuse citation attachment after merging only confirmed work identities."""
+    """Restore original reference IDs before merging identities and attaching citations."""
     collected: dict[str, literature_models.LiteratureRecord] = {}
-    for index, (reference, original) in enumerate(zip(references, originals, strict=True)):
-        record = records[reference.id].model_copy(deep=True)
-        record.extracted = [original]
-        record.reference_ids = [] if index == 0 else [original.id]
+    for index, state in enumerate(searches):
+        record = state.record.model_copy(deep=True)
+        record.extracted = [state.original]
+        record.reference_ids = [] if index == 0 else [state.original.id]
         resolution.collect_record(collected, record)
     resolution.attach_occurrences(paper, source_sha256, collected)
     return list(collected.values())
@@ -456,10 +523,16 @@ def unique_search_references(
     result = []
     for index, reference in enumerate(references):
         copied = reference.model_copy(deep=True)
-        if index and counts[reference.id] > 1:
-            copied.id = f"{reference.id}__entry_{index}"
-            while copied.id in occupied:
-                copied.id += "_"
-            occupied.add(copied.id)
         result.append(copied)
+        if not index or counts[reference.id] <= 1:
+            continue
+        copied.id = available_reference_id(f"{reference.id}__entry_{index}", occupied)
+        occupied.add(copied.id)
     return result
+
+
+def available_reference_id(proposed_id: str, occupied: set[str]) -> str:
+    """Find an unused internal identifier without changing source evidence."""
+    while proposed_id in occupied:
+        proposed_id += "_"
+    return proposed_id

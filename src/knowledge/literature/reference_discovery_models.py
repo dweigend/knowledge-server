@@ -1,8 +1,8 @@
 """Describe bounded reference searches and their inspectable evidence."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from knowledge.literature.literature_models import Candidate
 
@@ -10,13 +10,31 @@ Provider = Literal["dnb", "openalex", "openlibrary", "semantic_scholar", "google
 RequiredField = Literal["title", "authors", "year", "venue", "publisher", "pages", "doi"]
 
 
+def unique_providers(providers: list[Provider]) -> list[Provider]:
+    """Reject duplicate providers without changing their search order."""
+    if len(set(providers)) == len(providers):
+        return providers
+    raise ValueError("Discovery providers must be unique")
+
+
+def unique_requirements(fields: list[RequiredField]) -> list[RequiredField]:
+    """Require distinct metadata fields before a search can be considered complete."""
+    if fields and len(set(fields)) == len(fields):
+        return fields
+    raise ValueError("Required fields must be nonempty and unique")
+
+
 class DiscoverySettings(BaseModel):
     """Limit optional searches while retaining unsuccessful results until explicit retry."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    providers: list[Provider] = Field(default=["dnb", "openalex", "openlibrary"])
-    required_fields: list[RequiredField] = Field(default=["title", "authors", "year"])
+    providers: Annotated[list[Provider], AfterValidator(unique_providers)] = Field(
+        default=["dnb", "openalex", "openlibrary"]
+    )
+    required_fields: Annotated[list[RequiredField], AfterValidator(unique_requirements)] = Field(
+        default=["title", "authors", "year"]
+    )
     max_requests: int = Field(default=40, ge=0, le=200)
     max_requests_per_reference: int = Field(default=5, ge=1, le=12)
     max_model_calls: int = Field(default=2, ge=0, le=5)
@@ -24,14 +42,15 @@ class DiscoverySettings(BaseModel):
     retry_generation: int = Field(default=0, ge=0)
     find_open_access: bool = False
 
-    @model_validator(mode="after")
-    def unique_options(self) -> "DiscoverySettings":
-        """Reject duplicate providers or requirements that obscure search budgets."""
-        if len(set(self.providers)) != len(self.providers):
-            raise ValueError("Discovery providers must be unique")
-        if not self.required_fields or len(set(self.required_fields)) != len(self.required_fields):
-            raise ValueError("Required fields must be nonempty and unique")
-        return self
+
+class LookupState(BaseModel):
+    """Track provider pacing and consumed per-reference budgets during one run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    backoff: set[str] = Field(default_factory=set)
+    last_requests: dict[str, float] = Field(default_factory=dict)
+    reference_requests: dict[str, int] = Field(default_factory=dict)
 
 
 class SearchQuery(BaseModel):
