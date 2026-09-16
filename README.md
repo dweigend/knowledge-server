@@ -38,6 +38,11 @@ deserves as much attention as the application code. See [#1][issue-1] and the
 
 ## Working model
 
+The [Hermes integration target](docs/hermes-integration-target.md) places agent
+execution, general tasks and schedules in Hermes. Knowledge contributes tools
+and skills over its existing domain operations. This is the target architecture;
+the current bounded bridge does not yet provide that complete integration.
+
 | Responsibility | Owner |
 | --- | --- |
 | Literature metadata, PDFs and reading workspace | Zotero |

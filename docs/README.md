@@ -31,6 +31,9 @@ client migration and end-to-end acceptance are pending.
 
 ## Reading order
 
+- [Hermes integration target](hermes-integration-target.md): native agent host,
+  thin Knowledge tools, ownership and server-side acceptance sequence.
+
 - [Typed data boundaries](typed-data-architecture.md): cleanup status and
   migration limits.
 - [Experimentation workbench](experimentation-workbench.md): manual execution,

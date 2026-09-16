@@ -1,5 +1,10 @@
 # Contributing
 
+For the maintainer workflow, edit source and maintain Git on the Mac; run checks
+on the server over SSH against an isolated source snapshot. Do not edit the
+deployed application as a development checkout. Keep machine-specific access
+and verification details outside Git.
+
 Use Python 3.13 and `uv sync --locked`. Follow [AGENTS.md](AGENTS.md): short
 functions, explicit names, flat control flow and one responsibility per module.
 Reuse existing code before introducing dependencies or abstractions.

@@ -1,5 +1,11 @@
 # Research modules and skill reuse
 
+The [Hermes integration target](hermes-integration-target.md), requested on
+2026-09-16, takes precedence for agent execution, task ownership and extension
+packaging. Reuse native Hermes runs, tasks, schedules, plugins and skills;
+Knowledge keeps its domain operations and deterministic processing. This is a
+target decision, not a claim of installed or deployed integration.
+
 The [modular architecture](knowledge-plugin-architecture.md) defines the latest
 approved two-entry workflow, public boundaries, dependency direction and
 replacement criteria. Its diagrams and optional extension inventory are the
