@@ -15,10 +15,13 @@ from pathlib import Path
 from uuid import uuid4
 
 from psycopg.conninfo import make_conninfo
+from pydantic import TypeAdapter
 
 from knowledge.document_processing import document_models
 from knowledge.revision_store import postgresql_revision_store
 from knowledge.runtime_support import environment_settings
+
+_MANIFEST = TypeAdapter(dict[str, str])
 
 
 def run_postgres(command: str, *arguments: str) -> None:
@@ -26,18 +29,6 @@ def run_postgres(command: str, *arguments: str) -> None:
     binary_directory = os.environ.get("KNOWLEDGE_POSTGRES_BIN")
     executable = str(Path(binary_directory) / command) if binary_directory else command
     subprocess.run([executable, *arguments], check=True)
-
-
-def dump_database(database_url: str, destination: Path) -> None:
-    """Write a PostgreSQL custom-format dump for later isolated restoration."""
-    run_postgres(
-        "pg_dump",
-        "--format=custom",
-        "--file",
-        str(destination),
-        "--dbname",
-        database_url,
-    )
 
 
 def copy_zotero_library(library: Path, destination: Path) -> None:
@@ -49,13 +40,6 @@ def copy_zotero_library(library: Path, destination: Path) -> None:
     ):
         source.backup(target)
     shutil.copytree(library / "storage", destination / "storage")
-
-
-def restart_zotero(was_running: bool) -> None:
-    """Restore Zotero only when it was running before the snapshot."""
-    if not was_running:
-        return
-    subprocess.run(["systemctl", "--user", "start", "knowledge-zotero"], check=True)
 
 
 def snapshot_zotero(library: Path, destination: Path) -> None:
@@ -74,7 +58,8 @@ def snapshot_zotero(library: Path, destination: Path) -> None:
     try:
         copy_zotero_library(library, destination)
     finally:
-        restart_zotero(was_running)
+        if was_running:
+            subprocess.run(["systemctl", "--user", "start", "knowledge-zotero"], check=True)
 
 
 def write_manifest(directory: Path) -> None:
@@ -94,7 +79,14 @@ def snapshot(settings: environment_settings.Settings, output_root: Path) -> Path
         raise ValueError("Configured Zotero library does not exist")
     directory = output_root / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     directory.mkdir(parents=True, mode=0o700)
-    dump_database(settings.database_url, directory / "database.dump")
+    run_postgres(
+        "pg_dump",
+        "--format=custom",
+        "--file",
+        str(directory / "database.dump"),
+        "--dbname",
+        settings.database_url,
+    )
     shutil.copytree(settings.archive_root, directory / "archive")
     run_directory = settings.archive_root.parent / "runs"
     if run_directory.exists():
@@ -104,31 +96,14 @@ def snapshot(settings: environment_settings.Settings, output_root: Path) -> Path
     return directory
 
 
-def verify_file(directory: Path, name: str, expected_hash: str) -> None:
-    """Reject a snapshot file whose bytes differ from its recorded checksum."""
-    actual_hash = hashlib.sha256((directory / name).read_bytes()).hexdigest()
-    if actual_hash != expected_hash:
-        raise ValueError(f"Snapshot checksum mismatch: {name}")
-
-
 def verify_manifest(directory: Path) -> int:
     """Verify all recorded files and return their count."""
-    manifest = json.loads((directory / "sha256.json").read_text())
+    manifest = _MANIFEST.validate_json((directory / "sha256.json").read_bytes())
     for name, expected_hash in manifest.items():
-        verify_file(directory, name, expected_hash)
+        actual_hash = hashlib.sha256((directory / name).read_bytes()).hexdigest()
+        if actual_hash != expected_hash:
+            raise ValueError(f"Snapshot checksum mismatch: {name}")
     return len(manifest)
-
-
-def restore_database(snapshot_directory: Path, database_url: str) -> None:
-    """Load the snapshot dump into the supplied isolated database."""
-    run_postgres(
-        "pg_restore",
-        "--exit-on-error",
-        "--no-owner",
-        "--dbname",
-        database_url,
-        str(snapshot_directory / "database.dump"),
-    )
 
 
 def inspect_restored_database(database_url: str) -> dict:
@@ -184,7 +159,14 @@ def verify_restore(snapshot_directory: Path, database_url: str) -> dict:
     maintenance_url = make_conninfo(database_url, dbname="postgres")
     run_postgres("createdb", "--maintenance-db", maintenance_url, restored_name)
     try:
-        restore_database(snapshot_directory, restored_url)
+        run_postgres(
+            "pg_restore",
+            "--exit-on-error",
+            "--no-owner",
+            "--dbname",
+            restored_url,
+            str(snapshot_directory / "database.dump"),
+        )
         return write_restore_report(
             snapshot_directory,
             restored_url,
