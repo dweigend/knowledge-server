@@ -6,12 +6,17 @@ import pytest
 from fastapi.testclient import TestClient
 from support import seed_article
 
-from knowledge import review
-from knowledge.application import AssessmentCommand, CompareEvidence, EditNote, ReviewCommand
-from knowledge.config import Settings
-from knowledge.contracts import Assessment, Evidence, Note, Reference
-from knowledge.storage import Conflict
-from knowledge.web import create_app
+import knowledge.knowledge_base.review_records as review
+from knowledge.knowledge_base.knowledge_service import (
+    AssessmentCommand,
+    CompareEvidence,
+    EditNote,
+    ReviewCommand,
+)
+from knowledge.knowledge_domain.application_errors import Conflict
+from knowledge.knowledge_domain.knowledge_record_models import Assessment, Evidence, Note, Reference
+from knowledge.runtime_support.environment_settings import Settings
+from knowledge.web_interface.fastapi_app import create_app
 
 
 class ArticleReferences(NamedTuple):
@@ -182,7 +187,7 @@ def test_no_cross_batch_reference_or_agent_review(application, article):
 
 def test_html_escapes_source_and_blocks_csrf(application, article, tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "knowledge.web.source_metadata",
+        "knowledge.web_interface.fastapi_app.source_metadata",
         lambda records, database: {
             str(record.entity_id): {"title": "Fixture source"}
             for record in records

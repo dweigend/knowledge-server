@@ -31,12 +31,15 @@ must be understandable, testable and replaceable without knowing every research
 workflow. Prefer improving existing knowledge over producing one note per file.
 
 The pilot already has Zotero ownership, revisioned records, contribution
-reconciliation, evidence checks and note consolidation. It is not yet an
-isolated plugin system: workflows import concrete application/storage classes,
-`import_workflow.py` calls reconciliation directly, and web handlers read the
-ledger. These are observed migration seams, not proof of enforced isolation.
-Private pilot experiments informed this target. They are not distributed as
-reproducible public acceptance evidence.
+reconciliation, evidence checks and note consolidation. Its package structure
+now exposes those module boundaries, but it is not yet an isolated plugin
+system: source-processing workflows import concrete knowledge-base and
+revision-store classes, `source_workflows/source_import.py` calls
+`source_workflows/claim_reconciliation.py` directly, and handlers in
+`web_interface/fastapi_app.py` read the revision store. These are observed
+migration seams, not proof of enforced isolation. Private pilot experiments
+informed this target. They are not distributed as reproducible public
+acceptance evidence.
 
 ## 2. Two entry paths, one processing workflow
 

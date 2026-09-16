@@ -6,16 +6,17 @@ from uuid import uuid4
 import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from knowledge import source_view, zotero
-from knowledge.contracts import Record, Source, ZoteroReference
-from knowledge.document_contracts import (
+import knowledge.literature.zotero_client as zotero
+import knowledge.web_interface.source_article_view as source_view
+from knowledge.document_processing.document_models import (
     DocumentBlock,
     DocumentRelationship,
     DocumentSnapshot,
     TableCell,
 )
-from knowledge.storage import Database, Ledger
-from knowledge.web import citation_links
+from knowledge.knowledge_domain.knowledge_record_models import Record, Source, ZoteroReference
+from knowledge.revision_store.postgresql_revision_store import Database, Ledger
+from knowledge.web_interface.fastapi_app import citation_links
 
 
 @pytest.fixture
@@ -208,10 +209,11 @@ def test_source_route_reads_without_models_or_knowledge_writes(
 
     from fastapi.testclient import TestClient
 
-    from knowledge import document_extraction, generation
-    from knowledge.config import Settings
-    from knowledge.storage import Database
-    from knowledge.web import create_app
+    import knowledge.document_processing.extraction_store as document_extraction
+    import knowledge.model_integration.structured_generation as generation
+    from knowledge.revision_store.postgresql_revision_store import Database
+    from knowledge.runtime_support.environment_settings import Settings
+    from knowledge.web_interface.fastapi_app import create_app
 
     queries = []
 
@@ -267,7 +269,7 @@ def test_outline_keeps_nested_headings(snapshot):
 def test_claim_links_use_the_evidence_claim_revision(source_record, monkeypatch):
     from types import SimpleNamespace
 
-    from knowledge.contracts import Claim, Evidence
+    from knowledge.knowledge_domain.knowledge_record_models import Claim, Evidence
 
     claim = source_record.model_copy(
         update={
@@ -306,7 +308,7 @@ def test_unresolved_historical_zotero_identity_keeps_readable_error(monkeypatch,
     from contextlib import contextmanager
     from types import SimpleNamespace
 
-    from knowledge import sources
+    import knowledge.knowledge_base.source_records as sources
 
     @contextmanager
     def transaction():
@@ -326,7 +328,7 @@ def test_unresolved_historical_zotero_identity_keeps_readable_error(monkeypatch,
 def test_related_knowledge_excludes_other_sources_evidence_and_keeps_labels_compact(source_record):
     from types import SimpleNamespace
 
-    from knowledge.contracts import Assessment, Claim, Evidence
+    from knowledge.knowledge_domain.knowledge_record_models import Assessment, Claim, Evidence
 
     claim = source_record.model_copy(
         update={

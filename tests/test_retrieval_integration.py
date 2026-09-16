@@ -1,5 +1,5 @@
-from knowledge.contracts import Claim
-from knowledge.reconciliation import claim_candidates
+from knowledge.knowledge_domain.knowledge_record_models import Claim
+from knowledge.source_workflows.claim_reconciliation import claim_candidates
 
 
 def test_main_retrieval_bounds_large_claim_sets_and_preserves_current_revisions(application):

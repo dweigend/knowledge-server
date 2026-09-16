@@ -5,9 +5,10 @@ import hashlib
 import pytest
 from pydantic import ValidationError
 
-from knowledge import sources, zotero
-from knowledge.contracts import LegacySource, Source, ZoteroReference
-from knowledge.storage import decode_payload
+import knowledge.knowledge_base.source_records as sources
+import knowledge.literature.zotero_client as zotero
+from knowledge.knowledge_domain.knowledge_record_models import LegacySource, Source, ZoteroReference
+from knowledge.revision_store.postgresql_revision_store import decode_payload
 
 
 def zotero_reference(pdf_hash):
@@ -84,7 +85,7 @@ def test_old_citation_resolves_retained_attachment_after_new_pdf(article):
     from unittest.mock import Mock
     from uuid import uuid4
 
-    from knowledge.sources import zotero_reference as resolve_reference
+    from knowledge.knowledge_base.source_records import zotero_reference as resolve_reference
 
     legacy = article.source
     old_reference = zotero_reference(legacy.sha256)
@@ -104,7 +105,7 @@ def test_old_citation_resolves_retained_attachment_after_new_pdf(article):
 def test_storage_migration_preserves_review_but_source_changes_do_not(article):
     from unittest.mock import Mock
 
-    from knowledge.review import revision_is_current
+    from knowledge.knowledge_base.review_records import revision_is_current
 
     legacy = article.source
     reference = zotero_reference(legacy.sha256)
@@ -129,11 +130,14 @@ def test_metadata_outage_is_visible_without_hiding_snapshot(article, monkeypatch
     from unittest.mock import MagicMock, Mock
     from urllib.error import URLError
 
-    from knowledge.web import source_description
+    from knowledge.web_interface.fastapi_app import source_description
 
     database = MagicMock()
     record = Mock(payload=article.source)
-    monkeypatch.setattr("knowledge.sources.zotero_reference", lambda ledger, record: object())
+    monkeypatch.setattr(
+        "knowledge.knowledge_base.source_records.zotero_reference",
+        lambda ledger, record: object(),
+    )
     monkeypatch.setattr(zotero, "get_bibliography", Mock(side_effect=URLError("offline")))
     description = source_description(record, database)
     assert description["title"] == "Zotero-Daten nicht verfügbar"

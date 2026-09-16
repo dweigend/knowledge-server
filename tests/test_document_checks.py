@@ -1,6 +1,6 @@
-from knowledge.document_checks import compare_tables, table_issues
-from knowledge.document_contracts import DocumentBlock, TableCell
-from knowledge.marker_parser import marker_blocks, parse_table
+from knowledge.document_processing.document_models import DocumentBlock, TableCell
+from knowledge.document_processing.extraction_quality import compare_tables, table_issues
+from knowledge.document_processing.marker_parser import marker_blocks, parse_table
 
 
 def table(cells: list[TableCell], rows: int = 2, columns: int = 2) -> DocumentBlock:
@@ -74,7 +74,7 @@ def test_marker_restores_original_page_and_pdf_coordinates():
 
 
 def test_reconciliation_keeps_primary_identity_and_footnotes_with_changed_marker_cells():
-    from knowledge.document_checks import reconcile_blocks
+    from knowledge.document_processing.extraction_quality import reconcile_blocks
 
     primary = table([TableCell(row=0, column=0, text="41")], 1, 1)
     primary.page = 21
@@ -94,7 +94,7 @@ def test_reconciliation_keeps_primary_identity_and_footnotes_with_changed_marker
 
 
 def test_scan_reading_retains_footnotes_missing_from_marker():
-    from knowledge.document_checks import reconcile_blocks
+    from knowledge.document_processing.extraction_quality import reconcile_blocks
 
     original = DocumentBlock(id="original", kind="text", text="bad OCR", page=3)
     footnote = DocumentBlock(id="footnote", kind="footnote", text="18: Original note", page=3)
@@ -119,7 +119,7 @@ def test_table_runs_preserve_superscripts_subscripts_and_inline_segments():
 
 
 def test_unmatched_marker_table_is_visible_with_review_warning():
-    from knowledge.document_checks import reconcile_blocks
+    from knowledge.document_processing.extraction_quality import reconcile_blocks
 
     paragraph = DocumentBlock(id="paragraph", kind="text", text="Body", page=1)
     candidate = table([TableCell(row=0, column=0, text="42")], 1, 1)

@@ -2,8 +2,11 @@
 
 import json
 
-from knowledge.contracts import Bibliography
-from knowledge.import_workflow import ArticleExtraction, merge_extracted_metadata
+from knowledge.knowledge_domain.knowledge_record_models import Bibliography
+from knowledge.source_workflows.article_claim_extraction import (
+    ArticleExtraction,
+    merge_extracted_metadata,
+)
 
 
 def extraction(bibliography):

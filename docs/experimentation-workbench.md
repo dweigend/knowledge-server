@@ -22,9 +22,11 @@ page text and its revision remain the authority for exact quotation validation;
 GROBID's normalized Markdown is a separate representation. Information blocks
 can use that structure as context but must cite the original page text.
 
-The boundary is split into `paper_contracts.py` (provider-neutral results),
-`grobid_client.py` (HTTP and cancellation), `grobid_parser.py` (TEI conversion),
-`paper_extraction.py` (shared orchestration) and `paper_view.py` (safe rendering).
+The boundary is split into `literature/structured_paper_models.py`
+(provider-neutral results), `literature/grobid_client.py` (HTTP and cancellation),
+`literature/grobid_parser.py` (TEI conversion),
+`source_workflows/structured_paper_extraction.py` (shared orchestration) and
+`web_interface/paper_markdown_renderer.py` (safe rendering).
 An analyzer with the same callable contract can replace GROBID without changing
 source-span validation or UI contracts. The original provider response and
 Markdown are retained in the attempt's private trace directory; the export
@@ -54,11 +56,12 @@ Markdown and the original PDF remain available for comparison.
 ## Literature records and citation network
 
 Each enriched extraction contains one normalized record per confidently
-identified work, including the uploaded paper itself. `literature_contracts.py`
-defines bibliographic metadata, resolution provenance and observed citations.
-`crossref_client.py` owns network access; `literature_resolution.py` owns
-matching and deduplication. External candidates and original extraction remain
-available alongside the accepted metadata. Missing fields are explicit.
+identified work, including the uploaded paper itself.
+`literature/literature_models.py` defines bibliographic metadata, resolution
+provenance and observed citations. `literature/crossref_client.py` owns network
+access; `literature/literature_resolution.py` owns matching and deduplication.
+External candidates and original extraction remain available alongside the
+accepted metadata. Missing fields are explicit.
 
 An exact DOI still requires compatible title evidence. Bibliographic searches
 require strong title, author and publication-year agreement. Ambiguous matches
@@ -87,14 +90,14 @@ because execution finished.
 
 | Step | Shared operation |
 | --- | --- |
-| PDF text | `paper_extraction.extract_paper_document` |
-| Information blocks | `information_blocks` |
-| Claims and evidence | `import_workflow.extract_document` |
-| Find knowledge | `knowledge_selection.retrieve_knowledge` |
-| Select entries | `knowledge_selection` |
-| Propose changes | `reconciliation` and `consolidation` |
-| Cited points | `writing` |
-| Write prose | `writing` |
+| PDF text | `structured_paper_extraction.extract_paper_document` |
+| Information blocks | `information_block_extraction.segment_information` |
+| Claims and evidence | `article_claim_extraction.extract_document` |
+| Find knowledge | `knowledge_candidate_selection.retrieve_knowledge` |
+| Select entries | `knowledge_candidate_selection.select_knowledge` |
+| Propose changes | `claim_matching` and `note_revision_proposals` |
+| Cited points | `source_grounded_writing` |
+| Write prose | `source_grounded_writing` |
 
 Extraction records Poppler pages and source revisions, including readable short
 PDFs. Segmentation offers model and deterministic paragraph modes, both with
@@ -106,12 +109,15 @@ Selection retains inclusion/exclusion rationale and retrieved
 revisions; proposed changes use existing claim and note contracts. Writing
 retains block citations and requires explicit author rules for prose.
 
-`pipeline_steps.py` assembles these functions and validates typed step results.
-`experimentation.py` owns attempt lifecycle and dependency resolution;
-`experiment_store.py` owns private files, locks and hashes. `experiment_web.py`
-and `experiment_cli.py` are entry points to the same runner. `generation.py`
-and `hermes_bridge.py` remain the model/runtime boundary. No second agent loop
-or production-acceptance path exists in the workbench.
+`experiments/experiment_step_catalog.py` declares every step once, while the
+focused modules below `experiments/experiment_steps/` validate and execute
+typed results. `experiments/experiment_runner.py` owns attempt lifecycle and
+dependency resolution; `experiments/experiment_store.py` owns private files,
+locks and hashes. `web_interface/experiment_routes.py` and
+`command_interfaces/experiment_cli.py` are entry points to the same runner.
+`model_integration/structured_generation.py` and
+`model_integration/hermes_bridge.py` remain the model/runtime boundary. No
+second agent loop or production-acceptance path exists in the workbench.
 
 ```mermaid
 flowchart LR

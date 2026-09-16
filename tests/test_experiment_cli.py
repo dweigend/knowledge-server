@@ -3,9 +3,9 @@ import json
 import pytest
 from test_pipeline_steps import write_reviewed_pdf
 
-from knowledge.experiment_cli import main
-from knowledge.experimentation import prepare_attempt
-from knowledge.prompt_registry import get_revision, save_revision
+from knowledge.command_interfaces.experiment_cli import main
+from knowledge.experiments.experiment_runner import prepare_attempt
+from knowledge.model_integration.prompt_registry import get_revision, save_revision
 
 pytestmark = pytest.mark.usefixtures("poppler_extraction")
 

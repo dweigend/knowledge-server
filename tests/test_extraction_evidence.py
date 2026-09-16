@@ -5,9 +5,10 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from knowledge import evidence, sources
-from knowledge.contracts import Evidence, Reference
-from knowledge.document_contracts import DocumentBlock, DocumentLocation
+import knowledge.knowledge_base.claim_evidence_records as evidence
+import knowledge.knowledge_base.source_records as sources
+from knowledge.document_processing.document_models import DocumentBlock, DocumentLocation
+from knowledge.knowledge_domain.knowledge_record_models import Evidence, Reference
 
 
 @pytest.fixture

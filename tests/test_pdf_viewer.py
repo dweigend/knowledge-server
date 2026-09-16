@@ -5,10 +5,10 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
-from knowledge import zotero
-from knowledge.config import Settings
-from knowledge.contracts import Source, ZoteroReference
-from knowledge.web import create_app
+import knowledge.literature.zotero_client as zotero
+from knowledge.knowledge_domain.knowledge_record_models import Source, ZoteroReference
+from knowledge.runtime_support.environment_settings import Settings
+from knowledge.web_interface.fastapi_app import create_app
 
 
 @pytest.mark.parametrize("variant", ["original", "clean"])

@@ -5,8 +5,8 @@ from time import monotonic, sleep
 
 import pytest
 
-from knowledge.grobid_client import extract_paper, service_endpoint
-from knowledge.grobid_parser import parse_paper_tei
+from knowledge.literature.grobid_client import extract_paper, service_endpoint
+from knowledge.literature.grobid_parser import parse_paper_tei
 
 TEI = """<TEI xmlns="http://www.tei-c.org/ns/1.0">
 <teiHeader>

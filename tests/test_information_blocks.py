@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-from knowledge.information_blocks import (
+from knowledge.source_workflows.information_block_extraction import (
     BlockProposal,
     BlockSegmentation,
     InformationBlock,
@@ -95,7 +95,7 @@ def test_pdf_operation_accepts_readable_single_page(tmp_path, monkeypatch):
     pdf.write_bytes(b"PDF fixture boundary")
 
     monkeypatch.setattr(
-        "knowledge.ingestion.subprocess.run",
+        "knowledge.document_processing.pdf_text_extraction.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(stdout=b"A short page.\f"),
     )
     assert extract_text(pdf).pages == ("A short page.",)
@@ -105,7 +105,7 @@ def test_pdf_operation_rejects_empty_text(tmp_path, monkeypatch):
     pdf = tmp_path / "source.pdf"
     pdf.write_bytes(b"PDF fixture boundary")
     monkeypatch.setattr(
-        "knowledge.ingestion.subprocess.run",
+        "knowledge.document_processing.pdf_text_extraction.subprocess.run",
         lambda *args, **kwargs: SimpleNamespace(stdout=b"\f"),
     )
     with pytest.raises(ValueError, match="manual extraction QA"):
@@ -127,7 +127,7 @@ def test_model_segmentation_uses_shared_adapter_and_domain_validation(tmp_path, 
             result["blocks"][0]["sources"][0]["quote"] = "Fabricated quotation"
         Path(arguments[-1]).write_text(json.dumps({"response": json.dumps(result)}))
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
     result = segment_information(document, "Group observations", tmp_path)
     assert len(result.blocks) == 3
     assert len(requests) == 2

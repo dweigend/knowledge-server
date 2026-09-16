@@ -8,9 +8,13 @@ import pytest
 from psycopg import sql
 from support import SeedArticle
 
-from knowledge.application import Knowledge
-from knowledge.contracts import Bibliography, ExtractedClaim, LegacySource
-from knowledge.storage import Database
+from knowledge.knowledge_base.knowledge_service import Knowledge
+from knowledge.knowledge_domain.knowledge_record_models import (
+    Bibliography,
+    ExtractedClaim,
+    LegacySource,
+)
+from knowledge.revision_store.postgresql_revision_store import Database
 
 
 @pytest.fixture(autouse=True)
@@ -67,7 +71,7 @@ def article():
 @pytest.fixture
 def poppler_extraction(monkeypatch):
     """Use explicit offline extraction for tests of unrelated pipeline behavior."""
-    from knowledge.prompt_registry import STEP_DEFAULTS
+    from knowledge.model_integration.prompt_registry import STEP_DEFAULTS
 
     prompt, schema, _ = STEP_DEFAULTS["extract_text"]
     monkeypatch.setitem(

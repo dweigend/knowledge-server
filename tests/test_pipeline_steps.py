@@ -5,24 +5,30 @@ from uuid import UUID
 
 import pytest
 
-from knowledge.contracts import Bibliography, Claim, ExtractedClaim, Record
-from knowledge.import_workflow import ArticleExtraction, extract_document
-from knowledge.information_blocks import TextExtraction, segment_verbatim, text_revision
-from knowledge.ingestion import cancellable_pdf_text
-from knowledge.knowledge_selection import (
+from knowledge.document_processing.pdf_text_extraction import cancellable_pdf_text
+from knowledge.experiments import experiment_step_catalog
+from knowledge.experiments.experiment_steps import document_steps
+from knowledge.experiments.pipeline_specification import StepExecution
+from knowledge.knowledge_domain.knowledge_record_models import (
+    Bibliography,
+    Claim,
+    ExtractedClaim,
+    Record,
+)
+from knowledge.model_integration.prompt_registry import resolve_recipe, save_revision, seed_defaults
+from knowledge.source_workflows.article_claim_extraction import ArticleExtraction, extract_document
+from knowledge.source_workflows.information_block_extraction import (
+    TextExtraction,
+    segment_verbatim,
+    text_revision,
+)
+from knowledge.source_workflows.knowledge_candidate_selection import (
     EntrySelection,
     KnowledgeSelection,
     retrieve_knowledge,
     validate_selection,
 )
-from knowledge.pipeline_steps import (
-    claim_source_pins,
-    execute_step,
-    formulate_claims,
-    validate_step_parameters,
-)
-from knowledge.prompt_registry import resolve_recipe, save_revision, seed_defaults
-from knowledge.writing import (
+from knowledge.source_workflows.source_grounded_writing import (
     WritingPoint,
     WritingPoints,
     validate_block_citations,
@@ -73,8 +79,19 @@ def claim_record(number, text):
     )
 
 
+def step_execution(step, pdf, inputs, knowledge, recipe, output_directory, cancelled=lambda: False):
+    return StepExecution(
+        pdf=pdf,
+        inputs=inputs,
+        knowledge=knowledge,
+        recipe=recipe,
+        output_directory=output_directory,
+        cancelled=cancelled,
+    )
+
+
 def test_claim_source_pin_has_independently_known_offsets(document, proposal):
-    result = claim_source_pins(proposal, segment_verbatim(document), document)
+    result = document_steps.claim_source_pins(proposal, segment_verbatim(document), document)
     assert result.block_indexes == [1]
     assert [(span.page, span.start, span.end, span.quote) for span in result.sources] == [
         (1, 0, 22, "Group A scored higher.")
@@ -86,7 +103,7 @@ def test_claim_cannot_cite_text_outside_selected_blocks(document, proposal):
     blocks = segment_verbatim(document)
     blocks.blocks = blocks.blocks[1:]
     with pytest.raises(ValueError, match="inside a supplied"):
-        claim_source_pins(proposal, blocks, document)
+        document_steps.claim_source_pins(proposal, blocks, document)
 
 
 def test_retrieval_is_bounded_deterministic_and_preserves_seed_revisions():
@@ -160,10 +177,20 @@ def test_shared_import_and_workbench_use_same_adapter_contract(
             json.dumps({"response": response.model_dump_json(), "execution": "simulated"})
         )
 
-    monkeypatch.setattr("knowledge.generation.run_hermes", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.run_hermes", respond)
     production = extract_document(list(document.pages), tmp_path / "production")
-    experiment = formulate_claims(
-        document, segment_verbatim(document), recipe, tmp_path / "experiment", lambda: False
+    experiment = document_steps.formulate_claims_from_blocks(
+        step_execution(
+            "formulate_claims",
+            tmp_path / "unused.pdf",
+            {
+                "extract_text": document.model_dump(mode="json"),
+                "segment_blocks": segment_verbatim(document).model_dump(mode="json"),
+            },
+            [],
+            recipe,
+            tmp_path / "experiment",
+        )
     )
     assert production == experiment.extractions
     assert len(requests) == 2
@@ -177,13 +204,23 @@ def test_missing_step_dependency_and_cancellation_stop_before_model(tmp_path):
     seed_defaults()
     _, recipe, _, _ = resolve_recipe("segment_blocks")
     with pytest.raises(ValueError, match="missing required"):
-        execute_step(
-            "segment_blocks", tmp_path / "unused.pdf", {}, [], recipe, tmp_path, lambda: False
+        experiment_step_catalog.execute_step(
+            "segment_blocks",
+            step_execution("segment_blocks", tmp_path / "unused.pdf", {}, [], recipe, tmp_path),
         )
     _, recipe, _, _ = resolve_recipe("extract_text")
     with pytest.raises(InterruptedError):
-        execute_step(
-            "extract_text", tmp_path / "unused.pdf", {}, [], recipe, tmp_path, lambda: True
+        experiment_step_catalog.execute_step(
+            "extract_text",
+            step_execution(
+                "extract_text",
+                tmp_path / "unused.pdf",
+                {},
+                [],
+                recipe,
+                tmp_path,
+                lambda: True,
+            ),
         )
 
 
@@ -204,7 +241,7 @@ def test_unsupported_or_mistyped_parameters_reject_before_execution(step, parame
     _, recipe, _, _ = resolve_recipe(step)
     recipe.parameters = parameters
     with pytest.raises(ValueError):
-        validate_step_parameters(recipe)
+        experiment_step_catalog.get_step_definition(step).validate_recipe(recipe)
 
 
 def test_extraction_subprocess_has_real_timeout_and_cancellation():
@@ -296,7 +333,7 @@ def test_eight_manual_steps_keep_original_evidence_with_simulated_model_boundary
             )
         )
 
-    monkeypatch.setattr("knowledge.generation.run_hermes", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.run_hermes", respond)
     results = {}
     for step in (
         "extract_text",
@@ -315,7 +352,9 @@ def test_eight_manual_steps_keep_original_evidence_with_simulated_model_boundary
             recipe.parameters["goal"] = "Explain the observation"
         if step == "draft_text":
             recipe.author_rules_name, recipe.author_rules_revision = rules.name, rules.revision
-        result = execute_step(step, pdf, results, [seed], recipe, tmp_path / step, lambda: False)
+        result = experiment_step_catalog.execute_step(
+            step, step_execution(step, pdf, results, [seed], recipe, tmp_path / step)
+        )
         results[step] = result.model_dump(mode="json")
     assert called == list(responses)
     assert (

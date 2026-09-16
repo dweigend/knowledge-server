@@ -5,10 +5,10 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, NameObject
 
-from knowledge import document_extraction as extraction
-from knowledge.contracts import Source, ZoteroReference
-from knowledge.document_contracts import DocumentBlock, DocumentSnapshot
-from knowledge.extraction_worker import verified_page_map
+import knowledge.document_processing.extraction_store as extraction
+from knowledge.document_processing.document_models import DocumentBlock, DocumentSnapshot
+from knowledge.knowledge_domain.knowledge_record_models import Source, ZoteroReference
+from knowledge.source_workflows.document_extraction_worker import verified_page_map
 
 
 @pytest.fixture

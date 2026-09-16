@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from knowledge.contracts import Contract
-from knowledge.generation import generate
+from knowledge.knowledge_domain.knowledge_record_models import Contract
+from knowledge.model_integration.structured_generation import generate
 
 
 class Proposal(Contract):
@@ -17,7 +17,7 @@ def test_cached_schema_valid_output_must_pass_domain_validation(tmp_path, monkey
         quote = "fabricated" if len(calls) == 1 else "exact source"
         Path(arguments[-1]).write_text(json.dumps({"response": json.dumps({"quote": quote})}))
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
     first = generate("Instructions", "Source", Proposal, tmp_path)
     assert first.quote == "fabricated"
 
@@ -38,7 +38,7 @@ def test_json_syntax_repair_excludes_large_source_context(tmp_path, monkeypatch)
         response = '{"quote": "exact",}' if len(requests) == 1 else '{"quote": "exact"}'
         Path(arguments[-1]).write_text(json.dumps({"response": response}))
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
     proposal = generate("Extract JSON", "LARGE_SOURCE_CONTEXT", Proposal, tmp_path)
     assert proposal.quote == "exact"
     assert len(requests) == 2
@@ -48,7 +48,7 @@ def test_json_syntax_repair_excludes_large_source_context(tmp_path, monkeypatch)
 
 
 def test_configuration_variants_do_not_share_model_responses(tmp_path, monkeypatch):
-    from knowledge.generation import ModelConfiguration
+    from knowledge.model_integration.structured_generation import ModelConfiguration
 
     requests = []
 
@@ -57,7 +57,7 @@ def test_configuration_variants_do_not_share_model_responses(tmp_path, monkeypat
         requests.append(json.loads(request["configuration"]))
         Path(arguments[-1]).write_text(json.dumps({"response": '{"quote": "exact"}'}))
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
     generate("Instructions", "Source", Proposal, tmp_path)
     generate("Instructions", "Source", Proposal, tmp_path)
     generate(
@@ -69,12 +69,13 @@ def test_configuration_variants_do_not_share_model_responses(tmp_path, monkeypat
     )
     assert [request["model"] for request in requests] == ["gpt-5.6-luna", "alternative"]
     assert [request["provider"] for request in requests] == ["openai-codex", "custom"]
+    assert [request["reasoning_effort"] for request in requests] == ["max", "max"]
 
 
 def test_single_attempt_does_not_run_repair(tmp_path, monkeypatch):
     import pytest
 
-    from knowledge.generation import ModelConfiguration
+    from knowledge.model_integration.structured_generation import ModelConfiguration
 
     calls = []
 
@@ -83,7 +84,7 @@ def test_single_attempt_does_not_run_repair(tmp_path, monkeypatch):
         assert kwargs["timeout"] == 12
         Path(arguments[-1]).write_text(json.dumps({"response": "invalid"}))
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
     with pytest.raises(ValueError, match="failed contract"):
         generate(
             "Instructions",
@@ -98,11 +99,12 @@ def test_single_attempt_does_not_run_repair(tmp_path, monkeypatch):
 def test_unsupported_model_capabilities_are_rejected():
     import pytest
 
-    from knowledge.generation import ModelConfiguration
+    from knowledge.model_integration.structured_generation import ModelConfiguration
 
     for configuration in [
         {"allowed_tools": ["shell"]},
         {"cost_limit_usd": 1},
+        {"reasoning_effort": "unsupported"},
         {"max_attempts": 3},
         {"timeout_seconds": 0},
     ]:
@@ -124,7 +126,7 @@ def test_running_hermes_is_terminated_on_cancellation():
 
     import pytest
 
-    from knowledge.generation import wait_for_hermes
+    from knowledge.model_integration.structured_generation import wait_for_hermes
 
     process = Mock(spec=subprocess.Popen)
     process.poll.return_value = None
@@ -142,7 +144,7 @@ def test_provider_failure_records_inspectable_event_without_credentials(tmp_path
     def fail(arguments, **kwargs):
         raise subprocess.CalledProcessError(1, arguments, stderr="SECRET_PROVIDER_TOKEN")
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", fail)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", fail)
     with pytest.raises(subprocess.CalledProcessError):
         generate("Instructions", "Source", Proposal, tmp_path)
     events = [
@@ -170,7 +172,7 @@ def test_reused_response_preserves_files_and_records_effective_provider(tmp_path
             )
         )
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
     generate("Instructions", "Source", Proposal, tmp_path)
     responses = {path: path.read_bytes() for path in tmp_path.glob("*/response-*.json")}
     generate("Instructions", "Source", Proposal, tmp_path)
@@ -190,7 +192,7 @@ def test_reused_response_preserves_files_and_records_effective_provider(tmp_path
 def test_bridge_does_not_report_requested_model_as_verified_runtime():
     from types import SimpleNamespace
 
-    from knowledge.hermes_bridge import run_request
+    from knowledge.model_integration.hermes_bridge import run_request
 
     agent = SimpleNamespace(
         session_id="test-session",
@@ -201,3 +203,34 @@ def test_bridge_does_not_report_requested_model_as_verified_runtime():
     assert response["provider"] is None
     assert response["requested_model"] == "a"
     assert response["requested_provider"] == "b"
+
+
+def test_bridge_passes_pinned_reasoning_effort_to_hermes(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from knowledge.model_integration.hermes_bridge import create_agent
+
+    received = {}
+
+    class Agent:
+        def __init__(self, **settings):
+            received.update(settings)
+
+    monkeypatch.setitem(
+        sys.modules,
+        "hermes_cli.runtime_provider",
+        SimpleNamespace(
+            resolve_runtime_provider=lambda **kwargs: {
+                "provider": kwargs["requested"],
+                "api_mode": "responses",
+                "api_key": None,
+                "base_url": None,
+            }
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "run_agent", SimpleNamespace(AIAgent=Agent))
+
+    create_agent("gpt-5.6-luna", "openai-codex", reasoning_effort="max")
+
+    assert received["reasoning_config"] == {"effort": "max"}

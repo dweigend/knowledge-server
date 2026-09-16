@@ -5,10 +5,11 @@ import pytest
 from fastapi.testclient import TestClient
 from test_experimentation import fixture_pdf
 
-from knowledge import experimentation as experiments
-from knowledge.config import Settings
-from knowledge.prompt_registry import Recipe, get_default, get_revision
-from knowledge.web import create_app
+import knowledge.experiments.experiment_runner as experiments
+from knowledge.experiments import experiment_store
+from knowledge.model_integration.prompt_registry import Recipe, get_default, get_revision
+from knowledge.runtime_support.environment_settings import Settings
+from knowledge.web_interface.fastapi_app import create_app
 
 
 @pytest.fixture
@@ -16,7 +17,9 @@ def workbench(tmp_path, monkeypatch):
     def unexpected_model(*args, **kwargs):
         raise AssertionError("Reading or deterministic operations must not request a model")
 
-    monkeypatch.setattr("knowledge.generation.run_hermes", unexpected_model)
+    monkeypatch.setattr(
+        "knowledge.model_integration.structured_generation.run_hermes", unexpected_model
+    )
     root = tmp_path / "archive"
     with TestClient(create_app(Settings("unused", root))) as client:
         page = client.get("/experiments")
@@ -203,6 +206,7 @@ def test_missing_step_fields_do_not_save_any_configuration(workbench, missing):
     [
         {"timeout_seconds": "0"},
         {"max_attempts": "7"},
+        {"reasoning_effort": "unsupported"},
         {"allowed_tools": '["unsupported"]'},
         {"parameters": "{"},
         {"parameters": "[]"},
@@ -232,7 +236,7 @@ def test_invalid_model_recipe_or_parameters_do_not_leave_prompt_drafts(workbench
 def test_legacy_source_remains_readable_and_does_not_break_comparison(workbench):
     client, root, token = workbench
     run_id = source(client, token)
-    path = experiments.experiment_directory(root, run_id) / "manifest.json"
+    path = experiment_store.experiment_directory(root, run_id) / "manifest.json"
     legacy = json.loads(path.read_text())
     legacy.pop("version")
     path.write_text(json.dumps(legacy))
@@ -257,7 +261,7 @@ def test_partial_cleanup_remains_visible_and_retriable_in_dashboard(workbench, m
             raise PermissionError("simulated partial filesystem deletion")
 
         failed_filesystem.setattr(
-            "knowledge.experimentation.shutil.rmtree", fail_after_manifest_removed
+            "knowledge.experiments.experiment_runner.shutil.rmtree", fail_after_manifest_removed
         )
         response = client.post(f"/experiments/{run_id}/delete", data={"csrf": token})
         assert response.status_code == 422
@@ -272,7 +276,7 @@ def test_partial_cleanup_remains_visible_and_retriable_in_dashboard(workbench, m
 def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeypatch):
     from test_grobid import TEI
 
-    from knowledge.prompt_registry import save_revision
+    from knowledge.model_integration.prompt_registry import save_revision
 
     client, root, token = workbench
     run_id = source(client, token)
@@ -284,7 +288,8 @@ def test_grobid_form_upgrades_recipe_and_renders_bibliography(workbench, monkeyp
         previous.revision,
     )
     monkeypatch.setattr(
-        "knowledge.grobid_client.request_tei", lambda *args: TEI.encode() + b"\n200"
+        "knowledge.literature.grobid_client.request_tei",
+        lambda *args: TEI.encode() + b"\n200",
     )
     response = client.post(
         f"/experiments/{run_id}/steps/extract_text",
@@ -312,12 +317,13 @@ def test_source_records_link_context_and_export_network_without_queries_on_read(
 ):
     from test_grobid import TEI
 
-    from knowledge.literature_contracts import Candidate, LiteratureMetadata
+    from knowledge.literature.literature_models import Candidate, LiteratureMetadata
 
     client, root, token = workbench
     run_id = source(client, token)
     monkeypatch.setattr(
-        "knowledge.grobid_client.request_tei", lambda *args: TEI.encode() + b"\n200"
+        "knowledge.literature.grobid_client.request_tei",
+        lambda *args: TEI.encode() + b"\n200",
     )
     requests = []
 
@@ -336,7 +342,7 @@ def test_source_records_link_context_and_export_network_without_queries_on_read(
             )
         ]
 
-    monkeypatch.setattr("knowledge.literature_resolution.lookup_crossref", lookup)
+    monkeypatch.setattr("knowledge.literature.literature_resolution.lookup_crossref", lookup)
     response = client.post(
         f"/experiments/{run_id}/steps/extract_text",
         data={

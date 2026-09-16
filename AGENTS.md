@@ -40,7 +40,7 @@ Run from the repository root:
 ```sh
 uv run --locked ruff check .
 uv run --locked ruff format --check .
-uv run --locked ty check --exclude src/knowledge/hermes_bridge.py
+uv run --locked ty check --exclude src/knowledge/model_integration/hermes_bridge.py
 uv run --locked pytest
 ```
 

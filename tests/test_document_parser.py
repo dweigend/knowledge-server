@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from knowledge.document_parser import page_sizes, parse_document
+from knowledge.document_processing.docling_parser import page_sizes, parse_document
 
 
 def text_node(index, text, label="text"):

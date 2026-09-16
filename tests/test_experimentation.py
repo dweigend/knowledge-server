@@ -10,10 +10,15 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
-from knowledge import experimentation as experiments
-from knowledge.experiment_store import experiment_lock
-from knowledge.prompt_registry import activate_revision, get_default, save_revision, seed_defaults
-from knowledge.storage import Conflict
+import knowledge.experiments.experiment_runner as experiments
+import knowledge.experiments.experiment_store as experiment_store
+from knowledge.knowledge_domain.application_errors import Conflict
+from knowledge.model_integration.prompt_registry import (
+    activate_revision,
+    get_default,
+    save_revision,
+    seed_defaults,
+)
 
 pytestmark = pytest.mark.usefixtures("poppler_extraction")
 
@@ -142,7 +147,9 @@ def test_failed_rerun_retains_success_without_invalidating_downstream(
     def unavailable_provider(*args, **kwargs):
         raise ValueError("Provider unavailable during test")
 
-    monkeypatch.setattr("knowledge.generation.run_hermes", unavailable_provider)
+    monkeypatch.setattr(
+        "knowledge.model_integration.structured_generation.run_hermes", unavailable_provider
+    )
     failed = experiments.run_step(*experiment, "segment_blocks", variant)
     assert failed["status"] == "failed"
     assert "Provider unavailable" in failed["error"]
@@ -160,7 +167,7 @@ def test_input_file_changes_fail_before_execution(experiment: tuple[Path, str], 
     attempt_id = experiments.prepare_attempt(
         *experiment, "extract_text", get_default("recipe", "extract_text")
     )
-    directory = experiments.experiment_directory(*experiment)
+    directory = experiment_store.experiment_directory(*experiment)
     if filename == "source.pdf":
         (directory / filename).write_bytes(fixture_pdf() + b"changed")
     else:
@@ -212,7 +219,10 @@ def test_external_extraction_is_terminated_on_step_timeout_or_user_cancellation(
         started.set()
         return process
 
-    monkeypatch.setattr("knowledge.ingestion.subprocess.Popen", slow_external_operation)
+    monkeypatch.setattr(
+        "knowledge.document_processing.pdf_text_extraction.subprocess.Popen",
+        slow_external_operation,
+    )
     original = get_default("recipe", "extract_text")
     configuration = original.payload["model"]
     assert isinstance(configuration, dict)
@@ -238,7 +248,10 @@ def test_worker_lock_blocks_recovery_and_deletion_but_permits_cancellation(
     attempt_id = experiments.prepare_attempt(
         *experiment, "extract_text", get_default("recipe", "extract_text")
     )
-    with experiment_lock(*experiment), ThreadPoolExecutor(max_workers=1) as executor:
+    with (
+        experiment_store.experiment_lock(*experiment),
+        ThreadPoolExecutor(max_workers=1) as executor,
+    ):
         with pytest.raises(Conflict, match="active worker"):
             executor.submit(experiments.delete_experiment, experiment[0], experiment[1]).result()
         with pytest.raises(Conflict, match="active worker"):
@@ -275,7 +288,9 @@ def test_cleanup_failure_is_reported_and_can_be_retried(experiment: tuple[Path, 
             (path / "manifest.json").unlink()
             raise PermissionError("fixture filesystem failure")
 
-        failed_filesystem.setattr("knowledge.experimentation.shutil.rmtree", fail_remove)
+        failed_filesystem.setattr(
+            "knowledge.experiments.experiment_runner.shutil.rmtree", fail_remove
+        )
         with pytest.raises(ValueError, match="retry deletion"):
             experiments.delete_experiment(*experiment)
     assert experiments.list_experiments(experiment[0])[0]["status"] == "cleanup_failed"
@@ -289,8 +304,8 @@ def test_disk_changes_require_restart_before_preparing_or_executing(
 ):
     recipe = get_default("recipe", "extract_text")
     identifier = experiments.prepare_attempt(*experiment, "extract_text", recipe)
-    changed = experiments.LOADED_CODE.model_copy(update={"hash": "changed source"})
-    monkeypatch.setattr("knowledge.experimentation.code_fingerprint", lambda: changed)
+    changed = experiment_store.LOADED_CODE.model_copy(update={"hash": "changed source"})
+    monkeypatch.setattr("knowledge.experiments.experiment_store.code_fingerprint", lambda: changed)
     with pytest.raises(Conflict, match="restart the server"):
         experiments.prepare_attempt(*experiment, "extract_text", recipe)
     result = experiments.execute_attempt(*experiment, identifier)
@@ -303,7 +318,9 @@ def test_trace_shows_actual_requests_without_raw_reasoning_or_secret_fields(
     experiment: tuple[Path, str],
 ):
     attempt = run(experiment, "extract_text")
-    trace = experiments.experiment_directory(*experiment) / "attempts" / attempt["id"] / "trace"
+    trace = (
+        experiment_store.experiment_directory(*experiment) / "attempts" / attempt["id"] / "trace"
+    )
     trace.mkdir()
     (trace / "request-0.json").write_text(
         json.dumps(
@@ -345,7 +362,7 @@ def test_trace_shows_actual_requests_without_raw_reasoning_or_secret_fields(
 
 
 def test_legacy_run_is_inspectable_and_cannot_be_silently_reexecuted(experiment: tuple[Path, str]):
-    manifest = experiments.experiment_directory(*experiment) / "manifest.json"
+    manifest = experiment_store.experiment_directory(*experiment) / "manifest.json"
     manifest.write_text(json.dumps({"id": experiment[1], "filename": "legacy.pdf", "steps": {}}))
     assert experiments.read_manifest(*experiment)["legacy"] is True
     assert experiments.export_experiment(*experiment)["manifest"]["filename"] == "legacy.pdf"

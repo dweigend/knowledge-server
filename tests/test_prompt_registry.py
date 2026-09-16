@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from knowledge.prompt_registry import (
+from knowledge.knowledge_domain.application_errors import Conflict, Missing
+from knowledge.model_integration.prompt_registry import (
     Recipe,
     activate_revision,
     configuration_root,
@@ -15,7 +16,6 @@ from knowledge.prompt_registry import (
     save_revision,
     seed_defaults,
 )
-from knowledge.storage import Conflict, Missing
 
 
 def test_saved_recipe_does_not_activate_or_rewrite_pinned_prompt():
@@ -175,7 +175,7 @@ def test_secondary_operation_prompt_is_a_validated_immutable_pin():
 
 
 def test_main_import_uses_activated_recipe_at_the_provider_boundary(tmp_path, monkeypatch):
-    from knowledge.import_workflow import extract_document
+    from knowledge.source_workflows.article_claim_extraction import extract_document
 
     requests = []
 
@@ -204,7 +204,7 @@ def test_main_import_uses_activated_recipe_at_the_provider_boundary(tmp_path, mo
             )
         )
 
-    monkeypatch.setattr("knowledge.generation.subprocess.run", respond)
+    monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
     extract_document(["A manually checked fixture passage."], tmp_path / "first")
     original = get_default("recipe", "formulate_claims")
     prompt = save_revision("prompt", "import", {"text": "Activated import instructions"}, 1)

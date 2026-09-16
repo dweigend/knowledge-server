@@ -1,9 +1,14 @@
 import pytest
 
-from knowledge.crossref_client import normalize_doi, parse_metadata
-from knowledge.literature_contracts import Candidate, LiteratureMetadata
-from knowledge.literature_resolution import enrich_paper
-from knowledge.paper_contracts import PaperCitation, PaperDocument, PaperMetadata, PaperReference
+from knowledge.literature.crossref_client import normalize_doi, parse_metadata
+from knowledge.literature.literature_models import Candidate, LiteratureMetadata
+from knowledge.literature.literature_resolution import enrich_paper
+from knowledge.literature.structured_paper_models import (
+    PaperCitation,
+    PaperDocument,
+    PaperMetadata,
+    PaperReference,
+)
 
 
 def candidate(doi="10.1234/work", method="bibliographic", **fields):
@@ -162,7 +167,7 @@ def test_doi_normalization_does_not_strip_valid_suffix_punctuation():
 
 
 def test_crossref_lookup_uses_encoded_exact_doi_and_bounded_search(monkeypatch):
-    from knowledge import crossref_client
+    import knowledge.literature.crossref_client as crossref_client
 
     requests = []
 
@@ -181,7 +186,7 @@ def test_crossref_lookup_uses_encoded_exact_doi_and_bounded_search(monkeypatch):
 
 
 def test_exhausted_total_budget_marks_remaining_sources_without_new_requests(monkeypatch):
-    from knowledge import literature_resolution
+    import knowledge.literature.literature_resolution as literature_resolution
 
     times = iter([0.0, 0.1, 11.0])
     monkeypatch.setattr(literature_resolution, "monotonic", lambda: next(times))
@@ -198,7 +203,7 @@ def test_exhausted_total_budget_marks_remaining_sources_without_new_requests(mon
 
 
 def test_rate_limit_stops_further_requests_in_the_same_run(monkeypatch):
-    from knowledge import literature_resolution
+    import knowledge.literature.literature_resolution as literature_resolution
 
     calls = []
 
@@ -264,7 +269,7 @@ def test_missing_title_requires_distinctive_exact_raw_title_with_author_and_year
 def test_bibliographic_query_uses_raw_reference_when_title_is_missing(monkeypatch):
     from urllib.parse import parse_qs, urlsplit
 
-    from knowledge import crossref_client
+    import knowledge.literature.crossref_client as crossref_client
 
     urls = []
 

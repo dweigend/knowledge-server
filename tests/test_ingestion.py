@@ -1,6 +1,6 @@
 import pytest
 
-from knowledge.ingestion import locate_passage, locate_quote
+from knowledge.document_processing.pdf_text_extraction import locate_passage, locate_quote
 
 
 def test_quote_restores_whitespace_but_not_wording():

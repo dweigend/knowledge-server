@@ -3,10 +3,13 @@ import hashlib
 import pytest
 from test_experimentation import fixture_pdf
 
-from knowledge.information_blocks import TextExtraction, segment_verbatim
-from knowledge.paper_contracts import PaperDocument, PaperMetadata
-from knowledge.paper_extraction import extract_paper_document, validate_paper_parameters
-from knowledge.paper_view import render_paper_markdown
+from knowledge.literature.structured_paper_models import PaperDocument, PaperMetadata
+from knowledge.source_workflows.information_block_extraction import TextExtraction, segment_verbatim
+from knowledge.source_workflows.structured_paper_extraction import (
+    extract_paper_document,
+    validate_paper_parameters,
+)
+from knowledge.web_interface.paper_markdown_renderer import render_paper_markdown
 
 
 def paper():

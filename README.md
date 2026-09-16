@@ -85,13 +85,15 @@ set -a
 set +a
 mkdir -p "$KNOWLEDGE_ARCHIVE_ROOT"
 uv run knowledge init
-uv run uvicorn knowledge.web:create_app --factory --host 127.0.0.1 --port 8765
+uv run uvicorn knowledge.web_interface.fastapi_app:create_app --factory \
+  --host 127.0.0.1 --port 8765
 ```
 
 The HTML app has no login: keep it on loopback and use an SSH tunnel for remote
 access. Run `uv run knowledge --help` for commands. Model workflows require a
-separate Hermes installation; the current adapter uses `gpt-5.6-luna` through
-`openai-codex`. See [deployment](deploy/README.md) for Linux extraction runtimes
+separate Hermes installation; the current adapter uses `gpt-5.6-luna` with max
+reasoning effort through `openai-codex`. See [deployment](deploy/README.md) for
+Linux extraction runtimes
 and backup requirements. The disposable experiment dashboard is available at
 `/experiments`. It stores private run data beside the archive, advances one
 step at a time, never calls a model while reading, and can delete a run on
@@ -148,12 +150,61 @@ flowchart TD
   Recipe --> Run[Experiment pins recipe and inputs]
 ```
 
+### Source layout
+
+The `knowledge` package exposes its architectural boundaries as subpackages:
+
+| Package | Responsibility |
+| --- | --- |
+| `knowledge_domain` | Dependency-free record contracts and shared application errors |
+| `knowledge_base` | Canonical source, claim, evidence, note and review operations |
+| `revision_store` | Immutable knowledge revisions, transactions and PostgreSQL schema |
+| `document_processing` | Parser adapters, extraction models, snapshots and quality checks |
+| `literature` | Zotero, Crossref, GROBID and bibliographic models |
+| `source_workflows` | Multi-stage import, reconciliation, selection and writing workflows |
+| `experiments` | Isolated attempts, pipeline definitions and private storage |
+| `model_integration` | Prompt registry, generation and the Hermes adapter |
+| `web_interface` | FastAPI routes, HTML, templates and static assets |
+| `command_interfaces` | Command-line and JSON command entry points |
+| `system_maintenance` | Backup and migration commands |
+| `runtime_support` | Environment settings and private run logs |
+
+Dependency direction points inward: adapters, persistence and workflows share
+the dependency-free knowledge domain; command and web interfaces compose those
+capabilities at the outside. Proposal modules remain independent of production
+acceptance, PostgreSQL and Zotero.
+
+```mermaid
+flowchart TD
+  ENTRY["Composition roots<br/>command_interfaces · web_interface"]
+  FLOW["Orchestration<br/>source_workflows · experiments · system_maintenance"]
+  CAP["Focused capabilities<br/>knowledge_base · document_processing · literature · model_integration"]
+  STORE["Persistence adapter<br/>revision_store"]
+  RUNTIME["Runtime support<br/>settings · logs · atomic files"]
+  DOMAIN["Dependency-free center<br/>knowledge_domain"]
+
+  ENTRY --> FLOW
+  ENTRY --> CAP
+  ENTRY --> STORE
+  FLOW --> CAP
+  FLOW --> STORE
+  FLOW --> RUNTIME
+  CAP --> STORE
+  CAP --> RUNTIME
+  CAP --> DOMAIN
+  STORE --> DOMAIN
+```
+
+The arrows represent allowed inward imports. An architecture contract test
+rejects reverse dependencies, internal import cycles and proposal code that
+reaches into acceptance workflows or storage.
+
 ### Checks
 
 ```sh
 uv run --locked ruff check .
 uv run --locked ruff format --check .
-uv run --locked ty check --exclude src/knowledge/hermes_bridge.py
+uv run --locked ty check --exclude src/knowledge/model_integration/hermes_bridge.py
 uv run --locked pytest
 ```
 

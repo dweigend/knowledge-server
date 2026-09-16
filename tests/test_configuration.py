@@ -1,7 +1,10 @@
 from pathlib import Path
 
-from knowledge import backup
-from knowledge.config import Settings
+import knowledge.model_integration.prompt_registry as prompt_registry
+import knowledge.revision_store.postgresql_revision_store as database
+import knowledge.system_maintenance.backup_and_restore as backup
+import knowledge.web_interface.fastapi_app as web
+from knowledge.runtime_support.environment_settings import Settings
 
 
 def test_settings_use_configured_locations(tmp_path, monkeypatch):
@@ -35,8 +38,11 @@ def test_postgres_utilities_allow_explicit_installation(tmp_path, monkeypatch):
 
 
 def test_runtime_resources_are_inside_package():
-    package = Path(backup.__file__).parent
-    assert (package / "prompts/import.md").is_file()
-    assert (package / "schema.sql").is_file()
-    assert (package / "templates/index.html").is_file()
-    assert (package / "static/pdfjs/build/pdf.worker.mjs").is_file()
+    modeling_package = Path(prompt_registry.__file__).parent
+    ledger_package = Path(database.__file__).parent
+    presentation_package = Path(web.__file__).parent
+
+    assert (modeling_package / "prompts/import.md").is_file()
+    assert (ledger_package / "schema.sql").is_file()
+    assert (presentation_package / "templates/index.html").is_file()
+    assert (presentation_package / "static/pdfjs/build/pdf.worker.mjs").is_file()

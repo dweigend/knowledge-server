@@ -4,22 +4,21 @@ from uuid import uuid4
 import pytest
 from support import seed_article
 
-from knowledge.application import EditNote, ReviewCommand
-from knowledge.consolidation import (
+from knowledge.knowledge_base.knowledge_service import EditNote, ReviewCommand
+from knowledge.knowledge_domain.knowledge_record_models import Note, Reference
+from knowledge.source_workflows.article_claim_extraction import PAGE_BUDGET, page_chunks
+from knowledge.source_workflows.claim_matching import ClaimDecision, validate_decision
+from knowledge.source_workflows.claim_reconciliation import (
+    ReconcileClaim,
+    apply_claim_decision,
+)
+from knowledge.source_workflows.note_consolidation import apply_note_revision
+from knowledge.source_workflows.note_revision_proposals import (
     ConsolidateNote,
     NoteRevision,
-    apply_note_revision,
     note_context,
     note_packet,
     propose_note_revision,
-)
-from knowledge.contracts import Note, Reference
-from knowledge.import_workflow import PAGE_BUDGET, page_chunks
-from knowledge.reconciliation import (
-    ClaimDecision,
-    ReconcileClaim,
-    apply_claim_decision,
-    validate_decision,
 )
 
 
@@ -319,7 +318,10 @@ def test_generation_cannot_cite_undelivered_evidence(
             validate(NoteRevision(action="revise", rationale="Unseen evidence", note=note))
         return NoteRevision(action="keep", rationale="No supported addition", note=None)
 
-    monkeypatch.setattr("knowledge.consolidation.generate", generate)
+    monkeypatch.setattr(
+        "knowledge.source_workflows.note_revision_proposals.structured_generation.generate",
+        generate,
+    )
     command = propose_note_revision(target, records, tmp_path)
     assert other[2] not in command.context
     assert imported["evidence"] in command.context
@@ -371,11 +373,11 @@ def test_new_claim_keeps_passage_rationale_separate_from_matching_reason(
 def test_failed_passage_check_keeps_original_matching_decision_for_audit(
     application, article, imported, tmp_path, monkeypatch
 ):
-    from knowledge.grounding import PassageCheck
-    from knowledge.reconciliation import check_claim_grounding
+    from knowledge.source_workflows.claim_reconciliation import check_claim_grounding
+    from knowledge.source_workflows.passage_grounding import PassageCheck
 
     monkeypatch.setattr(
-        "knowledge.reconciliation.check_passage",
+        "knowledge.source_workflows.claim_reconciliation.check_passage",
         lambda *args: PassageCheck(grounded=False, reason="Unsupported time horizon"),
     )
     original = ClaimDecision(

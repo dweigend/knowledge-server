@@ -1,5 +1,5 @@
-from knowledge.literature_catalog import literature_catalog
-from knowledge.literature_contracts import LiteratureMetadata, LiteratureRecord, Resolution
+from knowledge.experiments.experiment_literature_catalog import literature_catalog
+from knowledge.literature.literature_models import LiteratureMetadata, LiteratureRecord, Resolution
 
 
 def test_catalog_groups_confirmed_work_identity_across_current_documents(tmp_path, monkeypatch):
@@ -11,7 +11,9 @@ def test_catalog_groups_confirmed_work_identity_across_current_documents(tmp_pat
         resolution=Resolution(status="matched", checked_at="2026-09-15", message="Fixture"),
     )
     sources = [{"id": "first", "filename": "first.pdf"}, {"id": "second", "filename": "second.pdf"}]
-    monkeypatch.setattr("knowledge.literature_catalog.list_experiments", lambda root: sources)
+    monkeypatch.setattr(
+        "knowledge.experiments.experiment_literature_catalog.list_experiments", lambda root: sources
+    )
 
     def attempts(root, source_id):
         return [
@@ -30,7 +32,9 @@ def test_catalog_groups_confirmed_work_identity_across_current_documents(tmp_pat
             {"step": "extract_text", "status": "failed", "id": "failed", "output": None},
         ]
 
-    monkeypatch.setattr("knowledge.literature_catalog.read_attempts", attempts)
+    monkeypatch.setattr(
+        "knowledge.experiments.experiment_literature_catalog.read_attempts", attempts
+    )
     catalog = literature_catalog(tmp_path)
     assert len(catalog) == 1
     assert [document["run_id"] for document in catalog[0]["documents"]] == ["first", "second"]
