@@ -377,7 +377,6 @@ def test_generation_cannot_cite_undelivered_evidence(
         instructions: str,
         packet: str,
         contract: type[BaseModel],
-        output_directory: Path,
         validate: Callable[[NoteRevision], None],
         **kwargs: object,
     ) -> NoteRevision:
