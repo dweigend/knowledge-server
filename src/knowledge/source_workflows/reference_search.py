@@ -1,7 +1,8 @@
 """Run fresh provider queries for one discovery execution."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+
+from pydantic import BaseModel, ConfigDict
 
 from knowledge.literature import literature_resolution
 from knowledge.literature import reference_discovery_models as models
@@ -32,9 +33,10 @@ def supports_query(provider: str, reference: PaperMetadata) -> bool:
     return bool(reference.title)
 
 
-@dataclass
-class ReferenceSearchSession:
+class ReferenceSearchSession(BaseModel):
     """Own provider access and the current discovery report."""
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
 
     settings: models.DiscoverySettings
     report: models.DiscoveryReport

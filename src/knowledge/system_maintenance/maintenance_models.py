@@ -1,18 +1,26 @@
-"""Describe migration and restore reports with their database query rows."""
+"""Describe validated migration and restore reports."""
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from knowledge.knowledge_domain.knowledge_record_models import Kind
 
 
-class RevisionCount(TypedDict):
+class MaintenanceContract(BaseModel):
+    """Reject unknown maintenance report fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RevisionCount(MaintenanceContract):
     """Count stored revisions for one domain record kind."""
 
     kind: Kind
     count: int
 
 
-class DatabaseInspection(TypedDict):
+class DatabaseInspection(MaintenanceContract):
     """Summarize decoded records and snapshots in a restored database."""
 
     current_records_decoded: int
@@ -27,11 +35,11 @@ class RestoreReport(DatabaseInspection):
     restored_database: str
 
 
-class SourceMigration(TypedDict):
+class SourceMigration(MaintenanceContract):
     """Report whether a source required a Zotero ownership revision."""
 
     entity_id: str
     status: Literal["already_migrated", "migrated"]
-    revision: NotRequired[int]
-    original_pdf: NotRequired[str]
-    clean_pdf: NotRequired[str]
+    revision: int | None = Field(default=None, ge=1)
+    original_pdf: str | None = None
+    clean_pdf: str | None = None

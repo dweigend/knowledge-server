@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Final
 from uuid import UUID
 
+from pydantic import Field
+
 from knowledge.document_processing import document_models, extraction_store
 from knowledge.knowledge_base import knowledge_service, review_records
 from knowledge.knowledge_domain import knowledge_record_models as models
@@ -25,6 +27,16 @@ SEARCH_PAGE_SIZE: Final[int] = 20
 TOOL_ACTOR: Final[str] = "hermes:knowledge-tool"
 
 
+class StructuredPassage(models.Contract):
+    """Expose located blocks and their evidentiary constraints."""
+
+    source: models.Reference
+    page: int = Field(ge=1)
+    extraction_revision: int = Field(ge=1)
+    blocks: list[document_models.DocumentBlock]
+    evidence_rule: str
+
+
 def search_records(
     application: knowledge_service.Knowledge, arguments: argparse.Namespace
 ) -> response_models.SearchResponse:
@@ -32,23 +44,25 @@ def search_records(
     with application.database.transaction() as ledger:
         records = ledger.list(arguments.batch, query=arguments.query)
         page = records[arguments.offset : arguments.offset + SEARCH_PAGE_SIZE]
-        summaries: list[response_models.RecordSummary] = [
-            {
-                "reference": record.reference().model_dump(mode="json"),
-                "kind": record.kind,
-                "status": review_records.status(ledger, record),
-                "summary": record.payload.model_dump(exclude={"pages"}),
-            }
+        summaries = [
+            response_models.RecordSummary(
+                reference=record.reference(),
+                kind=record.kind,
+                status=review_records.status(ledger, record),
+                summary=record.payload.model_dump(exclude={"pages"}),
+            )
             for record in page
         ]
-    return {"total": len(records), "offset": arguments.offset, "records": summaries}
+    return response_models.SearchResponse(
+        total=len(records), offset=arguments.offset, records=summaries
+    )
 
 
 def read_passage(
     record: models.Record,
     page: int | None,
     snapshot: document_models.DocumentSnapshot | None = None,
-) -> response_models.PlainPassage | response_models.StructuredPassage:
+) -> response_models.PlainPassage | StructuredPassage:
     """Return a validated page from a stored source snapshot."""
     source = record.payload
     if not isinstance(source, models.Source) or not page:
@@ -57,38 +71,28 @@ def read_passage(
         return structured_passage(snapshot, page)
     if not 1 <= page <= len(source.pages):
         raise ValueError("Page is outside the source")
-    return {
-        "source": record.reference().model_dump(mode="json"),
-        "page": page,
-        "text": source.pages[page - 1],
-    }
+    return response_models.PlainPassage(
+        source=record.reference(), page=page, text=source.pages[page - 1]
+    )
 
 
-def structured_passage(
-    snapshot: document_models.DocumentSnapshot, page: int
-) -> response_models.StructuredPassage:
+def structured_passage(snapshot: document_models.DocumentSnapshot, page: int) -> StructuredPassage:
     """Return located blocks with the pins and restrictions needed for new evidence."""
     if page not in snapshot.page_sizes:
         raise ValueError("Page is outside the extracted document")
-    return {
-        "source": snapshot.source.model_dump(mode="json"),
-        "page": page,
-        "extraction_revision": snapshot.revision,
-        "blocks": [
-            block.model_dump(mode="json") for block in snapshot.blocks if block.page == page
-        ],
-        "evidence_rule": "Quote a single-page prose block without issues; include block_id "
+    return StructuredPassage(
+        source=snapshot.source,
+        page=page,
+        extraction_revision=snapshot.revision,
+        blocks=[block for block in snapshot.blocks if block.page == page],
+        evidence_rule="Quote a single-page prose block without issues; include block_id "
         "and extraction_revision. Tables and furniture cannot automatically supply evidence.",
-    }
+    )
 
 
 def read_record(
     application: knowledge_service.Knowledge, arguments: argparse.Namespace
-) -> (
-    response_models.RecordResponse
-    | response_models.PlainPassage
-    | response_models.StructuredPassage
-):
+) -> response_models.RecordResponse | response_models.PlainPassage | StructuredPassage:
     """Read a record or source page with its pinned dependencies."""
     if not arguments.entity:
         raise ValueError("--entity is required")
@@ -97,14 +101,11 @@ def read_record(
         if arguments.command == "passage":
             snapshot = extraction_store.get_snapshot(ledger, record.reference())
             return read_passage(record, arguments.page, snapshot)
-        return {
-            "record": record.model_dump(mode="json"),
-            "status": review_records.status(ledger, record),
-            "dependencies": [
-                reference.model_dump(mode="json")
-                for reference in review_records.dependencies(ledger, record)
-            ],
-        }
+        return response_models.RecordResponse(
+            record=record,
+            status=review_records.status(ledger, record),
+            dependencies=review_records.dependencies(ledger, record),
+        )
 
 
 def apply_mutation(
@@ -130,10 +131,10 @@ def run_operation(application: knowledge_service.Knowledge, arguments: argparse.
         print(json.dumps(MUTATIONS[arguments.operation].model_json_schema(), indent=2))
         return
     if arguments.command == "search":
-        print(json.dumps(search_records(application, arguments), ensure_ascii=False, default=str))
+        print(search_records(application, arguments).model_dump_json())
         return
     if arguments.command in {"read", "passage"}:
-        print(json.dumps(read_record(application, arguments), ensure_ascii=False))
+        print(read_record(application, arguments).model_dump_json())
         return
     references = apply_mutation(application, arguments)
     print(json.dumps([reference.model_dump(mode="json") for reference in references]))

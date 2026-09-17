@@ -91,14 +91,14 @@ def run(
 def test_real_pdf_and_blocks_use_same_shared_operations_and_exact_references(
     experiment: tuple[Path, str],
 ) -> None:
-    assert experiments.read_manifest(*experiment)["steps"] == {}
+    assert experiments.read_manifest(*experiment).steps == {}
     extracted = run(experiment, "extract_text")
-    assert extracted["status"] == "completed", extracted["error"]
+    assert extracted.status == "completed", extracted.error
     segmented = run(experiment, "segment_blocks")
-    assert segmented["status"] == "completed", segmented["error"]
-    assert segmented["inputs"] == {"extract_text": extracted["id"]}
-    extraction = TextExtraction.model_validate(extracted["output"])
-    blocks = InformationBlocks.model_validate(segmented["output"])
+    assert segmented.status == "completed", segmented.error
+    assert segmented.inputs == {"extract_text": extracted.id}
+    extraction = TextExtraction.model_validate(extracted.output)
+    blocks = InformationBlocks.model_validate(segmented.output)
     assert [block.bullets for block in blocks.blocks] == [
         ["First observation.\nSecond observation."],
     ]
@@ -106,9 +106,9 @@ def test_real_pdf_and_blocks_use_same_shared_operations_and_exact_references(
         span = block.sources[0]
         assert span.extraction_revision == extraction.revision
         assert extraction.pages[span.page - 1][span.start : span.end] == span.quote
-    assert segmented["recipe"]["revision"] == 2
-    assert segmented["output_schema_hash"]
-    assert "dirty" in segmented["code"]
+    assert segmented.recipe["revision"] == 2
+    assert segmented.output_schema_hash
+    assert "dirty" in segmented.code
 
 
 def test_reruns_retain_results_and_mark_downstream_stale(experiment: tuple[Path, str]) -> None:
@@ -116,30 +116,30 @@ def test_reruns_retain_results_and_mark_downstream_stale(experiment: tuple[Path,
     blocks = run(experiment, "segment_blocks")
     repeated = run(experiment, "extract_text")
     history = experiments.read_attempts(*experiment)
-    assert [attempt["id"] for attempt in history] == [original["id"], blocks["id"], repeated["id"]]
-    assert history[0]["output"] == original["output"]
-    assert history[1]["output"] == blocks["output"]
-    assert history[1]["stale"] is True
+    assert [attempt.id for attempt in history] == [original.id, blocks.id, repeated.id]
+    assert history[0].output == original.output
+    assert history[1].output == blocks.output
+    assert history[1].stale is True
     with pytest.raises(Conflict, match="stale"):
         experiments.prepare_attempt(
             *experiment, "formulate_claims", get_default("recipe", "formulate_claims")
         )
-    comparative = run(experiment, "segment_blocks", input_attempts={"extract_text": original["id"]})
-    assert comparative["status"] == "completed"
-    assert experiments.read_attempts(*experiment)[-1]["stale"] is True
+    comparative = run(experiment, "segment_blocks", input_attempts={"extract_text": original.id})
+    assert comparative.status == "completed"
+    assert experiments.read_attempts(*experiment)[-1].stale is True
 
 
 def test_comparison_rejects_mixed_input_lineages(experiment: tuple[Path, str]) -> None:
     old = run(experiment, "extract_text")
     blocks = run(experiment, "segment_blocks")
     newer = run(experiment, "extract_text")
-    assert old["id"] != newer["id"]
+    assert old.id != newer.id
     with pytest.raises(ValueError, match="disagree"):
         experiments.prepare_attempt(
             *experiment,
             "formulate_claims",
             get_default("recipe", "formulate_claims"),
-            input_attempts={"extract_text": newer["id"], "segment_blocks": blocks["id"]},
+            input_attempts={"extract_text": newer.id, "segment_blocks": blocks.id},
         )
 
 
@@ -167,15 +167,16 @@ def test_failed_rerun_retains_success_without_invalidating_downstream(
         "knowledge.model_integration.structured_generation.run_hermes", unavailable_provider
     )
     failed = run(experiment, "segment_blocks", variant)
-    assert failed["status"] == "failed"
-    assert isinstance(failed["error"], str)
-    assert "Provider unavailable" in failed["error"]
+    assert failed.status == "failed"
+    assert isinstance(failed.error, str)
+    assert "Provider unavailable" in failed.error
     history = experiments.read_attempts(*experiment)
-    assert history[1]["id"] == completed["id"]
-    assert history[1]["stale"] is False
+    assert history[1].id == completed.id
+    assert history[1].stale is False
     assert any(
-        event["event"] == "attempt_finished" and event["status"] == "failed"
-        for event in experiments.read_attempt_trace(*experiment, failed["id"])
+        event.event == "attempt_finished"
+        and event.model_dump(mode="json").get("status") == "failed"
+        for event in experiments.read_attempt_trace(*experiment, failed.id)
     )
 
 
@@ -192,10 +193,10 @@ def test_input_file_changes_fail_before_execution(
     else:
         (directory / filename).write_text('{"records": ["modified"]}')
     result = experiments.execute_attempt(*experiment, attempt_id)
-    assert result["status"] == "failed"
-    assert isinstance(result["error"], str)
-    assert "snapshot changed" in result["error"]
-    assert result["output"] is None
+    assert result.status == "failed"
+    assert isinstance(result.error, str)
+    assert "snapshot changed" in result.error
+    assert result.output is None
 
 
 def test_prepared_attempt_keeps_saved_recipe_and_prompt_when_new_draft_is_saved(
@@ -207,9 +208,9 @@ def test_prepared_attempt_keeps_saved_recipe_and_prompt_when_new_draft_is_saved(
         "recipe", "extract_text", {**recipe.payload, "parameters": {"marker": "new draft"}}, 1
     )
     result = experiments.execute_attempt(*experiment, attempt_id)
-    assert result["status"] == "completed", result["error"]
-    assert result["recipe"] == recipe.model_dump(mode="json")
-    assert ConfigRevision.model_validate(result["prompt"]).payload["text"]
+    assert result.status == "completed", result.error
+    assert result.recipe == recipe.model_dump(mode="json")
+    assert ConfigRevision.model_validate(result.prompt).payload["text"]
 
 
 def test_cancelled_queued_attempt_cannot_generate_a_result(experiment: tuple[Path, str]) -> None:
@@ -218,8 +219,8 @@ def test_cancelled_queued_attempt_cannot_generate_a_result(experiment: tuple[Pat
     )
     experiments.request_cancel(*experiment, attempt_id)
     result = experiments.execute_attempt(*experiment, attempt_id)
-    assert result["status"] == "cancelled"
-    assert result["output"] is None
+    assert result.status == "cancelled"
+    assert result.output is None
     assert experiments.execute_attempt(*experiment, attempt_id) == result
 
 
@@ -265,12 +266,12 @@ def test_external_extraction_is_terminated_on_step_timeout_or_user_cancellation(
         if cancel:
             experiments.request_cancel(*experiment, attempt_id)
         result = future.result(timeout=5)
-    assert result["status"] == ("cancelled" if cancel else "failed")
-    assert result["output"] is None
+    assert result.status == ("cancelled" if cancel else "failed")
+    assert result.output is None
     assert processes[0].poll() is not None
     if not cancel:
-        assert isinstance(result["error"], str)
-        assert "time limit" in result["error"]
+        assert isinstance(result.error, str)
+        assert "time limit" in result.error
 
 
 def test_worker_lock_blocks_recovery_and_deletion_but_permits_cancellation(
@@ -288,7 +289,7 @@ def test_worker_lock_blocks_recovery_and_deletion_but_permits_cancellation(
         with pytest.raises(Conflict, match="active worker"):
             executor.submit(experiments.recover_attempt, *experiment, attempt_id).result()
         executor.submit(experiments.request_cancel, *experiment, attempt_id).result()
-    assert experiments.recover_attempt(*experiment, attempt_id)["status"] == "cancelled"
+    assert experiments.recover_attempt(*experiment, attempt_id).status == "cancelled"
 
 
 def test_recovery_preserves_abandoned_attempt_and_allows_new_attempt(
@@ -298,9 +299,9 @@ def test_recovery_preserves_abandoned_attempt_and_allows_new_attempt(
         *experiment, "extract_text", get_default("recipe", "extract_text")
     )
     recovered = experiments.recover_attempt(*experiment, attempt_id)
-    assert recovered["status"] == "abandoned"
-    assert run(experiment, "extract_text")["status"] == "completed"
-    assert experiments.read_attempts(*experiment)[0]["id"] == attempt_id
+    assert recovered.status == "abandoned"
+    assert run(experiment, "extract_text").status == "completed"
+    assert experiments.read_attempts(*experiment)[0].id == attempt_id
 
 
 def test_cleanup_is_isolated_idempotent_and_preserves_saved_recipes(
@@ -311,9 +312,9 @@ def test_cleanup_is_isolated_idempotent_and_preserves_saved_recipes(
     report = experiments.export_experiment(*experiment)
     experiments.delete_experiment(*experiment)
     experiments.delete_experiment(*experiment)
-    assert experiments.read_manifest(experiment[0], other)["filename"] == "other.pdf"
+    assert experiments.read_manifest(experiment[0], other).filename == "other.pdf"
     assert get_default("recipe", "extract_text").revision == 1
-    assert report["attempts"][0]["output"] == result["output"]
+    assert report.attempts[0].output == result.output
 
 
 def test_disk_changes_require_restart_before_preparing_or_executing(
@@ -326,19 +327,17 @@ def test_disk_changes_require_restart_before_preparing_or_executing(
     with pytest.raises(Conflict, match="restart the server"):
         experiments.prepare_attempt(*experiment, "extract_text", recipe)
     result = experiments.execute_attempt(*experiment, identifier)
-    assert result["status"] == "failed"
-    assert isinstance(result["error"], str)
-    assert "code changed" in result["error"]
-    assert result["output"] is None
+    assert result.status == "failed"
+    assert isinstance(result.error, str)
+    assert "code changed" in result.error
+    assert result.output is None
 
 
 def test_trace_shows_actual_requests_without_raw_reasoning_or_secret_fields(
     experiment: tuple[Path, str],
 ) -> None:
     attempt = run(experiment, "extract_text")
-    trace = (
-        experiment_store.experiment_directory(*experiment) / "attempts" / attempt["id"] / "trace"
-    )
+    trace = experiment_store.experiment_directory(*experiment) / "attempts" / attempt.id / "trace"
     trace.mkdir()
     (trace / "request-0.json").write_text(
         json.dumps(
@@ -370,8 +369,10 @@ def test_trace_shows_actual_requests_without_raw_reasoning_or_secret_fields(
         + "\n"
         + '{"partial":'
     )
-    events = experiments.read_attempt_trace(*experiment, attempt["id"])
-    model = next(event for event in events if event["event"] == "model_response")
+    events = experiments.read_attempt_trace(*experiment, attempt.id)
+    model = next(event for event in events if event.event == "model_response").model_dump(
+        mode="json"
+    )
     assert model["request"] == {
         "instructions": "Summarize the observation",
         "input": "First observation.",

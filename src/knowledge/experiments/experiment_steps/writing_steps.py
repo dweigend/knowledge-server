@@ -21,13 +21,19 @@ def prepare_writing(
 ) -> source_grounded_writing.WritingPoints:
     """Compose cited points from pinned proposals and source blocks."""
     goal = parameter_models.OPTIONAL_TEXT.validate_python(execution.recipe.parameters.get("goal"))
+    extraction = execution.inputs.extract_text
+    blocks = execution.inputs.segment_blocks
+    claims = execution.inputs.formulate_claims
+    changes = execution.inputs.propose_changes
+    assert extraction is not None and blocks is not None
+    assert claims is not None and changes is not None
     return source_grounded_writing.prepare_writing_points(
         goal or "",
-        execution.inputs["extract_text"],
-        execution.inputs["segment_blocks"],
+        extraction,
+        blocks,
         {
-            "formulate_claims": execution.inputs["formulate_claims"].model_dump(mode="json"),
-            "propose_changes": execution.inputs["propose_changes"].model_dump(mode="json"),
+            "formulate_claims": claims.model_dump(mode="json"),
+            "propose_changes": changes.model_dump(mode="json"),
         },
         execution.prompt_text,
         execution.recipe.model,
@@ -46,11 +52,15 @@ def draft_text(
         or execution.author_rules is None
     ):
         raise ValueError("Save and select private author rules before drafting prose")
+    points = execution.inputs.prepare_writing
+    extraction = execution.inputs.extract_text
+    blocks = execution.inputs.segment_blocks
+    assert points is not None and extraction is not None and blocks is not None
     return source_grounded_writing.draft_prose(
-        execution.inputs["prepare_writing"],
-        execution.inputs["extract_text"],
-        execution.inputs["segment_blocks"],
-        execution.author_rules,
+        points,
+        extraction,
+        blocks,
+        execution.author_rules.model_dump(mode="json"),
         execution.prompt_text,
         recipe.model,
         execution.cancelled,

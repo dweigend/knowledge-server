@@ -130,6 +130,26 @@ def test_packages_only_depend_inward() -> None:
     assert not violations, "Outward package dependencies:\n" + "\n".join(violations)
 
 
+def test_structured_contracts_use_pydantic_models() -> None:
+    """Keep application contracts on one validation mechanism."""
+    violations = []
+    for path in SOURCE_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            uses_typed_dict = any(
+                isinstance(base, ast.Name) and base.id == "TypedDict" for base in node.bases
+            )
+            uses_dataclass = any(
+                isinstance(decorator, ast.Name) and decorator.id == "dataclass"
+                for decorator in node.decorator_list
+            )
+            if uses_typed_dict or uses_dataclass:
+                violations.append(f"{path.relative_to(SOURCE_ROOT)}: {node.name}")
+    assert not violations, "Non-Pydantic structured contracts:\n" + "\n".join(violations)
+
+
 def test_internal_module_graph_is_acyclic() -> None:
     modules = source_modules()
     dependencies = {

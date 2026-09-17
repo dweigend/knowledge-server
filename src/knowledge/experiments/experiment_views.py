@@ -1,12 +1,27 @@
-"""Describe dictionary projections of validated experiment documents."""
+"""Describe validated projections of stored experiment documents."""
 
-from typing import NotRequired, TypedDict
+from typing import Literal
 
-from pydantic import JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue
 
 
-class AttemptView(TypedDict):
-    """Combine pinned inputs and optional execution details without changing stored formats."""
+class ExperimentContract(BaseModel):
+    """Reject unknown fields in stored experiment projections."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class TraceEvent(BaseModel):
+    """Validate shared event identity while retaining event-specific details."""
+
+    model_config = ConfigDict(extra="allow")
+
+    time: str
+    event: str
+
+
+class AttemptView(ExperimentContract):
+    """Combine pinned inputs and optional execution details."""
 
     id: str
     step: str
@@ -22,21 +37,21 @@ class AttemptView(TypedDict):
     code: dict[str, JsonValue]
     output_schema: dict[str, JsonValue]
     output_schema_hash: str
-    status: str
+    status: Literal["queued", "running", "completed", "failed", "cancelled", "abandoned"]
     output: dict[str, JsonValue] | None
     error: str | None
     duration_seconds: float | None
     cancel_requested: bool
-    started_at: NotRequired[str | None]
-    finished_at: NotRequired[str]
-    worker_pid: NotRequired[int]
-    output_hash: NotRequired[str | None]
-    stale: NotRequired[bool]
-    stale_reason: NotRequired[str]
-    events: NotRequired[list[dict[str, JsonValue]]]
+    started_at: str | None = None
+    finished_at: str | None = None
+    worker_pid: int | None = None
+    output_hash: str | None = None
+    stale: bool = False
+    stale_reason: str = ""
+    events: list[TraceEvent] = Field(default_factory=list)
 
 
-class ExperimentView(TypedDict):
+class ExperimentView(ExperimentContract):
     """Expose a manifest with the latest attempt for each pipeline step."""
 
     version: int
@@ -49,7 +64,7 @@ class ExperimentView(TypedDict):
     status: str
 
 
-class ExperimentReport(TypedDict):
+class ExperimentReport(ExperimentContract):
     """Export a manifest and its ordered attempt history."""
 
     manifest: ExperimentView

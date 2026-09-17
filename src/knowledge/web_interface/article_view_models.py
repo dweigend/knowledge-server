@@ -1,32 +1,37 @@
-"""Describe template projections without changing document or knowledge contracts."""
-
-from typing import NotRequired, TypedDict
+"""Describe validated template projections without changing domain contracts."""
 
 from markupsafe import Markup
+from pydantic import BaseModel, ConfigDict, Field
 
 from knowledge.document_processing import document_models
 from knowledge.document_processing.extraction_input_models import ExtractionJob
 from knowledge.knowledge_domain import knowledge_record_models as models
 
 
-class CitationView(TypedDict):
+class ViewContract(BaseModel):
+    """Validate transient template data while allowing safe rendering types."""
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+
+class CitationView(ViewContract):
     """Present available citation metadata or a visible retrieval error."""
 
     title: str
-    error: NotRequired[str]
-    authors: NotRequired[list[str]]
-    year: NotRequired[str]
-    venue: NotRequired[str]
-    version: NotRequired[str]
-    doi_url: NotRequired[str]
-    publisher_url: NotRequired[str]
-    text: NotRequired[str]
-    bibtex: NotRequired[str]
-    metadata_revision: NotRequired[int | None]
-    zotero_url: NotRequired[str]
+    error: str = ""
+    authors: list[str] = Field(default_factory=list)
+    year: str = ""
+    venue: str = ""
+    version: str = ""
+    doi_url: str = ""
+    publisher_url: str = ""
+    text: str = ""
+    bibtex: str = ""
+    metadata_revision: int | None = None
+    zotero_url: str = ""
 
 
-class KnowledgeEntry(TypedDict):
+class KnowledgeEntry(ViewContract):
     """Label a related knowledge record and its overview eligibility."""
 
     record: models.Record
@@ -34,14 +39,14 @@ class KnowledgeEntry(TypedDict):
     overview: bool
 
 
-class BlockLocationView(TypedDict):
+class BlockLocationView(ViewContract):
     """Link one observed block location to its source PDF page."""
 
     page: int
     url: str
 
 
-class BlockView(TypedDict):
+class BlockView(ViewContract):
     """Present one stored document block with safe rendered links."""
 
     block: document_models.DocumentBlock
@@ -53,7 +58,7 @@ class BlockView(TypedDict):
     table_rows: list[list[document_models.TableCell]]
 
 
-class RelationshipView(TypedDict):
+class RelationshipView(ViewContract):
     """Resolve a stored relationship to its optional endpoint blocks."""
 
     relationship: document_models.DocumentRelationship
@@ -61,14 +66,14 @@ class RelationshipView(TypedDict):
     target: document_models.DocumentBlock | None
 
 
-class OutlineEntry(TypedDict):
+class OutlineEntry(ViewContract):
     """Keep recursive heading navigation linked to document blocks."""
 
     block: document_models.DocumentBlock
     children: list["OutlineEntry"]
 
 
-class ArticleView(TypedDict):
+class ArticleView(ViewContract):
     """Compose the template context from individually typed source projections."""
 
     record: models.Record

@@ -652,10 +652,10 @@ def test_provider_defects_and_cancellation_propagate(error_type: type[Exception]
         raise error_type("provider stopped")
 
     session = reference_search.ReferenceSearchSession(
-        DiscoverySettings(),
-        DiscoveryReport(),
-        lambda: False,
-        {"crossref": fail},
+        settings=DiscoverySettings(),
+        report=DiscoveryReport(),
+        cancelled=lambda: False,
+        providers={"crossref": fail},
     )
     trace = ReferenceSearch(reference_id="r1", trigger="Unmatched")
 

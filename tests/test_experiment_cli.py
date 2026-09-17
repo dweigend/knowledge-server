@@ -35,7 +35,7 @@ def test_cli_runs_and_inspects_same_private_attempts_without_database(
     identifier = invoke(capsys, root, dict[str, str], "create", str(pdf))["experiment_id"]
     extraction = invoke(capsys, root, AttemptView, "run", identifier, "extract_text")
     assert (
-        TextExtraction.model_validate(extraction["output"]).pages[0].strip()
+        TextExtraction.model_validate(extraction.output).pages[0].strip()
         == "Group A scored higher."
     )
     recipe = get_revision("recipe", "segment_blocks")
@@ -51,19 +51,16 @@ def test_cli_runs_and_inspects_same_private_attempts_without_database(
         "--revision",
         str(saved.revision),
     )
-    assert blocks["inputs"] == {"extract_text": extraction["id"]}
+    assert blocks.inputs == {"extract_text": extraction.id}
     assert (
-        InformationBlocks.model_validate(blocks["output"]).blocks[0].sources[0].quote
+        InformationBlocks.model_validate(blocks.output).blocks[0].sources[0].quote
         == "Group A scored higher."
     )
     read = invoke(capsys, root, ExperimentReport, "inspect", identifier)
-    assert [attempt["id"] for attempt in read["attempts"]] == [extraction["id"], blocks["id"]]
+    assert [attempt.id for attempt in read.attempts] == [extraction.id, blocks.id]
     report = tmp_path / "private-report.json"
     invoke(capsys, root, dict[str, str], "export", identifier, "--output", str(report))
-    assert (
-        TypeAdapter(ExperimentReport).validate_json(report.read_text())["manifest"]["id"]
-        == identifier
-    )
+    assert TypeAdapter(ExperimentReport).validate_json(report.read_text()).manifest.id == identifier
     assert report.stat().st_mode & 0o777 == 0o600
     invoke(capsys, root, dict[str, JsonValue], "delete", identifier)
     assert invoke(capsys, root, list[ExperimentView], "inspect") == []
@@ -83,7 +80,7 @@ def test_cli_cancel_and_recover_share_attempt_state(
     )
     invoke(capsys, root, dict[str, str], "cancel", identifier, attempt)
     recovered = invoke(capsys, root, AttemptView, "recover", identifier, attempt)
-    assert recovered["status"] == "cancelled"
+    assert recovered.status == "cancelled"
 
 
 def test_export_does_not_replace_existing_file(

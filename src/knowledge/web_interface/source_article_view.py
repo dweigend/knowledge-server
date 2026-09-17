@@ -51,18 +51,18 @@ def compose_article(
     if extraction_revision is not None and snapshot is None:
         raise application_errors.Missing("Requested extraction revision is unavailable")
     citation = read_source_citation(database, record)
-    return {
-        "record": record,
-        "citation": citation,
-        "snapshot": snapshot,
-        "processing": processing,
-        "blocks": present_blocks(record, snapshot),
-        "relationships": present_relationships(snapshot),
-        "outline": outline_entries(snapshot),
-        "knowledge": knowledge,
-        "history": range(1, history + 1),
-        "zotero_url": citation.get("zotero_url", ""),
-    }
+    return views.ArticleView(
+        record=record,
+        citation=citation,
+        snapshot=snapshot,
+        processing=processing,
+        blocks=present_blocks(record, snapshot),
+        relationships=present_relationships(snapshot),
+        outline=outline_entries(snapshot),
+        knowledge=knowledge,
+        history=range(1, history + 1),
+        zotero_url=citation.zotero_url,
+    )
 
 
 def read_citation(reference: models.ZoteroReference) -> views.CitationView:
@@ -70,20 +70,20 @@ def read_citation(reference: models.ZoteroReference) -> views.CitationView:
     try:
         exported = zotero.article_citation(reference)
     except (URLError, OSError, ValueError) as error:
-        return {"title": "Zotero-Daten nicht verfügbar", "error": str(error)}
+        return views.CitationView(title="Zotero-Daten nicht verfügbar", error=str(error))
     metadata = exported.data
-    return {
-        "title": metadata.title or "Titel in Zotero nicht angegeben",
-        "authors": author_names(metadata.creators),
-        "year": metadata.date,
-        "venue": metadata.publicationTitle or metadata.bookTitle,
-        "version": metadata.versionNumber or metadata.type,
-        "doi_url": safe_web_url("https://doi.org/" + metadata.DOI) if metadata.DOI else "",
-        "publisher_url": safe_web_url(metadata.url),
-        "text": unescape(re.sub(r"<[^>]*>", "", exported.bib)).strip(),
-        "bibtex": exported.bibtex,
-        "metadata_revision": metadata.version if "version" in metadata.model_fields_set else None,
-    }
+    return views.CitationView(
+        title=metadata.title or "Titel in Zotero nicht angegeben",
+        authors=author_names(metadata.creators),
+        year=metadata.date,
+        venue=metadata.publicationTitle or metadata.bookTitle,
+        version=metadata.versionNumber or metadata.type,
+        doi_url=safe_web_url("https://doi.org/" + metadata.DOI) if metadata.DOI else "",
+        publisher_url=safe_web_url(metadata.url),
+        text=unescape(re.sub(r"<[^>]*>", "", exported.bib)).strip(),
+        bibtex=exported.bibtex,
+        metadata_revision=metadata.version if "version" in metadata.model_fields_set else None,
+    )
 
 
 def author_names(creators: list[zotero_models.Creator]) -> list[str]:
@@ -121,7 +121,7 @@ def related_knowledge(
         and record.payload.source.entity_id == source_record.entity_id
     ]
     claims = source_claims(ledger, direct_evidence, source_record)
-    claim_references = [entry["record"].reference() for entry in claims]
+    claim_references = [entry.record.reference() for entry in claims]
     selected = list(direct_evidence)
     for record in records:
         payload = record.payload
@@ -145,7 +145,9 @@ def knowledge_entry(
     if isinstance(record.payload, models.Assessment):
         claim = ledger.require(record.payload.claim, record.batch_id, "claim")
         title = "Bewertung: " + record_title(claim)
-    return {"record": record, "title": title, "overview": eligible_overview(ledger, record, source)}
+    return views.KnowledgeEntry(
+        record=record, title=title, overview=eligible_overview(ledger, record, source)
+    )
 
 
 def source_claims(
@@ -166,7 +168,7 @@ def source_claims(
         key = (reference.entity_id, reference.revision)
         claims[key] = ledger.require(reference, source_record.batch_id, "claim")
     return [
-        {"record": record, "title": record_title(record), "overview": False}
+        views.KnowledgeEntry(record=record, title=record_title(record), overview=False)
         for record in claims.values()
     ]
 
@@ -220,29 +222,27 @@ def present_blocks(
     if snapshot is None:
         return []
     return [
-        {
-            "block": block,
-            "heading_level": min(6, max(2, block.heading_level + 1)),
-            "pdf_url": pdf_location(record, block.page, extraction_revision=snapshot.revision)
+        views.BlockView(
+            block=block,
+            heading_level=min(6, max(2, block.heading_level + 1)),
+            pdf_url=pdf_location(record, block.page, extraction_revision=snapshot.revision)
             if block.page
             else "",
-            "html_text": linked_text(block, snapshot),
-            "locations": [
-                {
-                    "page": location.page,
-                    "url": pdf_location(
-                        record, location.page, extraction_revision=snapshot.revision
-                    ),
-                }
+            html_text=linked_text(block, snapshot),
+            locations=[
+                views.BlockLocationView(
+                    page=location.page,
+                    url=pdf_location(record, location.page, extraction_revision=snapshot.revision),
+                )
                 for location in block.locations
             ],
-            "clean_url": pdf_location(
+            clean_url=pdf_location(
                 record, snapshot.clean_pages[block.page], "clean", snapshot.revision
             )
             if block.page in snapshot.clean_pages
             else "",
-            "table_rows": table_rows(block),
-        }
+            table_rows=table_rows(block),
+        )
         for block in snapshot.blocks
     ]
 
@@ -274,11 +274,11 @@ def present_relationships(
         return []
     blocks = {block.id: block for block in snapshot.blocks}
     return [
-        {
-            "relationship": relationship,
-            "origin": blocks.get(relationship.from_id),
-            "target": blocks.get(relationship.to_id),
-        }
+        views.RelationshipView(
+            relationship=relationship,
+            origin=blocks.get(relationship.from_id),
+            target=blocks.get(relationship.to_id),
+        )
         for relationship in snapshot.relationships
     ]
 
@@ -371,9 +371,9 @@ def outline_entries(snapshot: document_models.DocumentSnapshot | None) -> list[v
             continue
         while len(stack) > 1 and stack[-1][0] >= block.heading_level:
             stack.pop()
-        entry: views.OutlineEntry = {"block": block, "children": []}
+        entry = views.OutlineEntry(block=block, children=[])
         stack[-1][1].append(entry)
-        stack.append((block.heading_level, entry["children"]))
+        stack.append((block.heading_level, entry.children))
     return outline
 
 
@@ -386,7 +386,7 @@ def read_source_citation(
         with database.transaction() as ledger:
             reference = sources.zotero_reference(ledger, record)
     except ValueError as error:
-        return {"title": "Zotero-Zuordnung nicht verfügbar", "error": str(error)}
+        return views.CitationView(title="Zotero-Zuordnung nicht verfügbar", error=str(error))
     citation = read_citation(reference)
-    citation["zotero_url"] = zotero_item_url(reference.library, reference.item_key)
+    citation.zotero_url = zotero_item_url(reference.library, reference.item_key)
     return citation

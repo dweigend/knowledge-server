@@ -40,6 +40,13 @@ STATUS_LABELS: Final[dict[str, str]] = {
 }
 
 
+class SourceMetadataError(models.Contract):
+    """Expose an unavailable bibliography without fabricating metadata."""
+
+    title: str
+    error: str
+
+
 def citation_links(text: str) -> Markup:
     """Render validated reference tokens as links while escaping all source prose."""
     escaped = escape(text)
@@ -83,11 +90,11 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
         return JSONResponse({"error": str(error)}, status_code=error_status(error))
 
     @app.get("/health")
-    def health() -> dict[str, str]:
+    def health() -> response_models.HealthResponse:
         """Check database connectivity."""
         with database.transaction() as ledger:
             ledger.connection.execute("SELECT 1")
-        return {"status": "ok"}
+        return response_models.HealthResponse(status="ok")
 
     @app.get("/", response_class=HTMLResponse)
     def home(
@@ -193,13 +200,11 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
         """Return a record with its status and pinned dependencies."""
         with database.transaction() as ledger:
             record = ledger.get(entity_id, revision)
-            return {
-                "record": record.model_dump(mode="json"),
-                "status": review.status(ledger, record),
-                "dependencies": [
-                    ref.model_dump(mode="json") for ref in review.dependencies(ledger, record)
-                ],
-            }
+            return response_models.RecordResponse(
+                record=record,
+                status=review.status(ledger, record),
+                dependencies=review.dependencies(ledger, record),
+            )
 
     @app.get("/api/requests/{request_id}")
     def receipt(request_id: str) -> response_models.ReceiptResponse:
@@ -208,10 +213,7 @@ def create_app(settings: environment_settings.Settings | None = None) -> FastAPI
             row = ledger.get_receipt(request_id)
             if not row:
                 raise application_errors.Missing("Request not accepted")
-            return {
-                "request_id": row.request_id,
-                "result": [ref.model_dump(mode="json") for ref in row.result],
-            }
+            return response_models.ReceiptResponse(request_id=row.request_id, result=row.result)
 
     @app.get("/sources/{entity_id}/{variant}/view", response_class=HTMLResponse)
     def source_viewer(
@@ -360,7 +362,7 @@ def save_edit(
 def source_metadata(
     records: list[models.Record],
     database: postgresql_revision_store.Database,
-) -> dict[str, dict[str, JsonValue]]:
+) -> dict[str, models.Bibliography | SourceMetadataError]:
     """Read live literature while retaining access to snapshots if Zotero is unavailable."""
     return {
         str(record.entity_id): source_description(record, database)
@@ -372,14 +374,14 @@ def source_metadata(
 def source_description(
     record: models.Record,
     database: postgresql_revision_store.Database,
-) -> dict[str, JsonValue]:
+) -> models.Bibliography | SourceMetadataError:
     """Show an explicit availability error instead of substituting stale literature."""
     try:
         with database.transaction() as ledger:
             reference = sources.zotero_reference(ledger, record)
-        return zotero.get_bibliography(reference).model_dump()
+        return zotero.get_bibliography(reference)
     except (URLError, OSError, ValueError) as error:
-        return {"title": "Zotero-Daten nicht verfügbar", "error": str(error)}
+        return SourceMetadataError(title="Zotero-Daten nicht verfügbar", error=str(error))
 
 
 def read_run_events(root: Path, name: str) -> list[dict[str, JsonValue]]:

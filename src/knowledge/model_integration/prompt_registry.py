@@ -155,6 +155,12 @@ class ConfigRevision(BaseModel):
     hash: str
 
 
+class ConfigurationStatus(ConfigRevision):
+    """Pair the latest saved revision with the active revision number."""
+
+    active_revision: int = Field(ge=1)
+
+
 def configuration_root() -> Path:
     """Resolve the private configuration directory without writing repository files."""
     return Path(
@@ -336,7 +342,7 @@ def resolve_recipe(
         return record, recipe, prompt, rules
 
 
-def configuration_status(kind: ConfigKind | None = None) -> list[dict[str, JsonValue]]:
+def configuration_status(kind: ConfigKind | None = None) -> list[ConfigurationStatus]:
     """List saved drafts alongside the explicitly active revision for each configuration."""
     if kind is not None and kind not in KINDS:
         raise ValueError("Invalid configuration kind")
@@ -347,10 +353,10 @@ def configuration_status(kind: ConfigKind | None = None) -> list[dict[str, JsonV
                 if directory.is_dir() and latest_revision(directory):
                     record = read_revision(directory, latest_revision(directory))
                     statuses.append(
-                        {
-                            **record.model_dump(mode="json"),
-                            "active_revision": active_revision(directory),
-                        }
+                        ConfigurationStatus(
+                            **record.model_dump(),
+                            active_revision=active_revision(directory),
+                        )
                     )
         return statuses
 

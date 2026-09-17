@@ -139,7 +139,7 @@ def test_metadata_outage_is_visible_without_hiding_snapshot(
     from unittest.mock import MagicMock, Mock
     from urllib.error import URLError
 
-    from knowledge.web_interface.fastapi_app import source_description
+    from knowledge.web_interface.fastapi_app import SourceMetadataError, source_description
 
     database = MagicMock()
     record = Mock(payload=article.source)
@@ -149,10 +149,11 @@ def test_metadata_outage_is_visible_without_hiding_snapshot(
     )
     monkeypatch.setattr(zotero, "get_bibliography", Mock(side_effect=URLError("offline")))
     description = source_description(record, database)
-    assert description["title"] == "Zotero-Daten nicht verfügbar"
-    assert isinstance(description["error"], str)
-    assert "offline" in description["error"]
-    assert "authors" not in description
+    assert isinstance(description, SourceMetadataError)
+    assert description.title == "Zotero-Daten nicht verfügbar"
+    assert isinstance(description.error, str)
+    assert "offline" in description.error
+    assert "authors" not in type(description).model_fields
 
 
 @pytest.mark.parametrize("missing", ["url", "contentType", "uploadKey"])

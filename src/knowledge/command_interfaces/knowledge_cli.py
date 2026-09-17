@@ -5,11 +5,10 @@ extraction, backup, migration, and deterministic record operations.
 """
 
 import argparse
-import json
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from knowledge.command_interfaces import json_command_api
 from knowledge.document_processing import document_models, extraction_store
@@ -23,6 +22,19 @@ from knowledge.source_workflows import (
     source_import,
 )
 from knowledge.system_maintenance import backup_and_restore, zotero_source_migration
+from knowledge.system_maintenance.maintenance_models import RestoreReport, SourceMigration
+
+
+class BackupReport(BaseModel):
+    """Expose one snapshot path and its validated restore result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    snapshot: str
+    verification: RestoreReport
+
+
+MIGRATION_RESULTS = TypeAdapter(list[SourceMigration])
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -109,11 +121,11 @@ def backup_and_report(
     """Hold the application write lock during the snapshot, then verify its restore."""
     with application.database.transaction():
         directory = backup_and_restore.snapshot(settings, output)
-    report = {
-        "snapshot": str(directory),
-        "verification": backup_and_restore.verify_restore(directory, settings.database_url),
-    }
-    print(json.dumps(report))
+    report = BackupReport(
+        snapshot=str(directory),
+        verification=backup_and_restore.verify_restore(directory, settings.database_url),
+    )
+    print(report.model_dump_json())
 
 
 def dispatch_command(
@@ -185,11 +197,8 @@ def run_storage_command(
         application.database.initialize()
         return
     if arguments.command == "migrate-zotero":
-        print(
-            json.dumps(
-                zotero_source_migration.migrate_sources(application.database, arguments.batch)
-            )
-        )
+        migrations = zotero_source_migration.migrate_sources(application.database, arguments.batch)
+        print(MIGRATION_RESULTS.dump_json(migrations, exclude_unset=True).decode())
         return
     if arguments.command == "backup":
         backup_and_report(application, settings, arguments.output)

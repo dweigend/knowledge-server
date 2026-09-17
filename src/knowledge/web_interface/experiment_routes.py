@@ -7,12 +7,12 @@ the shared experiment lifecycle without writing canonical knowledge.
 import json
 import secrets
 from pathlib import Path
-from typing import Final, TypedDict
+from typing import Final
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from pydantic import JsonValue, TypeAdapter
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 from starlette.datastructures import FormData, UploadFile
 
 from knowledge.experiments import (
@@ -58,8 +58,10 @@ def latest_recipe(step: str) -> tuple[prompt_registry.ConfigRevision, prompt_reg
     return record, prompt_registry.Recipe.model_validate(record.payload)
 
 
-class StepCard(TypedDict):
+class StepCard(BaseModel):
     """Present a pipeline operation with its recipe and attempt history."""
+
+    model_config = ConfigDict(extra="forbid")
 
     step: str
     title: str
@@ -77,18 +79,18 @@ def step_cards(attempts: list[AttemptView]) -> list[StepCard]:
     for step, title in STEP_LABELS.items():
         record, recipe = latest_recipe(step)
         prompt = prompt_registry.get_revision("prompt", recipe.prompt_name, recipe.prompt_revision)
-        history = [attempt for attempt in attempts if attempt["step"] == step]
+        history = [attempt for attempt in attempts if attempt.step == step]
         cards.append(
-            {
-                "step": step,
-                "title": title,
-                "record": record,
-                "recipe": recipe,
-                "prompt": prompt,
-                "latest_prompt": prompt_registry.get_revision("prompt", recipe.prompt_name),
-                "latest": history[-1] if history else None,
-                "history": history,
-            }
+            StepCard(
+                step=step,
+                title=title,
+                record=record,
+                recipe=recipe,
+                prompt=prompt,
+                latest_prompt=prompt_registry.get_revision("prompt", recipe.prompt_name),
+                latest=history[-1] if history else None,
+                history=history,
+            )
         )
     return cards
 
@@ -179,7 +181,7 @@ def save_step_configuration(step: str, form: FormData) -> prompt_registry.Config
 def selected_attempt(root: Path, run_id: str, attempt_id: str) -> AttemptView:
     """Resolve one attempt only within its owned experiment."""
     for attempt in experiments.read_attempts(root, run_id):
-        if attempt["id"] == attempt_id:
+        if attempt.id == attempt_id:
             return attempt
     raise application_errors.Missing("Unknown experiment attempt")
 
@@ -188,22 +190,22 @@ def prepare_comparison(
     root: Path, selections: list[str], recipe: prompt_registry.ConfigRevision
 ) -> list[tuple[str, str]]:
     """Validate every baseline before preparing a cancellable batch of manual variants."""
-    baselines = []
+    baselines: list[tuple[str, AttemptView]] = []
     for selection in selections:
         run_id, attempt_id = selection.split(":", 1)
         attempt = selected_attempt(root, run_id, attempt_id)
-        if attempt["step"] != recipe.payload["step"]:
+        if attempt.step != recipe.payload["step"]:
             raise ValueError("All baselines must use the same step as the variant recipe")
         baselines.append((run_id, attempt))
     if len({run_id for run_id, _ in baselines}) != len(baselines):
         raise ValueError("Choose only one baseline per source for a comparison run")
-    if len({attempt["knowledge_hash"] for _, attempt in baselines}) > 1:
+    if len({attempt.knowledge_hash for _, attempt in baselines}) > 1:
         raise ValueError("Comparison sources must share the same pinned starting knowledge")
-    created = []
+    created: list[tuple[str, str]] = []
     try:
         for run_id, baseline in baselines:
             identifier = experiments.prepare_attempt(
-                root, run_id, baseline["step"], recipe, input_attempts=baseline["inputs"]
+                root, run_id, baseline.step, recipe, input_attempts=baseline.inputs
             )
             created.append((run_id, identifier))
     except ValueError:
@@ -329,7 +331,11 @@ def experiment_router(  # noqa: C901
             raise ValueError("Unknown pipeline step")
         rows = []
         for run in experiments.list_experiments(root):
-            attempts = [a for a in experiments.read_attempts(root, run["id"]) if a["step"] == step]
+            attempts = [
+                attempt
+                for attempt in experiments.read_attempts(root, run.id)
+                if attempt.step == step
+            ]
             if attempts:
                 rows.append({"run": run, "attempts": attempts})
         return render(
@@ -340,7 +346,7 @@ def experiment_router(  # noqa: C901
             recipes=[
                 r
                 for r in prompt_registry.configuration_status("recipe")
-                if prompt_registry.Recipe.model_validate(r["payload"]).step == step
+                if prompt_registry.Recipe.model_validate(r.payload).step == step
             ],
         )
 
@@ -366,7 +372,7 @@ def experiment_router(  # noqa: C901
         """Inspect source records and their observed citation contexts without network requests."""
         entries = experiment_literature_catalog.literature_catalog(root)
         if work_id is not None:
-            entries = [entry for entry in entries if entry["record"].id == work_id]
+            entries = [entry for entry in entries if entry.record.id == work_id]
         return render(request, "experiment_literature.html", entries=entries, work_id=work_id)
 
     @router.get("/literature/export")
@@ -378,10 +384,9 @@ def experiment_router(  # noqa: C901
                 "schema": "literature-network.v1",
                 "works": [
                     {
-                        "record": entry["record"].model_dump(mode="json"),
+                        "record": entry.record.model_dump(mode="json"),
                         "documents": [
-                            {**document, "record": document["record"].model_dump(mode="json")}
-                            for document in entry["documents"]
+                            document.model_dump(mode="json") for document in entry.documents
                         ],
                     }
                     for entry in entries
@@ -434,12 +439,15 @@ def experiment_router(  # noqa: C901
     def attempt(request: Request, run_id: str, attempt_id: str) -> HTMLResponse:
         """Show exact inputs, schema checks and inspectable execution records."""
         selected = selected_attempt(root, run_id, attempt_id)
+        trace = experiments.read_attempt_trace(root, run_id, attempt_id)
         return render(
             request,
             "experiment_attempt.html",
             experiment=experiments.read_manifest(root, run_id),
             attempt=selected,
-            trace=experiments.read_attempt_trace(root, run_id, attempt_id),
+            attempt_json=selected.model_dump(mode="json", exclude_unset=True),
+            trace=trace,
+            trace_json=[event.model_dump(mode="json") for event in trace],
         )
 
     @router.post("/{run_id}/attempts/{attempt_id}/{action}")
@@ -459,8 +467,9 @@ def experiment_router(  # noqa: C901
     @router.get("/{run_id}/export")
     def export(run_id: str) -> JSONResponse:
         """Export an experiment report only on explicit request."""
+        report = experiments.export_experiment(root, run_id)
         return JSONResponse(
-            experiments.export_experiment(root, run_id),
+            report.model_dump(mode="json", exclude_unset=True),
             headers={"Content-Disposition": f'attachment; filename="experiment-{run_id}.json"'},
         )
 

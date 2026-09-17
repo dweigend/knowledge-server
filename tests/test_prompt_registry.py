@@ -111,8 +111,8 @@ def test_seed_defaults_never_reactivates_or_rewrites_saved_configuration() -> No
     seed_defaults()
     assert get_default("prompt", "segment") == saved
     assert resolve_recipe("segment_blocks")[1].prompt_revision == 1
-    status = next(row for row in configuration_status("prompt") if row["name"] == "segment")
-    assert status["revision"] == status["active_revision"] == 2
+    status = next(row for row in configuration_status("prompt") if row.name == "segment")
+    assert status.revision == status.active_revision == 2
 
 
 def test_resolution_rejects_changed_referenced_content() -> None:

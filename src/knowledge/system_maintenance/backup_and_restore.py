@@ -124,11 +124,11 @@ def inspect_restored_database(database_url: str) -> DatabaseInspection:
             len(ledger.list(_BATCH_ID.validate_python(row["batch_id"]))) for row in batches
         )
         snapshots = inspect_document_snapshots(ledger)
-    return {
-        "current_records_decoded": decoded,
-        "revision_counts": TypeAdapter(list[RevisionCount]).validate_python(counts),
-        "document_snapshots_decoded": snapshots,
-    }
+    return DatabaseInspection(
+        current_records_decoded=decoded,
+        revision_counts=TypeAdapter(list[RevisionCount]).validate_python(counts),
+        document_snapshots_decoded=snapshots,
+    )
 
 
 def inspect_document_snapshots(ledger: postgresql_revision_store.Ledger) -> int:
@@ -151,12 +151,13 @@ def write_restore_report(
     files_verified: int,
 ) -> RestoreReport:
     """Persist file verification and decoded database counts together."""
-    report: RestoreReport = {
-        "files_verified": files_verified,
-        **inspect_restored_database(restored_url),
-        "restored_database": restored_name,
-    }
-    (snapshot_directory / "restore-report.json").write_text(json.dumps(report, indent=2))
+    inspection = inspect_restored_database(restored_url)
+    report = RestoreReport(
+        **inspection.model_dump(),
+        files_verified=files_verified,
+        restored_database=restored_name,
+    )
+    (snapshot_directory / "restore-report.json").write_text(report.model_dump_json(indent=2))
     return report
 
 

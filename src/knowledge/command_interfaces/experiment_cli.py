@@ -16,6 +16,9 @@ from knowledge.experiments import experiment_step_catalog
 from knowledge.experiments.experiment_views import AttemptView, ExperimentReport, ExperimentView
 from knowledge.model_integration import prompt_registry
 
+type CommandResult = AttemptView | ExperimentReport | list[ExperimentView] | dict[str, str | bool]
+COMMAND_RESULT = TypeAdapter(CommandResult)
+
 
 def create_parser() -> argparse.ArgumentParser:
     """Declare independent experiment commands without a production database connection."""
@@ -84,7 +87,7 @@ def run_saved_step(arguments: argparse.Namespace) -> AttemptView:
 
 def dispatch(
     arguments: argparse.Namespace,
-) -> AttemptView | ExperimentReport | list[ExperimentView] | dict[str, str | bool]:
+) -> CommandResult:
     """Dispatch explicit commands while keeping reads free of configuration writes."""
     root = arguments.archive_root.expanduser()
     arguments.archive_root = root
@@ -94,10 +97,10 @@ def dispatch(
         return run_saved_step(arguments)
     if arguments.command == "inspect":
         if arguments.experiment:
-            return {
-                "manifest": experiments.read_manifest(root, arguments.experiment),
-                "attempts": experiments.read_attempts(root, arguments.experiment),
-            }
+            return ExperimentReport(
+                manifest=experiments.read_manifest(root, arguments.experiment),
+                attempts=experiments.read_attempts(root, arguments.experiment),
+            )
         return experiments.list_experiments(root)
     if arguments.command == "export":
         return experiments.export_experiment(root, arguments.experiment)
@@ -116,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser.parse_args(argv)
     try:
         result = dispatch(arguments)
-        output = json.dumps(result, ensure_ascii=False, indent=2)
+        output = COMMAND_RESULT.dump_json(result, indent=2, exclude_unset=True).decode()
         destination = getattr(arguments, "output", None)
         if destination is None:
             print(output)
@@ -129,8 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(str(error))
     return int(
         arguments.command == "run"
-        and isinstance(result, dict)
-        and result.get("status") in {"failed", "cancelled"}
+        and isinstance(result, AttemptView)
+        and result.status in {"failed", "cancelled"}
     )
 
 

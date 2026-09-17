@@ -1,55 +1,51 @@
-"""Describe JSON responses shared by command and HTTP adapters."""
+"""Describe validated responses shared by command and HTTP adapters."""
 
-from typing import TypedDict
+from pydantic import Field, JsonValue
 
-from pydantic import JsonValue
+from knowledge.knowledge_domain import knowledge_record_models as models
 
 
-class RecordResponse(TypedDict):
-    """Expose a serialized record, review status and pinned dependencies."""
+class HealthResponse(models.Contract):
+    """Report successful database connectivity."""
 
-    record: dict[str, JsonValue]
     status: str
-    dependencies: list[dict[str, JsonValue]]
 
 
-class RecordSummary(TypedDict):
-    """Expose the serialized fields needed for a search result."""
+class RecordResponse(models.Contract):
+    """Expose a record, review status and pinned dependencies."""
 
-    reference: dict[str, JsonValue]
-    kind: str
+    record: models.Record
+    status: str
+    dependencies: list[models.Reference]
+
+
+class RecordSummary(models.Contract):
+    """Expose the fields needed for a search result."""
+
+    reference: models.Reference
+    kind: models.Kind
     status: str
     summary: dict[str, JsonValue]
 
 
-class SearchResponse(TypedDict):
+class SearchResponse(models.Contract):
     """Return a bounded record search page and its total size."""
 
-    total: int
-    offset: int
+    total: int = Field(ge=0)
+    offset: int = Field(ge=0)
     records: list[RecordSummary]
 
 
-class PlainPassage(TypedDict):
+class PlainPassage(models.Contract):
     """Expose a source page from the original text snapshot."""
 
-    source: dict[str, JsonValue]
-    page: int
+    source: models.Reference
+    page: int = Field(ge=1)
     text: str
 
 
-class StructuredPassage(TypedDict):
-    """Expose located blocks and the constraints for their evidentiary use."""
-
-    source: dict[str, JsonValue]
-    page: int
-    extraction_revision: int
-    blocks: list[dict[str, JsonValue]]
-    evidence_rule: str
-
-
-class ReceiptResponse(TypedDict):
-    """Expose the accepted request identifier and its serialized references."""
+class ReceiptResponse(models.Contract):
+    """Expose an accepted request identifier and its references."""
 
     request_id: str
-    result: list[dict[str, JsonValue]]
+    result: list[models.Reference]

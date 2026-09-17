@@ -29,7 +29,8 @@ def validate_selection_parameters(parameters: Mapping[str, object]) -> None:
 
 
 def _knowledge_query(execution: pipeline_specification.StepExecution) -> str:
-    formulation = execution.inputs["formulate_claims"]
+    formulation = execution.inputs.formulate_claims
+    assert formulation is not None
     return str(
         execution.recipe.parameters.get("query")
         or " ".join(
@@ -53,7 +54,8 @@ def select_entries(
     execution: pipeline_specification.StepExecution,
 ) -> knowledge_candidate_selection.KnowledgeSelection:
     """Select relevant entries only from the pinned retrieval output."""
-    retrieval = execution.inputs["find_knowledge"]
+    retrieval = execution.inputs.find_knowledge
+    assert retrieval is not None
     return knowledge_candidate_selection.select_knowledge(
         retrieval,
         _knowledge_query(execution),
@@ -67,8 +69,9 @@ def selected_records(
     execution: pipeline_specification.StepExecution,
 ) -> list[knowledge_record_models.Record]:
     """Verify selected candidates against retrieval and pinned knowledge revisions."""
-    retrieval = execution.inputs["find_knowledge"]
-    selection = execution.inputs["select_entries"]
+    retrieval = execution.inputs.find_knowledge
+    selection = execution.inputs.select_entries
+    assert retrieval is not None and selection is not None
     knowledge_candidate_selection.validate_selection(selection, retrieval)
     if any(hit.record not in execution.knowledge for hit in retrieval.hits):
         raise ValueError("Retrieved record differs from pinned input knowledge")
@@ -81,7 +84,8 @@ def propose_changes(
 ) -> step_contracts.KnowledgeChanges:
     """Generate claim and note proposals without accepting domain changes."""
     records = selected_records(execution)
-    formulation = execution.inputs["formulate_claims"]
+    formulation = execution.inputs.formulate_claims
+    assert formulation is not None
     changes = _propose_claim_changes(execution, formulation, records)
     return step_contracts.KnowledgeChanges(
         claims=changes,
@@ -99,8 +103,9 @@ def _propose_claim_changes(
     formulation: step_contracts.ClaimFormulation,
     records: list[knowledge_record_models.Record],
 ) -> list[step_contracts.ClaimChange]:
-    extraction = execution.inputs["extract_text"]
-    blocks = execution.inputs["segment_blocks"]
+    extraction = execution.inputs.extract_text
+    blocks = execution.inputs.segment_blocks
+    assert extraction is not None and blocks is not None
     candidates = [record for record in records if record.kind == "claim"]
     changes = []
     for claim in formulation.claims:

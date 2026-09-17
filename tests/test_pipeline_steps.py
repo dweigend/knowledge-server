@@ -2,7 +2,6 @@ import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
 from uuid import UUID
 
 import pytest
@@ -18,6 +17,7 @@ from knowledge.knowledge_domain.knowledge_record_models import (
     Record,
 )
 from knowledge.model_integration.prompt_registry import (
+    AuthorRules,
     Recipe,
     get_revision,
     resolve_recipe,
@@ -110,11 +110,11 @@ def step_execution(
     }
     return StepExecution(
         pdf=pdf,
-        inputs=cast(StepInputs, validated_inputs),
+        inputs=StepInputs.model_validate(validated_inputs),
         knowledge=knowledge,
         recipe=recipe,
         prompt_text=prompt,
-        author_rules=rules.payload if rules else None,
+        author_rules=AuthorRules.model_validate(rules.payload) if rules else None,
         output_directory=output_directory,
         cancelled=cancelled,
     )

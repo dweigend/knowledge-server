@@ -27,7 +27,7 @@ def migrate_source(
     """Keep quote text and page numbering unchanged and leave all archive files intact."""
     source = record.payload
     if not isinstance(source, models.LegacySource):
-        return {"entity_id": str(record.entity_id), "status": "already_migrated"}
+        return SourceMigration(entity_id=str(record.entity_id), status="already_migrated")
     clean_pdf = Path(source.archive_path)
     original_pdf = clean_pdf.with_name("original.pdf")
     reference = zotero_client.import_sources(
@@ -50,10 +50,10 @@ def migrate_source(
             "migration:zotero-ownership-v1",
             record.reference(),
         )
-    return {
-        "entity_id": str(migrated.entity_id),
-        "revision": migrated.revision,
-        "status": "migrated",
-        "original_pdf": str(zotero_client.verified_pdf(reference, "original")),
-        "clean_pdf": str(zotero_client.verified_pdf(reference, "clean")),
-    }
+    return SourceMigration(
+        entity_id=str(migrated.entity_id),
+        revision=migrated.revision,
+        status="migrated",
+        original_pdf=str(zotero_client.verified_pdf(reference, "original")),
+        clean_pdf=str(zotero_client.verified_pdf(reference, "clean")),
+    )

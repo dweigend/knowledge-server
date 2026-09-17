@@ -101,11 +101,11 @@ def test_structured_table_keeps_spans_footnotes_and_pinned_locations(
 ) -> None:
     blocks = source_view.present_blocks(source_record, snapshot)
     table = blocks[1]
-    assert table["table_rows"][0][0].column_span == 2
-    assert [cell.text for cell in table["table_rows"][1]] == ["71", "29"]
-    assert "revision=2&page=2" in table["pdf_url"]
-    assert "/clean/view?revision=2&page=1" in table["clean_url"]
-    assert table["block"].footnote_ids == ["footnote"]
+    assert table.table_rows[0][0].column_span == 2
+    assert [cell.text for cell in table.table_rows[1]] == ["71", "29"]
+    assert "revision=2&page=2" in table.pdf_url
+    assert "/clean/view?revision=2&page=1" in table.clean_url
+    assert table.block.footnote_ids == ["footnote"]
 
 
 def test_document_content_is_escaped_and_only_verified_markers_link(
@@ -142,11 +142,11 @@ def test_citation_uses_zotero_exports_and_rejects_unsafe_publisher_links(
     )
     assert isinstance(source_record.payload, Source)
     citation = source_view.read_citation(source_record.payload.zotero)
-    assert citation["text"] == "A Writer. Working paper."
-    assert citation["authors"] == ["A Writer"]
-    assert citation["publisher_url"] == ""
-    assert citation["bibtex"] == "@misc{working}"
-    assert citation["year"] == ""
+    assert citation.text == "A Writer. Working paper."
+    assert citation.authors == ["A Writer"]
+    assert citation.publisher_url == ""
+    assert citation.bibtex == "@misc{working}"
+    assert citation.year == ""
     assert "error" not in citation
 
 
@@ -159,7 +159,7 @@ def test_citation_reports_service_failure_without_substituting_metadata(
     monkeypatch.setattr(zotero, "article_citation", unavailable)
     assert isinstance(source_record.payload, Source)
     citation = source_view.read_citation(source_record.payload.zotero)
-    assert "offline" in citation["error"]
+    assert "offline" in citation.error
     assert "bibtex" not in citation
 
 
@@ -197,7 +197,7 @@ def test_unknown_page_mapping_does_not_guess_clean_pdf_page(
     source_record: Record, snapshot: DocumentSnapshot
 ) -> None:
     snapshot.clean_pages = {}
-    assert not source_view.present_blocks(source_record, snapshot)[1]["clean_url"]
+    assert not source_view.present_blocks(source_record, snapshot)[1].clean_url
 
 
 def test_preview_uses_original_hash_checked_pdf_and_discards_temporary_files(
@@ -286,8 +286,8 @@ def test_outline_keeps_nested_headings(snapshot: DocumentSnapshot) -> None:
         DocumentBlock(id="b", kind="heading", text="B", heading_level=1),
     ]
     outline = source_view.outline_entries(snapshot)
-    assert [entry["block"].id for entry in outline] == ["a", "b"]
-    assert outline[0]["children"][0]["block"].id == "a1"
+    assert [entry.block.id for entry in outline] == ["a", "b"]
+    assert outline[0].children[0].block.id == "a1"
 
 
 def test_claim_links_use_the_evidence_claim_revision(
@@ -326,8 +326,8 @@ def test_claim_links_use_the_evidence_claim_revision(
     )
     ledger = SimpleNamespace(require=lambda reference, batch, kind: claim)
     links = source_view.source_claims(cast(Ledger, ledger), [relation], source_record)
-    assert links[0]["record"].reference() == claim.reference()
-    assert links[0]["title"] == "Measured result"
+    assert links[0].record.reference() == claim.reference()
+    assert links[0].title == "Measured result"
 
 
 def test_unresolved_historical_zotero_identity_keeps_readable_error(
@@ -349,7 +349,7 @@ def test_unresolved_historical_zotero_identity_keeps_readable_error(
     citation = source_view.read_source_citation(
         cast(Database, SimpleNamespace(transaction=transaction)), source_record
     )
-    assert "Historical PDF" in citation["error"]
+    assert "Historical PDF" in citation.error
     assert "zotero_url" not in citation
 
 
@@ -414,12 +414,12 @@ def test_related_knowledge_excludes_other_sources_evidence_and_keeps_labels_comp
     records = [claim, evidence, foreign_evidence, assessment]
     ledger = cast(Ledger, SimpleNamespace(list=lambda batch: records, require=lambda *args: claim))
     related = source_view.related_knowledge(ledger, source_record)
-    assert {entry["record"].entity_id for entry in related} == {
+    assert {entry.record.entity_id for entry in related} == {
         claim.entity_id,
         evidence.entity_id,
         assessment.entity_id,
     }
-    labels = {entry["record"].kind: entry["title"] for entry in related}
+    labels = {entry.record.kind: entry.title for entry in related}
     assert labels["evidence"] == "Beleg auf Originalseite 2 (stützt)"
     assert labels["assessment"].startswith("Bewertung: ")
     assert max(map(len, labels.values())) <= 172

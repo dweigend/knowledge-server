@@ -96,10 +96,10 @@ def test_manual_pdf_blocks_history_comparison_and_cleanup(
         assert response.status_code == 200, response.text
     attempts = experiments.read_attempts(root, run_id)
     assert len(attempts) == 2
-    assert all(a["status"] == "completed" for a in attempts)
+    assert all(attempt.status == "completed" for attempt in attempts)
     assert "First observation." in client.get(base).text
     blocks = attempts[-1]
-    inspect = f"{base}/attempts/{blocks['id']}"
+    inspect = f"{base}/attempts/{blocks.id}"
     assert client.get(inspect).status_code == 200
     assert client.get("/experiments/compare?step=segment_blocks").status_code == 200
     report = client.get(f"{base}/export").json()
@@ -118,7 +118,7 @@ def test_mutations_require_csrf_and_dependency_failure_is_inspectable(
     base = f"/experiments/{run_id}"
     rejected = client.post(f"{base}/delete", headers={"Origin": "https://example.org"})
     assert rejected.status_code == 403
-    assert experiments.read_manifest(root, run_id)["id"] == run_id
+    assert experiments.read_manifest(root, run_id).id == run_id
     response = client.post(f"{base}/steps/segment_blocks", data=step_form(token, "segment_blocks"))
     assert response.status_code == 422
     assert "Run extract_text" in response.text
@@ -152,7 +152,7 @@ def test_duplicate_comparison_source_cannot_leave_orphan_queued_attempt(
         "/experiments/compare",
         data={
             "csrf": token,
-            "attempts": [f"{run_id}:{a['id']}" for a in attempts],
+            "attempts": [f"{run_id}:{attempt.id}" for attempt in attempts],
             "recipe_name": "extract_text",
             "recipe_revision": str(get_revision("recipe", "extract_text").revision),
         },
@@ -295,8 +295,8 @@ def test_grobid_form_upgrades_recipe_and_renders_bibliography(
     )
     assert response.status_code == 200, response.text
     attempt = experiments.read_attempts(root, run_id)[0]
-    assert attempt["status"] == "completed", attempt["error"]
-    saved_recipe = ConfigRevision.model_validate(attempt["recipe"])
+    assert attempt.status == "completed", attempt.error
+    saved_recipe = ConfigRevision.model_validate(attempt.recipe)
     assert saved_recipe.payload["output_schema"] == "extraction.v4"
     assert "Ada Lovelace" in response.text
     assert "Run this step with literature matching" in response.text
@@ -348,7 +348,7 @@ def test_source_records_link_context_and_export_network_without_queries_on_read(
     )
     assert response.status_code == 200, response.text
     attempt = experiments.read_attempts(root, run_id)[0]
-    assert attempt["status"] == "completed", attempt["error"]
+    assert attempt.status == "completed", attempt.error
     assert "Cited sources" in response.text
     assert "Text before [1] after." in response.text
     assert "PDF page 1" not in response.text
@@ -459,7 +459,7 @@ def test_discovery_trace_and_output_render_without_network(
     base = f"/experiments/{run_id}"
     assert client.post(f"{base}/steps/extract_text", data=step_form(token, "extract_text"))
     attempts = experiments.read_attempts(root, run_id)
-    output = attempts[0]["output"]
+    output = attempts[0].output
     assert output is not None
     output["paper"] = parse_paper_tei(TEI).model_dump()
     output.pop("discovery", None)
