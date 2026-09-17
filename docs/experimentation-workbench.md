@@ -126,11 +126,20 @@ Optional credentials are listed in `.env.example`. Open-access lookup is opt-in;
 Unpaywall requires a contact email. Credentials are environment settings, never
 part of recipes or exported search traces.
 
-The default fallback limits are 40 requests per run, 5 per reference and 2 model
+The default fallback limits are 100 requests per run, 10 per reference and 2 model
 calls, with a 60-second model timeout. The overall step deadline still applies.
 Model assistance may propose bounded search queries; candidates must pass the
 bibliographic identity checks before becoming confirmed records. Neither a model
 response nor an open-access URL is sufficient evidence for an identity.
+
+Discovery gives every searchable reference one initial lookup before distributing
+fallback providers round-robin. When a model-call slot remains after bibliography
+recovery, up to one fifth of the request budget is held for grounded query
+refinement without preventing those initial lookups. The same one-fifth reserve
+applies to each reference, so difficult sources retain two of their ten requests
+for refined searches. The result records whether refinement ran, used a cached
+plan, returned no variants or was skipped because a time, request or model-call
+budget was exhausted.
 
 Search results are cached within the source experiment, including unsuccessful
 searches, so an ordinary rerun does not repeat unchanged failed queries
@@ -140,6 +149,10 @@ successful bibliography recovery remain cached across search revisions.
 Changing budgets alone does not clear negative entries.
 The result shows request, cache-hit and model-call totals, warnings
 and a collapsed per-reference trace of provider, query, status and candidate count.
+Rejected candidates retain deterministic title, identifier, year, author or
+chapter-versus-book reasons. The attempt execution trace records each redacted
+lookup plus bibliography recovery, refinement and final resource totals; raw
+provider responses and model reasoning remain private diagnostics.
 Reading a result never starts another search. Provider failures and exhausted
 budgets remain visible; unresolved sources are retained for review.
 

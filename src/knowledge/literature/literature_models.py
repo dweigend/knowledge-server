@@ -36,6 +36,15 @@ class Candidate(BaseModel):
     method: Literal["doi", "isbn", "bibliographic"]
 
 
+class CandidateRejection(BaseModel):
+    """Explain why one provider candidate did not establish an identity."""
+
+    model_config = ConfigDict(extra="forbid")
+    provider: str
+    provider_id: str
+    reasons: list[str]
+
+
 class Resolution(BaseModel):
     """Record the outcome and provenance of one conservative identity check."""
 
@@ -46,6 +55,7 @@ class Resolution(BaseModel):
     checked_at: str
     message: str
     candidates: list[Candidate] = Field(default_factory=list)
+    rejections: list[CandidateRejection] = Field(default_factory=list)
 
 
 class CitationOccurrence(BaseModel):

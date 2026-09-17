@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from knowledge.literature.crossref_client import normalize_doi, parse_metadata
 from knowledge.literature.literature_models import Candidate, LiteratureMetadata, LiteratureRecord
-from knowledge.literature.literature_resolution import Lookup, enrich_paper
+from knowledge.literature.literature_resolution import Lookup, enrich_paper, resolve_reference
 from knowledge.literature.structured_paper_models import (
     PaperCitation,
     PaperDocument,
@@ -337,12 +337,32 @@ def test_author_surnames_match_with_trailing_initials(
 
 
 def test_matching_given_name_does_not_confirm_different_author_surname() -> None:
-    from knowledge.literature.literature_resolution import candidate_matches
+    from knowledge.literature.literature_resolution import (
+        candidate_matches,
+        candidate_rejection_reasons,
+    )
 
     original = reference().model_copy(update={"authors": ["Alice Smith"]})
     found = candidate()
     found.metadata.authors = ["Alice Jones"]
     assert not candidate_matches(original, found)
+    assert candidate_rejection_reasons(original, found) == [
+        "The candidate authors do not include the extracted first author."
+    ]
+
+
+def test_resolution_retains_candidate_rejection_reasons() -> None:
+    original = reference().model_copy(update={"year": "2020"})
+    found = candidate()
+    found.metadata.year = "2021"
+
+    result = resolve_reference(original, [found])
+
+    assert result.status == "unmatched"
+    assert result.rejections[0].provider_id == found.provider_id
+    assert result.rejections[0].reasons == [
+        "The candidate publication year differs from the extracted year."
+    ]
 
 
 @pytest.mark.parametrize(

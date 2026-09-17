@@ -53,26 +53,80 @@ def title_matches(original: papers.PaperMetadata, candidate: literature_models.C
     return SequenceMatcher(None, left, right).ratio() >= 0.94
 
 
+def candidate_rejection_reasons(
+    original: papers.PaperMetadata, candidate: literature_models.Candidate
+) -> list[str]:
+    """Explain every deterministic identity check that rejected a candidate."""
+    reasons = []
+    if not title_matches(original, candidate):
+        reasons.append("Title evidence does not agree closely enough.")
+    if _chapter_conflicts_with_book(original, candidate):
+        reasons.append("A cited chapter cannot be confirmed as its containing book.")
+    if candidate.method == "doi":
+        reasons.extend(_doi_rejection_reasons(original, candidate))
+    elif candidate.method == "isbn":
+        reasons.extend(_isbn_rejection_reasons(original, candidate))
+    else:
+        reasons.extend(_bibliographic_rejection_reasons(original, candidate))
+    return reasons
+
+
+def _chapter_conflicts_with_book(
+    original: papers.PaperMetadata, candidate: literature_models.Candidate
+) -> bool:
+    return (
+        isinstance(original, papers.PaperReference)
+        and bool(re.search(r"\b[Ii]n\s*:", original.raw or ""))
+        and candidate.metadata.work_type in {"book", "monograph", "edited-book"}
+    )
+
+
+def _doi_rejection_reasons(
+    original: papers.PaperMetadata, candidate: literature_models.Candidate
+) -> list[str]:
+    doi = normalize_doi(original.doi)
+    if doi is None:
+        return ["The extracted source has no DOI to corroborate this DOI candidate."]
+    if doi != normalize_doi(candidate.metadata.doi):
+        return ["The candidate DOI differs from the extracted DOI."]
+    return []
+
+
+def _isbn_rejection_reasons(
+    original: papers.PaperMetadata, candidate: literature_models.Candidate
+) -> list[str]:
+    isbn = extracted_isbn(original)
+    candidate_isbns = {normalize_isbn(entry) for entry in candidate.metadata.isbn}
+    if isbn is None:
+        return ["The extracted source has no valid ISBN to corroborate this edition."]
+    if isbn not in candidate_isbns:
+        return ["The candidate ISBN differs from the extracted ISBN."]
+    return []
+
+
+def _bibliographic_rejection_reasons(
+    original: papers.PaperMetadata, candidate: literature_models.Candidate
+) -> list[str]:
+    reasons = []
+    if not original.year:
+        reasons.append("The extracted source has no publication year for corroboration.")
+    elif original.year != candidate.metadata.year:
+        reasons.append("The candidate publication year differs from the extracted year.")
+    if not original.authors:
+        reasons.append("The extracted source has no author for corroboration.")
+    else:
+        surnames = {author_surname(author) for author in candidate.metadata.authors}
+        first_author = author_surname(original.authors[0])
+        if not first_author or first_author not in surnames:
+            reasons.append("The candidate authors do not include the extracted first author.")
+    return reasons
+
+
 def candidate_matches(
     original: papers.PaperMetadata, candidate: literature_models.Candidate
 ) -> bool:
     """Accept exact DOI agreement or a corroborated bibliographic identity."""
-    if not title_matches(original, candidate):
-        return False
-    if candidate.method == "doi":
-        doi = normalize_doi(original.doi)
-        return doi is not None and doi == normalize_doi(candidate.metadata.doi)
-    if candidate.method == "isbn":
-        isbn = extracted_isbn(original)
-        return isbn is not None and isbn in {
-            normalize_isbn(entry) for entry in candidate.metadata.isbn
-        }
-    if not original.year or original.year != candidate.metadata.year or not original.authors:
-        return False
-    # Compare surnames independent of initials, retaining conservative year agreement.
-    surnames = {author_surname(author) for author in candidate.metadata.authors}
-    first_author = author_surname(original.authors[0])
-    return bool(first_author and first_author in surnames)
+    return not candidate_rejection_reasons(original, candidate)
 
 
 def author_surname(author: str) -> str:
@@ -90,8 +144,17 @@ def resolve_reference(
 ) -> literature_models.Resolution:
     """Keep ambiguity and rejected candidates explicit instead of guessing an identity."""
     matches: dict[str, literature_models.Candidate] = {}
+    rejections: list[literature_models.CandidateRejection] = []
     for candidate in candidates:
-        if not candidate_matches(reference, candidate):
+        reasons = candidate_rejection_reasons(reference, candidate)
+        if reasons:
+            rejections.append(
+                literature_models.CandidateRejection(
+                    provider=candidate.provider,
+                    provider_id=candidate.provider_id,
+                    reasons=reasons,
+                )
+            )
             continue
         identity = candidate_identity(candidate)
         previous = matches.get(identity)
@@ -115,6 +178,7 @@ def resolve_reference(
         candidates=([accepted] + [c for c in candidates if c != accepted])
         if accepted
         else candidates,
+        rejections=rejections,
     )
 
 

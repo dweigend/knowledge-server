@@ -15,11 +15,21 @@ from knowledge.literature.bibliographic_identifiers import extracted_isbn
 from knowledge.literature.literature_models import Candidate
 from knowledge.literature.structured_paper_models import PaperMetadata, PaperReference
 from knowledge.runtime_support.atomic_json_files import write_json_atomically
+from knowledge.runtime_support.workflow_event_log import record_event
 
 CACHE_VERSION: Final[str] = "reference-search.v3"
 MIN_REQUEST_INTERVAL_SECONDS: Final[int] = 1
 CANCELLATION_POLL_SECONDS: Final[float] = 0.05
 MIN_LOOKUP_SECONDS: Final[float] = 0.001
+REFINEMENT_RESERVE_DIVISOR: Final[int] = 5
+
+
+def refinement_reserve(total_requests: int, minimum_initial_requests: int) -> int:
+    """Reserve one fifth of capacity without displacing required initial lookups."""
+    return min(
+        total_requests // REFINEMENT_RESERVE_DIVISOR,
+        max(0, total_requests - minimum_initial_requests),
+    )
 
 
 def request_key(provider: str, reference: PaperMetadata, retry_generation: int) -> str:
@@ -63,6 +73,10 @@ class ReferenceSearchSession:
     backoff: set[str] = field(default_factory=set)
     last_requests: dict[str, float] = field(default_factory=dict)
     reference_requests: dict[str, int] = field(default_factory=dict)
+    event_directory: Path | None = None
+    request_limit: int | None = None
+    reference_request_limit: int | None = None
+    request_limit_reason: str = "Search request budget exhausted."
 
     def search(
         self, provider: str, reference: PaperReference, trace: models.ReferenceSearch
@@ -74,18 +88,62 @@ class ReferenceSearchSession:
         if provider not in self.providers:
             query.status = "error"
             query.message = "Provider is not configured; no request made."
-            return []
-        if not supports_query(provider, reference):
+            candidates: list[Candidate] = []
+        elif not supports_query(provider, reference):
             query.status = "skipped"
             query.message = "Insufficient fields for this provider; no request made."
-            return []
-        result = self.lookup(provider, reference, trace.reference_id, query)
-        if result is None:
-            return []
-        query.candidate_count = len(result.candidates)
-        query.message = result.error or ""
-        query.status = "error" if result.error else "success"
-        return result.candidates
+            candidates = []
+        else:
+            result = self.lookup(provider, reference, trace.reference_id, query)
+            candidates = result.candidates if result is not None else []
+            if result is not None:
+                query.candidate_count = len(result.candidates)
+                query.message = result.error or ""
+                query.status = "error" if result.error else "success"
+        self.record_query(trace.reference_id, query)
+        return candidates
+
+    def reserve_refinement_requests(self, minimum_initial_requests: int) -> int:
+        """Reserve one fifth of global and per-source capacity for query refinement."""
+        reserved = refinement_reserve(self.settings.max_requests, minimum_initial_requests)
+        if not reserved:
+            self.release_reserved_requests()
+            return 0
+        self.request_limit = self.settings.max_requests - reserved
+        per_reference_reserve = refinement_reserve(self.settings.max_requests_per_reference, 1)
+        self.reference_request_limit = (
+            self.settings.max_requests_per_reference - per_reference_reserve
+        )
+        self.request_limit_reason = (
+            "Initial search budget exhausted; remaining requests are reserved for refinement."
+        )
+        return reserved
+
+    def release_reserved_requests(self) -> None:
+        """Restore the hard run limit before model-assisted refinement."""
+        self.request_limit = None
+        self.reference_request_limit = None
+        self.request_limit_reason = "Search request budget exhausted."
+
+    def record_query(self, reference_id: str, query: models.SearchQuery) -> None:
+        """Append one redacted provider outcome to the owning attempt log."""
+        if self.event_directory is None:
+            return
+        record_event(
+            self.event_directory,
+            "reference_lookup_finished",
+            reference_id=reference_id,
+            provider=query.provider,
+            query=query.query,
+            status=query.status,
+            cached=query.cached,
+            candidate_count=query.candidate_count,
+            message=query.message,
+            requests=self.report.requests,
+            request_limit=(
+                self.request_limit if self.request_limit is not None else self.settings.max_requests
+            ),
+        )
 
     def lookup(
         self,
@@ -128,9 +186,13 @@ class ReferenceSearchSession:
             return "Provider rate limited this run; another provider may still be used."
         if monotonic() >= self.deadline:
             return "Search time budget exhausted."
-        if self.report.requests >= self.settings.max_requests:
-            return "Search request budget exhausted."
-        if self.reference_requests.get(reference_id, 0) >= self.settings.max_requests_per_reference:
+        request_limit = (
+            self.request_limit if self.request_limit is not None else self.settings.max_requests
+        )
+        if self.report.requests >= request_limit:
+            return self.request_limit_reason
+        reference_limit = self.reference_request_limit or self.settings.max_requests_per_reference
+        if self.reference_requests.get(reference_id, 0) >= reference_limit:
             return "Per-reference request budget exhausted."
         return None
 

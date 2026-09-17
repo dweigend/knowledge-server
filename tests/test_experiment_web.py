@@ -501,6 +501,15 @@ def test_discovery_trace_and_historical_output_render_without_network(
         "cache_hits": 2,
         "model_calls": 0,
         "warnings": ["Request budget exhausted."],
+        "refinement": {
+            "status": "skipped",
+            "reason": "Search request budget was exhausted before query refinement.",
+            "reserved_requests": 2,
+            "planned_queries": 0,
+            "requests": 0,
+            "model_called": False,
+            "cache_reused": False,
+        },
         "searches": [
             {
                 "reference_id": "b0",
@@ -527,6 +536,8 @@ def test_discovery_trace_and_historical_output_render_without_network(
     assert "Request budget exhausted." in page.text
     assert "No candidate found." in page.text
     assert "dnb · success · cached" in page.text
+    assert "Query refinement · skipped · 2 requests reserved" in page.text
+    assert "Search request budget was exhausted before query refinement." in page.text
     assert get_revision("recipe", "extract_text") == saved
 
 

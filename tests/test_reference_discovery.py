@@ -273,6 +273,39 @@ def test_total_request_budget_stops_all_further_network_requests(tmp_path: Path)
     )
 
 
+def test_initial_round_reaches_every_reference_before_fallbacks(tmp_path: Path) -> None:
+    calls = []
+    refs = [reference(f"r{index}", title=f"Study {index}") for index in range(5)]
+    result = run_discovery(
+        tmp_path,
+        document(*refs),
+        providers_recording(calls),
+        DiscoverySettings(max_model_calls=0, max_requests=6),
+    )
+    assert [query.id for _, query in calls] == ["__source__", *[ref.id for ref in refs]]
+    assert result.report.requests == 6
+
+
+def test_fallback_rounds_distribute_each_provider_across_references(tmp_path: Path) -> None:
+    calls = []
+    refs = [reference(f"r{index}", title=f"Study {index}") for index in range(3)]
+
+    def initial_result(query: PaperMetadata) -> list[Candidate]:
+        return [candidate(query)] if query.title == "Uploaded paper" else []
+
+    run_discovery(
+        tmp_path,
+        document(*refs),
+        providers_recording(calls, initial_result),
+        DiscoverySettings(providers=["dnb", "openalex"], max_model_calls=0, max_requests=8),
+    )
+    reference_calls = [
+        (provider, query.id) for provider, query in calls if query.id != "__source__"
+    ]
+    assert reference_calls[:3] == [("crossref", ref.id) for ref in refs]
+    assert reference_calls[3:6] == [("openalex", ref.id) for ref in refs]
+
+
 def test_per_reference_budget_leaves_capacity_for_other_references(tmp_path: Path) -> None:
     calls = []
     result = run_discovery(
@@ -352,6 +385,9 @@ def test_chapter_evidence_cannot_be_confirmed_as_containing_book() -> None:
     ref = reference(raw="Smith (2020). A scientific study. In: Collected essays, pp. 1-10.")
     result = discovery.resolved_record(ref, [candidate(ref, work_type="book")], "a" * 64)
     assert result.resolution.status == "unmatched"
+    assert result.resolution.rejections[0].reasons == [
+        "A cited chapter cannot be confirmed as its containing book."
+    ]
 
 
 def test_no_provider_query_without_bibliographic_evidence(tmp_path: Path) -> None:
@@ -684,6 +720,191 @@ def test_recovery_model_call_consumes_the_shared_model_budget(
         DiscoverySettings(max_model_calls=1),
     )
     assert result.report.model_calls == 1
+    assert result.report.refinement.status == "skipped"
+    assert "model-call budget" in result.report.refinement.reason
+
+
+def test_cached_refinement_plan_runs_after_recovery_consumes_model_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ref = reference(
+        title="Candidate study. Publisher city",
+        raw="Alice Smith (2020). Candidate study. Publisher city.",
+    )
+    plan = planning.ReferenceQueries(
+        queries=[
+            planning.ReferenceQuery(
+                reference_id="r1",
+                title="Candidate study",
+                authors=["Alice Smith"],
+                year="2020",
+                reason="Separate the source title from publisher text",
+            )
+        ]
+    )
+    model_calls = 0
+
+    def generate(*_args: object, **_kwargs: object) -> planning.ReferenceQueries:
+        nonlocal model_calls
+        model_calls += 1
+        return plan
+
+    monkeypatch.setattr(planning.structured_generation, "generate", generate)
+    settings = DiscoverySettings(providers=[], max_model_calls=1)
+    providers = providers_recording([])
+    run_discovery(tmp_path, document(ref), providers, settings)
+
+    def recover(
+        paper: PaperDocument, *_args: object, **_kwargs: object
+    ) -> BibliographyRecoveryResult:
+        return BibliographyRecoveryResult(
+            paper=paper,
+            report=BibliographyAudit(
+                status="consistent",
+                original_count=1,
+                detected_count=1,
+                resulting_count=1,
+                model_status="completed",
+            ),
+        )
+
+    monkeypatch.setattr(discovery.bibliography_recovery, "recover_bibliography", recover)
+    second = run_discovery(tmp_path, document(ref), providers, settings)
+
+    assert model_calls == 1
+    assert second.report.model_calls == 1
+    assert second.report.refinement.status == "completed"
+    assert second.report.refinement.cache_reused is True
+    assert second.report.refinement.planned_queries == 1
+
+
+def test_refinement_uses_capacity_reserved_from_ordinary_search(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    refs = [reference(f"r{index}", title=f"Unreadable study {index}") for index in range(3)]
+    target = reference(
+        "target",
+        title="Candidate study. Publisher city",
+        raw="Alice Smith (2020). Candidate study. Publisher city.",
+    )
+    plan = planning.ReferenceQueries(
+        queries=[
+            planning.ReferenceQuery(
+                reference_id="target",
+                title="Candidate study",
+                authors=["Alice Smith"],
+                year="2020",
+                reason="Separate the source title from publisher text",
+            )
+        ]
+    )
+    monkeypatch.setattr(planning.structured_generation, "generate", lambda *_a, **_k: plan)
+    calls = []
+    providers = providers_recording(
+        calls,
+        lambda query: [candidate(query)] if query.title == "Candidate study" else [],
+    )
+
+    result = run_discovery(
+        tmp_path,
+        document(*refs, target),
+        providers,
+        DiscoverySettings(providers=["dnb"], max_model_calls=1, max_requests=10),
+    )
+
+    refined = next(record for record in result.literature if "target" in record.reference_ids)
+    assert refined.resolution.status == "matched"
+    assert result.report.refinement.status == "completed"
+    assert result.report.refinement.reserved_requests == 2
+    assert result.report.refinement.model_called is True
+    assert result.report.refinement.planned_queries == 1
+    assert result.report.requests <= 10
+    events = (tmp_path / "output" / "events.jsonl").read_text()
+    assert '"event": "reference_refinement_started"' in events
+    assert '"event": "reference_refinement_completed"' in events
+
+
+def test_refinement_keeps_per_reference_capacity_for_problem_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = reference(
+        "target",
+        title="Candidate study. Publisher city",
+        raw="Alice Smith (2020). Candidate study. Publisher city.",
+        doi="10.1234/unconfirmed",
+    )
+    plan = planning.ReferenceQueries(
+        queries=[
+            planning.ReferenceQuery(
+                reference_id="target",
+                title="Candidate study",
+                authors=["Alice Smith"],
+                year="2020",
+                reason="Separate the source title from publisher text",
+            )
+        ]
+    )
+    monkeypatch.setattr(planning.structured_generation, "generate", lambda *_a, **_k: plan)
+    calls = []
+    providers = providers_recording(
+        calls,
+        lambda query: [candidate(query)] if query.title == "Candidate study" else [],
+    )
+
+    result = run_discovery(
+        tmp_path,
+        document(target),
+        providers,
+        DiscoverySettings(
+            providers=["dnb", "openalex", "openlibrary"],
+            max_model_calls=1,
+            max_requests=10,
+            max_requests_per_reference=5,
+        ),
+    )
+
+    refined = next(record for record in result.literature if "target" in record.reference_ids)
+    target_calls = [query for _, query in calls if query.id == "target"]
+    assert len(target_calls) == 5
+    assert target_calls[-1].title == "Candidate study"
+    assert refined.resolution.status == "matched"
+
+
+def test_refinement_reports_per_reference_capacity_exhaustion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        planning.structured_generation,
+        "generate",
+        lambda *_a, **_k: pytest.fail("Planner must not run without provider capacity"),
+    )
+    result = run_discovery(
+        tmp_path,
+        document(reference()),
+        providers_recording([]),
+        DiscoverySettings(max_model_calls=1, max_requests_per_reference=1),
+    )
+    assert result.report.refinement.status == "skipped"
+    assert "Per-reference request budget exhausted." in result.report.refinement.reason
+
+
+def test_discovery_writes_redacted_attempt_events(tmp_path: Path) -> None:
+    import json
+
+    run_discovery(tmp_path, document(reference()), providers_recording([]))
+    events = [
+        json.loads(line) for line in (tmp_path / "output" / "events.jsonl").read_text().splitlines()
+    ]
+    names = {event["event"] for event in events}
+    assert {
+        "reference_discovery_started",
+        "bibliography_recovery_finished",
+        "reference_lookup_finished",
+        "ordinary_reference_search_finished",
+        "reference_refinement_skipped",
+        "reference_discovery_finished",
+    } <= names
+    assert all("response" not in event and "reasoning" not in event for event in events)
 
 
 def test_pacing_exhaustion_is_recorded_without_aborting_discovery(

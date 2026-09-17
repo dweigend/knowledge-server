@@ -8,6 +8,7 @@
 {% if result.discovery is defined and result.discovery %}
 <p class="caption">Discovery · {{ result.discovery.requests }} requests · {{ result.discovery.cache_hits }} cache hits · {{ result.discovery.model_calls }} model calls</p>
 {% for warning in result.discovery.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
+{% if result.discovery.refinement is defined %}{% set refinement = result.discovery.refinement %}<p class="caption">Query refinement · {{ refinement.status }}{% if refinement.reserved_requests %} · {{ refinement.reserved_requests }} requests reserved{% endif %}{% if refinement.model_called %} · model called{% elif refinement.cache_reused %} · cached plan{% endif %}{% if refinement.planned_queries %} · {{ refinement.planned_queries }} variants{% endif %}</p>{% if refinement.reason %}<p class="caption">{{ refinement.reason }}</p>{% endif %}{% endif %}
 <details><summary>Discovery search trace</summary>
 {% for search in result.discovery.searches %}<details><summary>{{ search.reference_id }} · {{ search.trigger }}</summary>
 {% for query in search.queries %}<p class="caption">{{ query.provider }} · {{ query.status }}{% if query.cached %} · cached{% endif %} · {{ query.candidate_count }} candidates</p><blockquote>{{ query.query }}</blockquote>{% if query.message %}<p class="caption">{{ query.message }}</p>{% endif %}{% endfor %}

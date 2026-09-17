@@ -35,8 +35,8 @@ class DiscoverySettings(BaseModel):
     required_fields: Annotated[list[RequiredField], AfterValidator(unique_requirements)] = Field(
         default=["title", "authors", "year"]
     )
-    max_requests: int = Field(default=40, ge=0, le=200)
-    max_requests_per_reference: int = Field(default=5, ge=1, le=12)
+    max_requests: int = Field(default=100, ge=0, le=200)
+    max_requests_per_reference: int = Field(default=10, ge=1, le=12)
     max_model_calls: int = Field(default=2, ge=0, le=5)
     model_timeout_seconds: float = Field(default=60, ge=1, le=120)
     retry_generation: int = Field(default=0, ge=0)
@@ -64,6 +64,18 @@ class ReferenceSearch(BaseModel):
     queries: list[SearchQuery] = Field(default_factory=list)
 
 
+class RefinementAudit(BaseModel):
+    """Report whether model-assisted query refinement ran and what it consumed."""
+
+    status: Literal["not_needed", "completed", "skipped", "failed"] = "not_needed"
+    reason: str = ""
+    reserved_requests: int = 0
+    planned_queries: int = 0
+    requests: int = 0
+    model_called: bool = False
+    cache_reused: bool = False
+
+
 class DiscoveryReport(BaseModel):
     """Expose resource usage and unresolved quality issues without claiming completeness."""
 
@@ -72,6 +84,7 @@ class DiscoveryReport(BaseModel):
     model_calls: int = 0
     warnings: list[str] = Field(default_factory=list)
     searches: list[ReferenceSearch] = Field(default_factory=list)
+    refinement: RefinementAudit = Field(default_factory=RefinementAudit)
 
 
 class CachedLookup(BaseModel):

@@ -30,6 +30,7 @@ from knowledge.literature import (
 from knowledge.literature.bibliographic_identifiers import extracted_isbn
 from knowledge.model_integration import structured_generation
 from knowledge.runtime_support.atomic_json_files import write_json_atomically
+from knowledge.runtime_support.workflow_event_log import record_event
 from knowledge.source_workflows import bibliography_recovery, reference_query_planning
 from knowledge.source_workflows.reference_discovery_models import (
     ReferenceDiscoveryResult,
@@ -107,19 +108,6 @@ def evidence_reference(reference: papers.PaperReference) -> papers.PaperReferenc
     return updated
 
 
-def reference_candidates(
-    reference: papers.PaperReference, candidates: list[literature_models.Candidate]
-) -> list[literature_models.Candidate]:
-    """Exclude whole-book matches for citations that explicitly identify a contained chapter."""
-    if not re.search(r"\b[Ii]n\s*:", reference.raw or ""):
-        return candidates
-    return [
-        candidate
-        for candidate in candidates
-        if candidate.metadata.work_type not in {"book", "monograph", "edited-book"}
-    ]
-
-
 def resolved_record(
     reference: papers.PaperReference,
     candidates: list[literature_models.Candidate],
@@ -128,7 +116,7 @@ def resolved_record(
 ) -> literature_models.LiteratureRecord:
     """Keep identity decisions deterministic and retain the original extraction evidence."""
     corroborated = evidence_reference(refined or reference)
-    result = resolution.resolve_reference(corroborated, reference_candidates(reference, candidates))
+    result = resolution.resolve_reference(corroborated, candidates)
     role = "source" if reference.id == "__source__" else "reference"
     record = resolution.build_record(reference, result, source_sha256, role)
     if result.status != "matched":
@@ -162,13 +150,13 @@ def provider_order(
     )
 
 
-def search_reference(
+def prepare_reference_search(
     original: papers.PaperReference,
     reference: papers.PaperReference,
     source_sha256: str,
     session: ReferenceSearchSession,
 ) -> ReferenceSearchState:
-    """Identify one source and search further only while required evidence is missing."""
+    """Create one inspectable search state without spending provider capacity."""
     state = ReferenceSearchState(
         original=original,
         reference=reference,
@@ -178,19 +166,53 @@ def search_reference(
     session.report.searches.append(state.trace)
     if not has_search_evidence(reference):
         state.trace.trigger = "Insufficient bibliographic evidence; review required"
-        return state
-    identify_reference(state, session)
-    trigger = search_trigger(state.record, session.settings)
+    return state
+
+
+def search_initial_round(
+    searches: list[ReferenceSearchState], session: ReferenceSearchSession
+) -> None:
+    """Give every searchable source one identity lookup before any fallback request."""
+    for state in searches:
+        if has_search_evidence(state.reference):
+            identify_reference(state, session)
+
+
+def fallback_plan(
+    state: ReferenceSearchState, settings: models.DiscoverySettings
+) -> tuple[papers.PaperReference, list[str]] | None:
+    """Build the deterministic provider sequence for one still-incomplete source."""
+    if not has_search_evidence(state.reference):
+        return None
+    trigger = search_trigger(state.record, settings)
     state.trace.trigger = trigger or "Complete; fallback skipped"
     if not trigger:
-        return state
-    query = evidence_reference(reference)
-    providers = provider_order(reference, session.settings)
+        return None
+    query = evidence_reference(state.reference)
+    providers = provider_order(state.reference, settings)
     if query.doi:
         query.doi = None
         providers.insert(0, "crossref")
-    search_providers(state, query, providers, session)
-    return state
+    return query, providers
+
+
+def search_fallback_rounds(
+    searches: list[ReferenceSearchState], session: ReferenceSearchSession
+) -> None:
+    """Search one provider per source per round so later references retain capacity."""
+    plans = [
+        (state, plan)
+        for state in searches
+        if (plan := fallback_plan(state, session.settings)) is not None
+    ]
+    provider_count = max((len(plan[1]) for _, plan in plans), default=0)
+    for index in range(provider_count):
+        for state, (query, providers) in plans:
+            if index >= len(providers) or not search_trigger(state.record, session.settings):
+                continue
+            search_provider(state, query, providers[index], session)
+    for state, _ in plans:
+        mark_lookup_failure(state.record, state.trace)
 
 
 def identify_reference(state: ReferenceSearchState, session: ReferenceSearchSession) -> None:
@@ -207,38 +229,34 @@ def identify_reference(state: ReferenceSearchState, session: ReferenceSearchSess
     previous = literature_models.LiteratureRecord.model_validate_json(path.read_text())
     session.report.cache_hits += 1
     state.candidates = previous.resolution.candidates
-    state.trace.queries.append(
-        models.SearchQuery(
-            provider=previous.resolution.provider or "cache",
-            query=query_text(state.reference),
-            status="success",
-            cached=True,
-            candidate_count=len(state.candidates),
-            message="Reused confirmed identity.",
-        )
+    query = models.SearchQuery(
+        provider=previous.resolution.provider or "cache",
+        query=query_text(state.reference),
+        status="success",
+        cached=True,
+        candidate_count=len(state.candidates),
+        message="Reused confirmed identity.",
     )
+    state.trace.queries.append(query)
+    session.record_query(state.reference.id, query)
     if not search_trigger(previous, session.settings):
         state.record = previous
         return
     state.record = resolved_record(state.reference, state.candidates, state.record.source_sha256)
 
 
-def search_providers(
+def search_provider(
     state: ReferenceSearchState,
     query: papers.PaperReference,
-    providers: list[str],
+    provider: str,
     session: ReferenceSearchSession,
     refined: papers.PaperReference | None = None,
 ) -> None:
-    """Accumulate provider evidence until deterministic resolution satisfies the requirements."""
-    for provider in providers:
-        if not search_trigger(state.record, session.settings):
-            break
-        state.candidates.extend(session.search(provider, query, state.trace))
-        state.record = resolved_record(
-            state.reference, state.candidates, state.record.source_sha256, refined=refined
-        )
-    mark_lookup_failure(state.record, state.trace)
+    """Apply one provider result to one source's deterministic resolution."""
+    state.candidates.extend(session.search(provider, query, state.trace))
+    state.record = resolved_record(
+        state.reference, state.candidates, state.record.source_sha256, refined=refined
+    )
 
 
 def confirmed_record_path(
@@ -303,9 +321,38 @@ def refine_unresolved(
     configuration: structured_generation.ModelConfiguration,
 ) -> None:
     """Plan one bounded batch for unresolved sources with remaining search capacity."""
-    pending = {state.reference.id: state for state in searches if can_refine(state, session)}
-    if not pending or session.deadline - monotonic() < 1:
+    audit = session.report.refinement
+    session.release_reserved_requests()
+    unresolved = {
+        state.reference.id: state
+        for state in searches
+        if search_trigger(state.record, session.settings) and has_search_evidence(state.reference)
+    }
+    if not unresolved:
+        audit.reason = "No unresolved source has sufficient evidence for refinement."
         return
+    if session.deadline - monotonic() < 1:
+        audit.status = "skipped"
+        audit.reason = "Time budget was exhausted before query refinement."
+        return
+    pending = {key: state for key, state in unresolved.items() if can_refine(state, session)}
+    if not pending:
+        audit.status = "skipped"
+        audit.reason = refinement_unavailable_reason(list(unresolved.values()), session)
+        return
+    requests_before = session.report.requests
+    models_before = session.report.model_calls
+    cache_before = session.report.cache_hits
+    warnings_before = len(session.report.warnings)
+    if session.event_directory is not None:
+        record_event(
+            session.event_directory,
+            "reference_refinement_started",
+            references=len(pending),
+            reserved_requests=audit.reserved_requests,
+            requests=session.report.requests,
+            model_calls=session.report.model_calls,
+        )
     plan = reference_query_planning.plan_reference_queries(
         planning_evidence(list(pending.values())),
         session.cache_directory / "plans",
@@ -314,8 +361,39 @@ def refine_unresolved(
         model_configuration(configuration, session.settings, session.deadline),
         session.cancelled,
     )
-    for proposal in plan.queries:
-        refine_reference(pending[proposal.reference_id], proposal, session)
+    audit.planned_queries = len(plan.queries)
+    audit.model_called = session.report.model_calls > models_before
+    audit.cache_reused = session.report.cache_hits > cache_before and not audit.model_called
+    if not plan.queries:
+        if len(session.report.warnings) > warnings_before:
+            audit.status = "failed"
+            audit.reason = "Query planning failed; inspect the discovery warnings."
+        elif models_before >= session.settings.max_model_calls and not audit.cache_reused:
+            audit.status = "skipped"
+            audit.reason = "No cached query plan exists and the model-call budget is exhausted."
+        else:
+            audit.status = "completed"
+            audit.reason = "The query planner returned no grounded search variants."
+        return
+    search_refinement_rounds(pending, plan.queries, session)
+    audit.status = "completed"
+    audit.reason = "Grounded query variants were searched deterministically."
+    audit.requests = session.report.requests - requests_before
+
+
+def refinement_unavailable_reason(
+    searches: list[ReferenceSearchState], session: ReferenceSearchSession
+) -> str:
+    """Retain the concrete capacity reasons that prevented query refinement."""
+    reasons = {
+        reason
+        for state in searches
+        for provider in ["crossref", *session.settings.providers]
+        if (reason := session.stop_reason(provider, state.reference.id)) is not None
+    }
+    if not reasons:
+        return "No configured provider can run the proposed refinement queries."
+    return "Query refinement unavailable: " + " ".join(sorted(reasons))
 
 
 def planning_evidence(searches: list[ReferenceSearchState]) -> list[ReferenceQueryEvidence]:
@@ -340,24 +418,39 @@ def can_refine(state: ReferenceSearchState, session: ReferenceSearchSession) -> 
     )
 
 
-def refine_reference(
+def search_refinement_rounds(
+    pending: dict[str, ReferenceSearchState],
+    proposals: list[reference_query_planning.ReferenceQuery],
+    session: ReferenceSearchSession,
+) -> None:
+    """Distribute refined provider queries fairly across all proposed references."""
+    plans = [
+        refinement_search_plan(pending[proposal.reference_id], proposal, session)
+        for proposal in proposals
+    ]
+    provider_count = max((len(providers) for _, _, _, providers in plans), default=0)
+    for index in range(provider_count):
+        for state, refined, query, providers in plans:
+            if index >= len(providers) or not search_trigger(state.record, session.settings):
+                continue
+            search_provider(state, query, providers[index], session, refined=refined)
+    for state, _, _, _ in plans:
+        mark_lookup_failure(state.record, state.trace)
+
+
+def refinement_search_plan(
     state: ReferenceSearchState,
     proposal: reference_query_planning.ReferenceQuery,
     session: ReferenceSearchSession,
-) -> None:
-    """Apply a grounded query proposal while preserving original author and edition evidence."""
+) -> tuple[ReferenceSearchState, papers.PaperReference, papers.PaperReference, list[str]]:
+    """Prepare one grounded refinement without asserting a source identity."""
     refined = refine_search_evidence(state.reference, proposal)
     state.trace.trigger += "; " + proposal.reason
     query = papers.PaperReference(
         id=state.reference.id, title=proposal.title, authors=proposal.authors, year=proposal.year
     )
-    search_providers(
-        state,
-        query,
-        ["crossref", *provider_order(state.reference, session.settings)],
-        session,
-        refined=refined,
-    )
+    providers = ["crossref", *provider_order(state.reference, session.settings)]
+    return state, refined, query, providers
 
 
 def refine_search_evidence(
@@ -394,6 +487,13 @@ def discover_references(
     if not 0 < timeout_seconds <= 240:
         raise ValueError("Reference discovery timeout must be between 0 and 240 seconds")
     deadline = monotonic() + timeout_seconds
+    record_event(
+        output_directory,
+        "reference_discovery_started",
+        max_requests=settings.max_requests,
+        max_requests_per_reference=settings.max_requests_per_reference,
+        max_model_calls=settings.max_model_calls,
+    )
     session = ReferenceSearchSession(
         cache_directory=cache_directory / "lookups",
         settings=settings,
@@ -401,16 +501,54 @@ def discover_references(
         deadline=deadline,
         cancelled=cancelled,
         providers=providers if providers is not None else available_providers(),
+        event_directory=output_directory,
     )
     recovery = recover_source_bibliography(paper, pages, cache_directory, configuration, session)
+    record_event(
+        output_directory,
+        "bibliography_recovery_finished",
+        status=recovery.report.status,
+        model_status=recovery.report.model_status,
+        cache_reused=recovery.report.cache_reused,
+        original_count=recovery.report.original_count,
+        resulting_count=recovery.report.resulting_count,
+        model_calls=session.report.model_calls,
+    )
     searches = identify_sources(paper, recovery.paper, source_sha256, session)
+    statuses = Counter(state.record.resolution.status for state in searches)
+    record_event(
+        output_directory,
+        "ordinary_reference_search_finished",
+        requests=session.report.requests,
+        reserved_requests=session.report.refinement.reserved_requests,
+        resolution_counts=dict(statuses),
+    )
     refine_unresolved(searches, session, configuration)
+    refinement_event = {
+        "not_needed": "reference_refinement_not_needed",
+        "skipped": "reference_refinement_skipped",
+        "failed": "reference_refinement_failed",
+        "completed": "reference_refinement_completed",
+    }[session.report.refinement.status]
+    record_event(
+        output_directory,
+        refinement_event,
+        **session.report.refinement.model_dump(mode="json"),
+    )
     save_confirmed_sources(searches, session)
     collected = collect_literature(recovery.paper, searches, source_sha256)
     if settings.find_open_access:
         enrich_access(collected, session)
     write_json_atomically(
         output_directory / "reference-discovery.json", session.report.model_dump(mode="json")
+    )
+    record_event(
+        output_directory,
+        "reference_discovery_finished",
+        requests=session.report.requests,
+        cache_hits=session.report.cache_hits,
+        model_calls=session.report.model_calls,
+        literature_records=len(collected),
     )
     return ReferenceDiscoveryResult(
         paper=recovery.paper,
@@ -466,10 +604,16 @@ def identify_sources(
         *recovered.references,
     ]
     references = unique_search_references(originals)
-    return [
-        search_reference(original, reference, source_sha256, session)
+    searches = [
+        prepare_reference_search(original, reference, source_sha256, session)
         for original, reference in zip(originals, references, strict=True)
     ]
+    session.report.refinement.reserved_requests = session.reserve_refinement_requests(
+        sum(has_search_evidence(state.reference) for state in searches)
+    )
+    search_initial_round(searches, session)
+    search_fallback_rounds(searches, session)
+    return searches
 
 
 def save_confirmed_sources(
