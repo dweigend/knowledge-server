@@ -25,7 +25,6 @@ from knowledge.experiments import (
 )
 from knowledge.experiments.experiment_views import AttemptView
 from knowledge.knowledge_domain import application_errors
-from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import prompt_registry, structured_generation
 from knowledge.runtime_support import environment_settings
 from knowledge.web_interface import paper_markdown_renderer
@@ -34,7 +33,6 @@ STEP_LABELS: Final[dict[str, str]] = {
     name: definition.dashboard_label
     for name, definition in experiment_step_catalog.STEP_DEFINITIONS.items()
 }
-KNOWLEDGE_RECORDS: Final[TypeAdapter[list[models.Record]]] = TypeAdapter(list[models.Record])
 
 
 def required_text(form: FormData, name: str, *, allow_empty: bool = False) -> str:
@@ -279,14 +277,13 @@ def experiment_router(  # noqa: C901
 
     @router.post("")
     async def upload(request: Request) -> RedirectResponse:
-        """Copy bounded PDF sources and an optional reviewed knowledge snapshot."""
+        """Copy bounded PDF sources into isolated experiments."""
         form = await checked_form(request, csrf_token)
         uploads = await validated_uploads(form.getlist("sources"))
-        knowledge = KNOWLEDGE_RECORDS.validate_json(str(form.get("knowledge", "[]")))
         run_id = ""
         for filename, source in uploads:
             content = await source.read(experiments.MAX_PDF_BYTES + 1)
-            run_id = experiments.create_experiment(root, filename, content, seed_records=knowledge)
+            run_id = experiments.create_experiment(root, filename, content)
         return RedirectResponse(f"/experiments/{run_id}", 303)
 
     @router.get("/settings", response_class=HTMLResponse)

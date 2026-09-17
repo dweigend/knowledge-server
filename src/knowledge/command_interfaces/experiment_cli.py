@@ -14,7 +14,6 @@ from pydantic import TypeAdapter
 from knowledge.experiments import experiment_runner as experiments
 from knowledge.experiments import experiment_step_catalog
 from knowledge.experiments.experiment_views import AttemptView, ExperimentReport, ExperimentView
-from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration import prompt_registry
 
 
@@ -27,9 +26,8 @@ def create_parser() -> argparse.ArgumentParser:
         default=Path(os.environ.get("KNOWLEDGE_ARCHIVE_ROOT", ".local/archive")),
     )
     commands = parser.add_subparsers(dest="command", required=True)
-    create = commands.add_parser("create", help="Copy a PDF and optional pinned knowledge records")
+    create = commands.add_parser("create", help="Copy a PDF into an isolated experiment")
     create.add_argument("pdf", type=Path)
-    create.add_argument("--seed-json", type=Path, help="JSON list of complete immutable Records")
     run = commands.add_parser("run", help="Manually run one step with a saved recipe")
     run.add_argument("experiment")
     run.add_argument("step", choices=experiment_step_catalog.STEP_DEFINITIONS)
@@ -60,12 +58,9 @@ def create_from_file(arguments: argparse.Namespace) -> dict[str, str | bool]:
     """Read explicit local inputs and delegate isolation to the shared experiment store."""
     if arguments.pdf.stat().st_size > experiments.MAX_PDF_BYTES:
         raise ValueError("Experiment PDFs must not exceed 64 MiB")
-    records = []
-    if arguments.seed_json:
-        records = TypeAdapter(list[models.Record]).validate_json(arguments.seed_json.read_text())
     prompt_registry.seed_defaults()
     identifier = experiments.create_experiment(
-        arguments.archive_root, arguments.pdf.name, arguments.pdf.read_bytes(), records
+        arguments.archive_root, arguments.pdf.name, arguments.pdf.read_bytes()
     )
     return {"experiment_id": identifier}
 

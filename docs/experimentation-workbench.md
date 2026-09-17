@@ -197,14 +197,14 @@ flowchart LR
 ```
 
 Each arrow describes an input dependency, not automatic scheduling. The runner
-uses explicit dependency pins and rejects mixed upstream lineages. Existing
-knowledge is a reviewed JSON snapshot of complete `Record` revisions; an empty
-snapshot is valid and visible. The runner does not accept generated proposals
-into PostgreSQL or write to personal Zotero.
+uses explicit dependency pins and rejects mixed upstream lineages. Every new
+experiment starts with an empty knowledge snapshot; the PDF is its only user-
+supplied input. The runner does not accept generated proposals into PostgreSQL
+or write to personal Zotero.
 
 ## Manual execution and inspection
 
-1. Add one or more PDFs and optionally a pinned starting-knowledge snapshot.
+1. Add one or more PDFs.
 2. Select a source and save/run its next step. Adjust instructions and model
    settings directly; advanced controls contain validated step parameters.
 3. Refresh results. Inspect exact inputs, schema, requests, responses and

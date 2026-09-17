@@ -39,14 +39,13 @@ def create_experiment(
     archive_root: Path,
     filename: str,
     content: bytes,
-    seed_records: list[knowledge_record_models.Record] | None = None,
 ) -> str:
-    """Copy one PDF and explicitly supplied knowledge into a private experiment."""
+    """Copy one PDF into a private experiment with empty starting knowledge."""
     if not filename.lower().endswith(".pdf") or not content.startswith(b"%PDF-"):
         raise ValueError("Experiment sources must contain a PDF header and use a .pdf filename")
     if len(content) > MAX_PDF_BYTES:
         raise ValueError("Experiment PDFs must not exceed 64 MiB")
-    records = [record.model_dump(mode="json") for record in seed_records or []]
+    records: list[dict[str, JsonValue]] = []
     experiment_id = uuid4().hex
     with experiment_store.experiment_lock(archive_root, experiment_id):
         directory = experiment_store.experiments_root(archive_root) / experiment_id

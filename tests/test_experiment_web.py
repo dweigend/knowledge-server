@@ -178,19 +178,19 @@ def test_invalid_second_upload_does_not_create_the_first_source(
     assert experiments.list_experiments(root) == []
 
 
-@pytest.mark.parametrize("knowledge", ["null", "{}", '"not records"'])
-def test_invalid_knowledge_snapshot_shape_does_not_create_sources(
-    workbench: tuple[TestClient, Path, str], knowledge: str
-) -> None:
+def test_upload_uses_only_pdf_input(workbench: tuple[TestClient, Path, str]) -> None:
     client, root, token = workbench
     response = client.post(
         "/experiments",
-        data={"csrf": token, "knowledge": knowledge},
+        data={"csrf": token, "knowledge": "not accepted as experiment input"},
         files={"sources": ("valid.pdf", fixture_pdf(), "application/pdf")},
+        follow_redirects=False,
     )
-    assert response.status_code == 422
-    assert "validation error" in response.text
-    assert experiments.list_experiments(root) == []
+    assert response.status_code == 303, response.text
+
+    run_id = str(response.headers["location"]).rsplit("/", 1)[1]
+    experiment_dir = root.parent / "experiments" / run_id
+    assert json.loads((experiment_dir / "knowledge.json").read_text()) == {"records": []}
 
 
 @pytest.mark.parametrize(
