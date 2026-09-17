@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from test_experimentation import fixture_pdf
 
 import knowledge.experiments.experiment_runner as experiments
+from knowledge.experiments import experiment_models, experiment_store
 from knowledge.literature.literature_models import Candidate
 from knowledge.literature.structured_paper_models import PaperReference
 from knowledge.model_integration.prompt_registry import (
@@ -108,6 +109,33 @@ def test_manual_pdf_blocks_history_comparison_and_cleanup(
     assert client.post(f"{base}/delete", data={"csrf": token}).status_code == 200
     assert get_revision("recipe", "segment_blocks") == saved_before
     assert not (root.parent / "experiments" / run_id).exists()
+
+
+def test_running_attempt_identifies_its_active_worker(
+    workbench: tuple[TestClient, Path, str],
+) -> None:
+    client, root, token = workbench
+    run_id = source(client, token)
+    attempt_id = experiments.prepare_attempt(
+        root, run_id, "extract_text", get_revision("recipe", "extract_text")
+    )
+    directory = experiment_store.experiment_directory(root, run_id)
+    attempt_path = experiment_store.attempt_directory(directory, attempt_id)
+    state = experiment_models.AttemptState(
+        started_at="2026-09-17T12:00:00+00:00",
+        worker_host="ms-a2",
+        worker_pid=4321,
+    )
+    (attempt_path / "state.json").write_text(state.model_dump_json())
+
+    for url in (
+        f"/experiments/{run_id}",
+        f"/experiments/{run_id}/attempts/{attempt_id}",
+    ):
+        response = client.get(url)
+        assert response.status_code == 200
+        assert "Active worker · ms-a2 · PID 4321" in response.text
+        assert state.started_at in response.text
 
 
 def test_mutations_require_csrf_and_dependency_failure_is_inspectable(

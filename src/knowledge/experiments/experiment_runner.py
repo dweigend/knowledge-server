@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -326,7 +327,9 @@ def execute_attempt(archive_root: Path, experiment_id: str, attempt_id: str) -> 
             (path / "inputs.json").read_text()
         )
         state = experiment_models.AttemptState(
-            started_at=experiment_store.now(), worker_pid=os.getpid()
+            started_at=experiment_store.now(),
+            worker_host=socket.gethostname(),
+            worker_pid=os.getpid(),
         )
         atomic_json_files.write_json_atomically(path / "state.json", state.model_dump(mode="json"))
         started = time.monotonic()

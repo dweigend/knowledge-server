@@ -60,6 +60,7 @@ class AttemptState(ExperimentDocument):
 
     status: Literal["running"] = "running"
     started_at: str
+    worker_host: str | None = None
     worker_pid: int
 
 

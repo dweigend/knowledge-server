@@ -44,6 +44,7 @@ class AttemptView(ExperimentContract):
     cancel_requested: bool
     started_at: str | None = None
     finished_at: str | None = None
+    worker_host: str | None = None
     worker_pid: int | None = None
     output_hash: str | None = None
     stale: bool = False
