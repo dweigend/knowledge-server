@@ -1,6 +1,8 @@
 """Each integration test uses its own PostgreSQL schema on the server."""
 
 import os
+from collections.abc import Iterator
+from pathlib import Path
 from uuid import uuid4
 
 import psycopg
@@ -8,13 +10,22 @@ import pytest
 from psycopg import sql
 from support import SeedArticle
 
-from knowledge.application import Knowledge
-from knowledge.contracts import Bibliography, ExtractedClaim, LegacySource
-from knowledge.storage import Database
+from knowledge.knowledge_base.knowledge_service import Knowledge
+from knowledge.knowledge_domain.knowledge_record_models import (
+    Bibliography,
+    ExtractedClaim,
+    LegacySource,
+)
+from knowledge.revision_store.postgresql_revision_store import Database
+
+
+@pytest.fixture(autouse=True)
+def isolated_configuration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("KNOWLEDGE_CONFIGURATION_ROOT", str(tmp_path / "configuration"))
 
 
 @pytest.fixture
-def application():
+def application() -> Iterator[Knowledge]:
     database_url = os.environ["KNOWLEDGE_TEST_DATABASE_URL"]
     schema = "test_" + uuid4().hex
     with psycopg.connect(database_url, autocommit=True) as connection:
@@ -31,7 +42,7 @@ def application():
 
 
 @pytest.fixture
-def article():
+def article() -> SeedArticle:
     bibliography = Bibliography(title="Test source", authors=[], year="2026", doi="", url="")
     source = LegacySource(
         bibliography=bibliography,
@@ -57,3 +68,14 @@ def article():
         limitations="Small sample",
     )
     return SeedArticle(source=source, claim=claim)
+
+
+@pytest.fixture
+def poppler_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use explicit offline extraction for tests of unrelated pipeline behavior."""
+    from knowledge.model_integration.prompt_registry import STEP_DEFAULTS
+
+    prompt, schema, _ = STEP_DEFAULTS["extract_text"]
+    monkeypatch.setitem(
+        STEP_DEFAULTS, "extract_text", (prompt, schema, {"document_provider": "poppler"})
+    )

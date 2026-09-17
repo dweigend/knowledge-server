@@ -1,17 +1,23 @@
+from pathlib import Path
 from typing import NamedTuple
 from uuid import uuid4
 
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from support import seed_article
+from support import SeedArticle, seed_article
 
-from knowledge import review
-from knowledge.application import AssessmentCommand, CompareEvidence, EditNote, ReviewCommand
-from knowledge.config import Settings
-from knowledge.contracts import Assessment, Evidence, Note, Reference
-from knowledge.storage import Conflict
-from knowledge.web import create_app
+import knowledge.knowledge_base.review_records as review
+from knowledge.knowledge_base.knowledge_service import (
+    AssessmentCommand,
+    EditNote,
+    Knowledge,
+    ReviewCommand,
+)
+from knowledge.knowledge_domain.application_errors import Conflict
+from knowledge.knowledge_domain.knowledge_record_models import Assessment, Evidence, Note, Reference
+from knowledge.runtime_support.environment_settings import Settings
+from knowledge.web_interface.fastapi_app import create_app
 
 
 class ArticleReferences(NamedTuple):
@@ -22,11 +28,11 @@ class ArticleReferences(NamedTuple):
     zettel: Reference
 
 
-def import_article(application, article) -> ArticleReferences:
+def import_article(application: Knowledge, article: SeedArticle) -> ArticleReferences:
     return ArticleReferences(*seed_article(application, "first", article))
 
 
-def assess(application, references: ArticleReferences):
+def assess(application: Knowledge, references: ArticleReferences) -> Reference:
     return application.assess(
         "assess",
         "pilot",
@@ -45,7 +51,9 @@ def assess(application, references: ArticleReferences):
     )[0]
 
 
-def test_atomic_idempotency_and_payload_conflict(application, article):
+def test_atomic_idempotency_and_payload_conflict(
+    application: Knowledge, article: SeedArticle
+) -> None:
     first = import_article(application, article)
     assert import_article(application, article) == first
     changed = article.model_copy(update={"zettel_body": "different"})
@@ -55,16 +63,22 @@ def test_atomic_idempotency_and_payload_conflict(application, article):
         assert len(ledger.list("pilot")) == 5
 
 
-def test_fabricated_quote_rolls_back_everything(application, article):
+def test_fabricated_quote_rolls_back_everything(
+    application: Knowledge, article: SeedArticle
+) -> None:
     article.claim.quote = "Invented result"
     with pytest.raises(ValueError, match="exact substring"):
         import_article(application, article)
     with application.database.transaction() as ledger:
         assert ledger.list("pilot") == []
-        assert ledger.connection.execute("SELECT count(*) AS n FROM requests").fetchone()["n"] == 0
+        row = ledger.connection.execute("SELECT count(*) AS n FROM requests").fetchone()
+        assert row is not None
+        assert row["n"] == 0
 
 
-def test_human_review_invalidated_by_new_evidence(application, article):
+def test_human_review_invalidated_by_new_evidence(
+    application: Knowledge, article: SeedArticle
+) -> None:
     references = import_article(application, article)
     assessment_ref = assess(application, references)
     application.decide(
@@ -111,7 +125,9 @@ def test_human_review_invalidated_by_new_evidence(application, article):
         )
 
 
-def test_assessment_cannot_hide_relations_or_invent_mixed_balance(application, article):
+def test_assessment_cannot_hide_relations_or_invent_mixed_balance(
+    application: Knowledge, article: SeedArticle
+) -> None:
     references = import_article(application, article)
     proposal = Assessment(
         claim=references.claim,
@@ -132,7 +148,9 @@ def test_assessment_cannot_hide_relations_or_invent_mixed_balance(application, a
         )
 
 
-def test_revision_history_conflicts_and_database_immutability(application, article):
+def test_revision_history_conflicts_and_database_immutability(
+    application: Knowledge, article: SeedArticle
+) -> None:
     references = import_article(application, article)
     with application.database.transaction() as ledger:
         original = ledger.get(references.zettel.entity_id)
@@ -152,7 +170,9 @@ def test_revision_history_conflicts_and_database_immutability(application, artic
         ledger.connection.execute("DELETE FROM revisions")
 
 
-def test_no_cross_batch_reference_or_agent_review(application, article):
+def test_no_cross_batch_reference_or_agent_review(
+    application: Knowledge, article: SeedArticle
+) -> None:
     references = import_article(application, article)
     application.create_batch("other", "Other")
     with pytest.raises(ValueError, match="outside"):
@@ -180,9 +200,11 @@ def test_no_cross_batch_reference_or_agent_review(application, article):
         )
 
 
-def test_html_escapes_source_and_blocks_csrf(application, article, tmp_path, monkeypatch):
+def test_html_escapes_source_and_blocks_csrf(
+    application: Knowledge, article: SeedArticle, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
-        "knowledge.web.source_metadata",
+        "knowledge.web_interface.fastapi_app.source_metadata",
         lambda records, database: {
             str(record.entity_id): {"title": "Fixture source"}
             for record in records
@@ -191,7 +213,9 @@ def test_html_escapes_source_and_blocks_csrf(application, article, tmp_path, mon
     )
     article.zettel_body = "<script>alert('unsafe')</script>"
     references = import_article(application, article)
-    client = TestClient(create_app(Settings(application.database.database_url, tmp_path)))
+    client = TestClient(
+        create_app(Settings(database_url=application.database.database_url, archive_root=tmp_path))
+    )
     page = client.get(f"/records/{references.zettel.entity_id}")
     assert page.status_code == 200
     assert "<script>alert" not in page.text
@@ -212,7 +236,9 @@ def test_html_escapes_source_and_blocks_csrf(application, article, tmp_path, mon
     assert client.get("/api/requests/unknown").status_code == 404
 
 
-def test_claim_review_and_note_review_pin_evidence_set(application, article):
+def test_claim_review_and_note_review_pin_evidence_set(
+    application: Knowledge, article: SeedArticle
+) -> None:
     references = import_article(application, article)
     for target in (references.claim, references.zettel):
         application.decide(
@@ -244,32 +270,3 @@ def test_claim_review_and_note_review_pin_evidence_set(application, article):
     with application.database.transaction() as ledger:
         assert review.status(ledger, ledger.get(references.claim.entity_id)) == "needs_review"
         assert review.status(ledger, ledger.get(references.zettel.entity_id)) == "needs_review"
-
-
-def test_comparison_is_atomic_on_invalid_second_quote(application, article):
-    references = import_article(application, article)
-    valid = Evidence(
-        claim=references.claim,
-        source=references.source,
-        page=1,
-        quote="No retention was measured.",
-        relation="qualifies",
-        rationale="Boundary",
-        directness="direct",
-        methodology="Same study",
-        limitations="Same data",
-    )
-    invalid = valid.model_copy(update={"quote": "Fabricated"})
-    with pytest.raises(ValueError):
-        application.import_comparison(
-            "compare",
-            "pilot",
-            CompareEvidence(
-                relations=[valid, invalid],
-                search_summary="Test",
-                selected_pages={},
-            ),
-            "hermes:test",
-        )
-    with application.database.transaction() as ledger:
-        assert len(ledger.list("pilot", "evidence")) == 1

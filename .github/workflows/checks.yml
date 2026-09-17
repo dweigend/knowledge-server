@@ -31,7 +31,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run --locked ruff check .
       - run: uv run --locked ruff format --check .
-      - run: uv run --locked ty check --exclude src/knowledge/hermes_bridge.py
+      - run: uv run --locked ty check --exclude src/knowledge/model_integration/hermes_bridge.py
       - run: uv run --locked pytest
       - run: uv build
       - run: npx --yes markdownlint-cli2@0.22.0 '*.md' 'docs/**/*.md' 'deploy/*.md' 'skills/**/*.md'

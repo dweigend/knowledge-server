@@ -1,5 +1,11 @@
 # Personal knowledge management concept
 
+The [Hermes integration target](hermes-integration-target.md), requested on
+2026-09-16, takes precedence for agent execution, task ownership and extension
+packaging. Reuse native Hermes runs, tasks, schedules, plugins and skills;
+Knowledge keeps its domain operations and deterministic processing. This is a
+target decision, not a claim of installed or deployed integration.
+
 The September 15 [structured knowledge and authoring decisions](knowledge-structure-and-quality.md)
 govern the next knowledge-quality work: typed database schemas and metadata,
 research relevance, general claims with precise evidence, citation networks,

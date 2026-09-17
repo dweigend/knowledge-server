@@ -12,10 +12,12 @@ dependencies = [
   "fastapi>=0.116,<1",
   "uvicorn>=0.35,<1",
   "pydantic>=2.11,<3",
+  "pydantic-settings>=2.15,<3",
   "psycopg[binary]>=3.2,<4",
   "jinja2>=3.1,<4",
   "pypdf>=6.0,<7",
   "python-multipart>=0.0.20,<1",
+  "markdown-it-py>=3,<5",
 ]
 
 [project.urls]
@@ -36,7 +38,8 @@ torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 torchvision = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [project.scripts]
-knowledge = "knowledge.cli:main"
+knowledge = "knowledge.command_interfaces.knowledge_cli:main"
+knowledge-experiment = "knowledge.command_interfaces.experiment_cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -52,8 +55,15 @@ line-length = 100
 [tool.ruff.lint]
 select = [
   "E", "F", "I", "UP", "B", "C901",
+  "ANN", "RET", "SIM", "C4", "PIE", "RUF", "PERF",
   "D100", "D101", "D102", "D103", "D107", "D200", "D205", "D209", "D400",
 ]
+
+# Bibliographic evidence and page ranges intentionally contain en dashes.
+allowed-confusables = ["–"]
+
+[tool.ty.rules]
+all = "error"
 
 [tool.ruff.lint.mccabe]
 max-complexity = 10

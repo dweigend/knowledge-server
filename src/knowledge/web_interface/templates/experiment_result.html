@@ -1,0 +1,25 @@
+{% if result %}
+  {% if step == 'extract_text' %}
+    {% include 'paper_result.html' %}
+  {% elif step == 'segment_blocks' %}
+    {% for block in result.blocks %}<article class="information-block">
+      <p class="caption">Block {{ loop.index }} · {{ block.wording }}</p>
+      <ul>{% for bullet in block.bullets %}<li>{{ bullet }}</li>{% endfor %}</ul>
+      {% for source in block.sources %}<details><summary>Page {{ source.page }} · characters {{ source.start }}–{{ source.end }}</summary><blockquote>{{ source.quote }}</blockquote><code>{{ source.extraction_revision }}</code></details>{% endfor %}
+    </article>{% else %}<p class="empty">No information blocks returned.</p>{% endfor %}
+  {% elif step == 'formulate_claims' %}
+    {% for claim in result.claims %}<article class="information-block"><h4>{{ claim.proposal.proposition }}</h4><p>{{ claim.proposal.scope }}</p><blockquote>{{ claim.proposal.quote }}</blockquote><p class="caption">{{ claim.proposal.methodology }} · {{ claim.proposal.limitations }}</p></article>{% else %}<p>No claims proposed.</p>{% endfor %}
+  {% elif step == 'find_knowledge' %}
+    <p class="caption">Query: {{ result.query|default('') }}</p>
+    {% for hit in result.hits %}<article class="information-block"><p>{{ hit.record.kind }} · revision {{ hit.record.revision }}</p><p>{{ hit.record.payload.proposition|default(hit.record.payload.title|default(hit.record.entity_id)) }}</p><details><summary>Retrieval provenance</summary><pre>{{ hit|tojson(indent=2) }}</pre></details></article>{% else %}<p>No matching entries in the pinned knowledge snapshot.</p>{% endfor %}
+  {% elif step == 'select_entries' %}
+    {% for entry in result.entries %}<article class="information-block"><span class="badge">{{ 'Selected' if entry.selected else 'Excluded' }}</span><p>{{ entry.rationale }}</p><code>{{ entry.reference.entity_id }}@{{ entry.reference.revision }}</code></article>{% else %}<p>No entries to select.</p>{% endfor %}
+  {% elif step == 'propose_changes' %}
+    {% for claim in result.claims %}<article class="information-block"><h4>{{ claim.claim.proposal.proposition }}</h4><p>{{ claim.decision.action }} · {{ claim.decision.relation }}</p><p>{{ claim.decision.rationale }}</p></article>{% endfor %}
+    {% for note in result.notes %}<pre class="diff">{{ note.diff }}</pre>{% endfor %}
+    {% for warning in result.warnings %}<p class="caption">{{ warning }}</p>{% endfor %}
+  {% elif step == 'prepare_writing' %}
+    <ul>{% for point in result.points %}<li>{{ point.text }} <span class="caption">Blocks {{ point.block_indexes|join(', ') }}</span></li>{% endfor %}</ul>
+  {% elif step == 'draft_text' %}<div class="prose">{{ result.text }}</div>
+  {% endif %}
+{% endif %}

@@ -10,6 +10,11 @@ to maintain editable paper summaries in the knowledge database. The
 [source-view contract](knowledge-source-view.md) still owns presentation, and
 the [extraction contract](knowledge-extraction.md) owns technical derivations.
 
+The [binding WebDAV decision](knowledge-webdav-sync.md) defines our own file
+server, continued Zotero.org data sync and official iPad access. WebDAV and local
+Zotero replicas implement storage and synchronization under this same ownership;
+they are not additional literature managers. Deployment remains pending.
+
 ## Zotero as a reference model
 
 Adopt Zotero's useful structural principles rather than copying its internal
@@ -121,8 +126,8 @@ Do not access or mutate Zotero's SQLite tables directly.
 
 Zotero object versions support change detection; they do not replace our
 immutable citation history. Keep cited PDF versions as Zotero attachments and
-retain exact evidence snapshots. Any technical cache must be disposable,
-version-aware and require no separate manual maintenance.
+retain exact evidence snapshots. Temporary derived files must be disposable and
+require no separate manual maintenance.
 
 ## Observed gap and smallest migration
 

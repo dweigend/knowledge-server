@@ -1,20 +1,27 @@
 """Keep PDF viewing separate from the revision-pinned Zotero byte endpoint."""
 
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
 from fastapi.testclient import TestClient
+from support import SeedArticle
 
-from knowledge import zotero
-from knowledge.config import Settings
-from knowledge.contracts import Source, ZoteroReference
-from knowledge.web import create_app
+import knowledge.literature.zotero_client as zotero
+from knowledge.knowledge_base.knowledge_service import Knowledge
+from knowledge.knowledge_domain.knowledge_record_models import Source, ZoteroReference
+from knowledge.runtime_support.environment_settings import Settings
+from knowledge.web_interface.fastapi_app import create_app
 
 
 @pytest.mark.parametrize("variant", ["original", "clean"])
 def test_pdf_viewer_pins_revision_and_preserves_raw_endpoint(
-    application, article, tmp_path, monkeypatch, variant
-):
+    application: Knowledge,
+    article: SeedArticle,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str,
+) -> None:
     reference = ZoteroReference(
         server_id="test-instance",
         item_key="LITERAT1",
@@ -35,7 +42,9 @@ def test_pdf_viewer_pins_revision_and_preserves_raw_endpoint(
     pdf = tmp_path / "source.pdf"
     pdf.write_bytes(b"%PDF-test")
     monkeypatch.setattr(zotero, "verified_pdf", lambda source, variant: pdf)
-    client = TestClient(create_app(Settings(application.database.database_url, tmp_path)))
+    client = TestClient(
+        create_app(Settings(database_url=application.database.database_url, archive_root=tmp_path))
+    )
     path = f"/sources/{first.entity_id}/{variant}"
 
     page = client.get(f"{path}/view?revision=1")

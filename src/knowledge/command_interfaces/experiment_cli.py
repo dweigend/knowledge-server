@@ -1,0 +1,141 @@
+"""Create, inspect, and rerun saved experiments from the command line.
+
+The CLI delegates to the shared experiment lifecycle and step registry so it uses
+the same validation as the dashboard.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+
+from pydantic import TypeAdapter
+
+from knowledge.experiments import experiment_runner as experiments
+from knowledge.experiments import experiment_step_catalog
+from knowledge.experiments.experiment_views import AttemptView, ExperimentReport, ExperimentView
+from knowledge.model_integration import prompt_registry
+
+type CommandResult = AttemptView | ExperimentReport | list[ExperimentView] | dict[str, str | bool]
+COMMAND_RESULT = TypeAdapter(CommandResult)
+
+
+def create_parser() -> argparse.ArgumentParser:
+    """Declare independent experiment commands without a production database connection."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--archive-root",
+        type=Path,
+        default=Path(os.environ.get("KNOWLEDGE_ARCHIVE_ROOT", ".local/archive")),
+    )
+    commands = parser.add_subparsers(dest="command", required=True)
+    create = commands.add_parser("create", help="Copy a PDF into an isolated experiment")
+    create.add_argument("pdf", type=Path)
+    run = commands.add_parser("run", help="Manually run one step with a saved recipe")
+    run.add_argument("experiment")
+    run.add_argument("step", choices=experiment_step_catalog.STEP_DEFINITIONS)
+    run.add_argument("--recipe", help="Saved recipe name; defaults to the step name")
+    run.add_argument(
+        "--revision", type=int, help="Recipe revision; defaults to the active revision"
+    )
+    run.add_argument("--inputs", type=Path, help="JSON mapping of input step to attempt ID")
+    inspect = commands.add_parser(
+        "inspect", help="Read attempts, or list sources when no ID is given"
+    )
+    inspect.add_argument("experiment", nargs="?")
+    export = commands.add_parser(
+        "export", help="Export a private report, including inspected traces"
+    )
+    export.add_argument("experiment")
+    export.add_argument("--output", type=Path, help="Create a new JSON file instead of printing")
+    for name in ("cancel", "recover"):
+        command = commands.add_parser(name, help=f"{name.capitalize()} a specified attempt")
+        command.add_argument("experiment")
+        command.add_argument("attempt")
+    delete = commands.add_parser("delete", help="Delete one experiment, retaining saved recipes")
+    delete.add_argument("experiment")
+    return parser
+
+
+def create_from_file(arguments: argparse.Namespace) -> dict[str, str | bool]:
+    """Read explicit local inputs and delegate isolation to the shared experiment store."""
+    if arguments.pdf.stat().st_size > experiments.MAX_PDF_BYTES:
+        raise ValueError("Experiment PDFs must not exceed 64 MiB")
+    prompt_registry.seed_defaults()
+    identifier = experiments.create_experiment(
+        arguments.archive_root, arguments.pdf.name, arguments.pdf.read_bytes()
+    )
+    return {"experiment_id": identifier}
+
+
+def run_saved_step(arguments: argparse.Namespace) -> AttemptView:
+    """Pin and execute one step using exactly the runner invoked by the web interface."""
+    prompt_registry.seed_defaults()
+    recipe, _, _, _ = prompt_registry.resolve_recipe(
+        arguments.recipe or arguments.step, arguments.revision
+    )
+    inputs = (
+        TypeAdapter(dict[str, str]).validate_json(arguments.inputs.read_text())
+        if arguments.inputs
+        else None
+    )
+    identifier = experiments.prepare_attempt(
+        arguments.archive_root, arguments.experiment, arguments.step, recipe, inputs
+    )
+    return experiments.execute_attempt(arguments.archive_root, arguments.experiment, identifier)
+
+
+def dispatch(
+    arguments: argparse.Namespace,
+) -> CommandResult:
+    """Dispatch explicit commands while keeping reads free of configuration writes."""
+    root = arguments.archive_root.expanduser()
+    arguments.archive_root = root
+    if arguments.command == "create":
+        return create_from_file(arguments)
+    if arguments.command == "run":
+        return run_saved_step(arguments)
+    if arguments.command == "inspect":
+        if arguments.experiment:
+            return ExperimentReport(
+                manifest=experiments.read_manifest(root, arguments.experiment),
+                attempts=experiments.read_attempts(root, arguments.experiment),
+            )
+        return experiments.list_experiments(root)
+    if arguments.command == "export":
+        return experiments.export_experiment(root, arguments.experiment)
+    if arguments.command == "cancel":
+        experiments.request_cancel(root, arguments.experiment, arguments.attempt)
+        return {"cancel_requested": arguments.attempt}
+    if arguments.command == "recover":
+        return experiments.recover_attempt(root, arguments.experiment, arguments.attempt)
+    experiments.delete_experiment(root, arguments.experiment)
+    return {"deleted": arguments.experiment, "saved_configuration_retained": True}
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Print inspectable JSON and return failure status when an attempted step fails."""
+    parser = create_parser()
+    arguments = parser.parse_args(argv)
+    try:
+        result = dispatch(arguments)
+        output = COMMAND_RESULT.dump_json(result, indent=2, exclude_unset=True).decode()
+        destination = getattr(arguments, "output", None)
+        if destination is None:
+            print(output)
+        else:
+            descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w") as stream:
+                stream.write(output + "\n")
+            print(json.dumps({"report": str(destination)}))
+    except (ValueError, OSError) as error:
+        parser.error(str(error))
+    return int(
+        arguments.command == "run"
+        and isinstance(result, AttemptView)
+        and result.status in {"failed", "cancelled"}
+    )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

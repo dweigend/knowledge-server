@@ -4,7 +4,7 @@ Description=Knowledge pilot HTML review interface
 [Service]
 EnvironmentFile=%h/.config/knowledge-server/environment
 WorkingDirectory=%h/projects/knowledge-server
-ExecStart=%h/projects/knowledge-server/.venv/bin/uvicorn knowledge.web:create_app --factory --host 127.0.0.1 --port 8765
+ExecStart=%h/projects/knowledge-server/.venv/bin/uvicorn knowledge.web_interface.fastapi_app:create_app --factory --host 127.0.0.1 --port 8765
 Restart=on-failure
 UMask=0077
 NoNewPrivileges=true

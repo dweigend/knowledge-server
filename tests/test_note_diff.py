@@ -2,11 +2,11 @@
 
 from uuid import uuid4
 
-from knowledge.consolidation import note_diff
-from knowledge.contracts import Note, Reference
+from knowledge.knowledge_domain.knowledge_record_models import Note, Reference
+from knowledge.source_workflows.note_consolidation import note_diff
 
 
-def test_note_diff_shows_title_and_reference_changes():
+def test_note_diff_shows_title_and_reference_changes() -> None:
     reference = Reference(entity_id=uuid4(), revision=1)
     previous = Note(kind="permanent", title="Before", body="Same body", references=[reference])
     replacement = previous.model_copy(

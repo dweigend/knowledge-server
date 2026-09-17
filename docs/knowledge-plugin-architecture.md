@@ -1,5 +1,11 @@
 # Modular research architecture and source workflows
 
+The [Hermes integration target](hermes-integration-target.md), requested on
+2026-09-16, takes precedence for agent execution, task ownership and extension
+packaging. Reuse native Hermes runs, tasks, schedules, plugins and skills;
+Knowledge keeps its domain operations and deterministic processing. This is a
+target decision, not a claim of installed or deployed integration.
+
 Decision date: 2026-09-15. Status: approved architectural direction, not a
 completed plugin implementation. This document owns the two entry paths,
 module boundaries and replacement rules. It supersedes the earlier assumption
@@ -31,12 +37,15 @@ must be understandable, testable and replaceable without knowing every research
 workflow. Prefer improving existing knowledge over producing one note per file.
 
 The pilot already has Zotero ownership, revisioned records, contribution
-reconciliation, evidence checks and note consolidation. It is not yet an
-isolated plugin system: workflows import concrete application/storage classes,
-`import_workflow.py` calls reconciliation directly, and web handlers read the
-ledger. These are observed migration seams, not proof of enforced isolation.
-Private pilot experiments informed this target. They are not distributed as
-reproducible public acceptance evidence.
+reconciliation, evidence checks and note consolidation. Its package structure
+now exposes those module boundaries, but it is not yet an isolated plugin
+system: source-processing workflows import concrete knowledge-base and
+revision-store classes, `source_workflows/source_import.py` calls
+`source_workflows/claim_reconciliation.py` directly, and handlers in
+`web_interface/fastapi_app.py` read the revision store. These are observed
+migration seams, not proof of enforced isolation. Private pilot experiments
+informed this target. They are not distributed as reproducible public
+acceptance evidence.
 
 ## 2. Two entry paths, one processing workflow
 
@@ -93,12 +102,15 @@ Budgets and stopping rules belong to the workflow, not to each source's text.
 
 ## 3. Separate orchestration, skills and plugin capabilities
 
-- A **plugin** packages one coherent capability and its public operations.
+- A **domain module** packages one coherent capability and its public operations.
+  A Hermes plugin exposes selected operations and skills to the host; this
+  document does not require a separate plugin framework or one plugin per module.
 - A **skill** describes when and how Hermes uses those operations. It owns no
   tables, credentials, permissions or scientific acceptance decisions.
 - **Hermes/Luna** produces language-dependent proposals using bounded inputs.
-- **Workflow orchestration** orders operations, records progress and resumes
-  jobs. It does not implement extraction, evidence or bibliography rules.
+- **Workflow orchestration** uses Hermes for general agent tasks and schedules.
+  Knowledge retains deterministic processing steps, extraction jobs and domain
+  progress; it does not introduce another general agent controller.
 - The **knowledge core** accepts domain commands, validates references and
   expected revisions, and persists attributed changes and review decisions.
 
@@ -154,7 +166,7 @@ Scientific policies remain in their owning domain; the core is not a generic
 arbitrary-record mutation endpoint.
 
 One database can hold canonical knowledge and workflow state with distinct
-owners. Plugin caches are rebuildable and cannot become alternative records.
+owners. Temporary plugin artifacts cannot become alternative records.
 Existing Open Research Lab research databases remain separate project artifacts;
 they must not become a second authority for accepted claims in this system.
 

@@ -141,7 +141,7 @@ and clearer instructions. This small selected test is not an accuracy estimate.
 
 Across these experiment logs, 101 model attempts were recorded: 94 passed
 structural/domain validation and seven were rejected. Validation success is not
-factual correctness. Cached calls and explicit curator work are distinct events.
+factual correctness. Model calls and explicit curator work are distinct events.
 
 ## Verification limits and next evaluation
 

@@ -25,11 +25,24 @@ rules, remote dashboard integration and released-text publication. Zotero note,
 annotation and tag ownership also has pending migration work. A design diagram
 or a passing unit test does not establish these capabilities as deployed.
 
+The [self-hosted WebDAV decision](knowledge-webdav-sync.md) is a binding target
+for personal-library file sync, iPad access and annotation intake. Provisioning,
+client migration and end-to-end acceptance are pending.
+
 ## Reading order
 
+- [Hermes integration target](hermes-integration-target.md): native agent host,
+  thin Knowledge tools, ownership and server-side acceptance sequence.
+
+- [Typed data boundaries](typed-data-architecture.md): cleanup status and
+  migration limits.
+- [Experimentation workbench](experimentation-workbench.md): manual execution,
+  immutable attempts, shared operations, configuration and current limitations.
 - [MVP](knowledge-mvp.md): product scope and incremental priorities.
 - [Contracts](knowledge-contracts.md): records, citation integrity and assessment
   rules; historical compatibility requirements remain explicit.
+- [Self-hosted file sync](knowledge-webdav-sync.md): binding WebDAV target,
+  mobile workflow, annotation intake and migration acceptance.
 - [Zotero ownership](knowledge-zotero-ownership.md): literature responsibilities
   and outstanding migration requirements.
 - [Extraction](knowledge-extraction.md): Docling/Marker workflow and module
@@ -40,6 +53,8 @@ or a passing unit test does not establish these capabilities as deployed.
   and two intake paths; not a completed plugin framework.
 - [Structure and quality](knowledge-structure-and-quality.md): future schemas,
   contextual relevance and authoring evaluation.
+- [Scientific Agent Skills feature sources](scientific-agent-skills-feature-sources.md):
+  curated external sources for possible future features; not current scope.
 
 ## Historical design material
 

@@ -1,8 +1,9 @@
 """Seed historical fixtures through real domain rules without a production legacy importer."""
 
-from knowledge import evidence, notes
-from knowledge.application import Knowledge
-from knowledge.contracts import (
+import knowledge.knowledge_base.claim_evidence_records as evidence
+import knowledge.knowledge_base.note_records as notes
+from knowledge.knowledge_base.knowledge_service import Knowledge
+from knowledge.knowledge_domain.knowledge_record_models import (
     Claim,
     Contract,
     Evidence,
@@ -11,7 +12,7 @@ from knowledge.contracts import (
     Note,
     Reference,
 )
-from knowledge.storage import Ledger
+from knowledge.revision_store.postgresql_revision_store import Ledger
 
 
 class SeedArticle(Contract):

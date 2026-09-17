@@ -1,37 +1,52 @@
 import json
+from collections.abc import Callable
+from pathlib import Path
+from typing import Literal
 from uuid import uuid4
 
 import pytest
-from support import seed_article
+from pydantic import BaseModel
+from support import SeedArticle, seed_article
 
-from knowledge.application import EditNote, ReviewCommand
-from knowledge.consolidation import (
+from knowledge.knowledge_base.knowledge_service import EditNote, Knowledge, ReviewCommand
+from knowledge.knowledge_domain.knowledge_record_models import (
+    Evidence,
+    ExtractedClaim,
+    LegacySource,
+    Note,
+    Reference,
+)
+from knowledge.source_workflows.article_claim_extraction import PAGE_BUDGET, page_chunks
+from knowledge.source_workflows.claim_matching import ClaimDecision, validate_decision
+from knowledge.source_workflows.claim_reconciliation import (
+    ReconcileClaim,
+    apply_claim_decision,
+)
+from knowledge.source_workflows.note_consolidation import apply_note_revision
+from knowledge.source_workflows.note_revision_proposals import (
     ConsolidateNote,
     NoteRevision,
-    apply_note_revision,
     note_context,
     note_packet,
     propose_note_revision,
 )
-from knowledge.contracts import Note, Reference
-from knowledge.import_workflow import PAGE_BUDGET, page_chunks
-from knowledge.reconciliation import (
-    ClaimDecision,
-    ReconcileClaim,
-    apply_claim_decision,
-    validate_decision,
-)
 
 
 @pytest.fixture
-def imported(application, article):
+def imported(application: Knowledge, article: SeedArticle) -> dict[str, Reference]:
     references = seed_article(application, "seed", article)
     return dict(
         zip(("source", "claim", "evidence", "source_note", "zettel"), references, strict=True)
     )
 
 
-def reconcile(application, source, proposal, decision, request_id):
+def reconcile(
+    application: Knowledge,
+    source: Reference,
+    proposal: ExtractedClaim,
+    decision: ClaimDecision,
+    request_id: str,
+) -> list[Reference]:
     command = ReconcileClaim(source=source, proposal=proposal, decision=decision)
     return application.database.command(
         request_id,
@@ -43,7 +58,7 @@ def reconcile(application, source, proposal, decision, request_id):
     )
 
 
-def revision_command(application, target):
+def revision_command(application: Knowledge, target: Reference) -> ConsolidateNote:
     with application.database.transaction() as ledger:
         record = ledger.get(target.entity_id)
         assert isinstance(record.payload, Note)
@@ -55,7 +70,9 @@ def revision_command(application, target):
     )
 
 
-def consolidate(application, command, request_id="consolidate"):
+def consolidate(
+    application: Knowledge, command: ConsolidateNote, request_id: str = "consolidate"
+) -> list[Reference]:
     return application.database.command(
         request_id,
         "pilot",
@@ -66,7 +83,9 @@ def consolidate(application, command, request_id="consolidate"):
     )
 
 
-def test_reimported_passage_reuses_claim_and_evidence(application, article, imported):
+def test_reimported_passage_reuses_claim_and_evidence(
+    application: Knowledge, article: SeedArticle, imported: dict[str, Reference]
+) -> None:
     decision = ClaimDecision(
         action="reuse",
         target=imported["claim"],
@@ -84,7 +103,9 @@ def test_reimported_passage_reuses_claim_and_evidence(application, article, impo
         assert len(ledger.list("pilot", "evidence")) == 1
 
 
-def test_reconciliation_rejects_invented_candidate_revision(application, imported):
+def test_reconciliation_rejects_invented_candidate_revision(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     with application.database.transaction() as ledger:
         candidates = ledger.list("pilot", "claim")
     decision = ClaimDecision(
@@ -98,7 +119,9 @@ def test_reconciliation_rejects_invented_candidate_revision(application, importe
 
 
 @pytest.mark.parametrize("action", ["new", "skip"])
-def test_reconciliation_rejects_target_on_non_reuse(action, application, imported):
+def test_reconciliation_rejects_target_on_non_reuse(
+    action: Literal["new", "skip"], application: Knowledge, imported: dict[str, Reference]
+) -> None:
     decision = ClaimDecision(
         action=action,
         target=imported["claim"],
@@ -109,7 +132,9 @@ def test_reconciliation_rejects_target_on_non_reuse(action, application, importe
         validate_decision(decision, [])
 
 
-def test_invalid_new_claim_evidence_rolls_back_claim_and_receipt(application, article, imported):
+def test_invalid_new_claim_evidence_rolls_back_claim_and_receipt(
+    application: Knowledge, article: SeedArticle, imported: dict[str, Reference]
+) -> None:
     proposal = article.claim.model_copy(update={"quote": "Fabricated result"})
     decision = ClaimDecision(
         action="new", target=None, rationale="Distinct claim", relation="supports"
@@ -121,8 +146,11 @@ def test_invalid_new_claim_evidence_rolls_back_claim_and_receipt(application, ar
         assert ledger.get_receipt("invalid-passage") is None
 
 
-def test_consolidation_preserves_human_edited_note(application, imported):
+def test_consolidation_preserves_human_edited_note(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     command = revision_command(application, imported["zettel"])
+    assert isinstance(command.proposal.note, Note)
     human_note = command.proposal.note.model_copy(update={"body": "My deliberate wording."})
     edited = application.edit_note(
         "human-edit",
@@ -131,14 +159,18 @@ def test_consolidation_preserves_human_edited_note(application, imported):
         "human:local",
     )[0]
     command = revision_command(application, edited)
+    assert isinstance(command.proposal.note, Note)
     assert consolidate(application, command) == []
     with application.database.transaction() as ledger:
         current = ledger.get(edited.entity_id)
+        assert isinstance(current.payload, Note)
         assert current.revision == edited.revision
         assert current.payload.body == "My deliberate wording."
 
 
-def test_consolidation_preserves_reviewed_model_note(application, imported):
+def test_consolidation_preserves_reviewed_model_note(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     target = imported["zettel"]
     application.decide(
         "human-review",
@@ -151,12 +183,16 @@ def test_consolidation_preserves_reviewed_model_note(application, imported):
         assert ledger.get(target.entity_id).revision == target.revision
 
 
-def test_stale_context_rejects_revision_without_receipt(application, imported):
+def test_stale_context_rejects_revision_without_receipt(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     command = revision_command(application, imported["zettel"])
+    assert isinstance(command.proposal.note, Note)
     dependency = imported["source_note"]
     command.context.append(dependency)
     with application.database.transaction() as ledger:
         note = ledger.get(dependency.entity_id).payload
+        assert isinstance(note, Note)
     application.edit_note(
         "context-edit",
         "pilot",
@@ -170,8 +206,11 @@ def test_stale_context_rejects_revision_without_receipt(application, imported):
         assert ledger.get_receipt("consolidate") is None
 
 
-def test_forged_inline_citation_cannot_be_consolidated(application, imported):
+def test_forged_inline_citation_cannot_be_consolidated(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     command = revision_command(application, imported["zettel"])
+    assert isinstance(command.proposal.note, Note)
     command.proposal.note.body = f"An unsupported statement [{uuid4()}@1]."
     with pytest.raises(ValueError, match="citation"):
         consolidate(application, command)
@@ -180,7 +219,7 @@ def test_forged_inline_citation_cannot_be_consolidated(application, imported):
         assert ledger.get_receipt("consolidate") is None
 
 
-def test_chunks_keep_first_page_and_every_page_once():
+def test_chunks_keep_first_page_and_every_page_once() -> None:
     pages = ["First-page result", "x" * PAGE_BUDGET, "Last-page limitation"]
     chunks = page_chunks(pages)
     assert [(number, text) for chunk in chunks for number, text in chunk.items()] == list(
@@ -188,13 +227,16 @@ def test_chunks_keep_first_page_and_every_page_once():
     )
 
 
-def test_chunks_exclude_only_explicit_curator_cover():
+def test_chunks_exclude_only_explicit_curator_cover() -> None:
     chunks = page_chunks(["[Curator cover excluded from evidence]", "Actual article"])
     assert chunks == [{2: "Actual article"}]
 
 
-def test_consolidation_keeps_visible_citation_not_only_reference_list(application, imported):
+def test_consolidation_keeps_visible_citation_not_only_reference_list(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     command = revision_command(application, imported["zettel"])
+    assert isinstance(command.proposal.note, Note)
     claim = imported["claim"]
     cited = command.proposal.note.model_copy(
         update={"body": f"Immediate performance improved [{claim.entity_id}@{claim.revision}]."}
@@ -210,7 +252,9 @@ def test_consolidation_keeps_visible_citation_not_only_reference_list(applicatio
         assert ledger.get_receipt("consolidate") is None
 
 
-def test_consolidation_advances_citation_and_preserves_old_history(application, imported):
+def test_consolidation_advances_citation_and_preserves_old_history(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     dependency = imported["source_note"]
     original = Note(
         kind="permanent",
@@ -221,6 +265,7 @@ def test_consolidation_advances_citation_and_preserves_old_history(application, 
     target = application.propose_note("citing-note", "pilot", original, "hermes:fixture")[0]
     with application.database.transaction() as ledger:
         source_note = ledger.get(dependency.entity_id).payload
+        assert isinstance(source_note, Note)
     updated = application.edit_note(
         "source-note-update",
         "pilot",
@@ -240,12 +285,17 @@ def test_consolidation_advances_citation_and_preserves_old_history(application, 
     )
     revised = consolidate(application, command)[0]
     with application.database.transaction() as ledger:
-        assert ledger.get(revised.entity_id).payload.references == [updated]
+        revised_note = ledger.get(revised.entity_id).payload
+        assert isinstance(revised_note, Note)
+        assert revised_note.references == [updated]
         assert ledger.get(target.entity_id, target.revision).payload == original
 
 
-def test_consolidation_cannot_invent_a_newer_citation_revision(application, imported):
+def test_consolidation_cannot_invent_a_newer_citation_revision(
+    application: Knowledge, imported: dict[str, Reference]
+) -> None:
     command = revision_command(application, imported["zettel"])
+    assert isinstance(command.proposal.note, Note)
     dependency = imported["claim"]
     forged = Reference(entity_id=dependency.entity_id, revision=dependency.revision + 1)
     command.proposal.note.references = [
@@ -259,7 +309,9 @@ def test_consolidation_cannot_invent_a_newer_citation_revision(application, impo
         assert ledger.get(command.target.entity_id).revision == command.target.revision
 
 
-def test_context_keeps_linked_evidence_and_all_claims(application, article, imported):
+def test_context_keeps_linked_evidence_and_all_claims(
+    application: Knowledge, article: SeedArticle, imported: dict[str, Reference]
+) -> None:
     second = article.model_copy(deep=True)
     second.source.sha256 = "b" * 64
     other = seed_article(application, "other-source", second)
@@ -267,10 +319,12 @@ def test_context_keeps_linked_evidence_and_all_claims(application, article, impo
         qualifier = ledger.get(imported["evidence"].entity_id).payload.model_copy(
             update={"quote": "No retention was measured.", "relation": "qualifies"}
         )
+        assert isinstance(qualifier, Evidence)
     extra = application.link_evidence("qualification", "pilot", qualifier, "hermes:fixture")[0]
     with application.database.transaction() as ledger:
         records = ledger.list("pilot")
         target = ledger.get(imported["zettel"].entity_id)
+        assert isinstance(target.payload, Note)
     selected = {record.entity_id for record in note_context(target, records)}
     assert imported["evidence"].entity_id in selected
     assert extra.entity_id in selected
@@ -278,7 +332,9 @@ def test_context_keeps_linked_evidence_and_all_claims(application, article, impo
     assert {imported["claim"].entity_id, other[1].entity_id} <= selected
 
 
-def test_wiki_context_uses_inline_evidence_and_reports_omissions(application, article, imported):
+def test_wiki_context_uses_inline_evidence_and_reports_omissions(
+    application: Knowledge, article: SeedArticle, imported: dict[str, Reference]
+) -> None:
     second = article.model_copy(deep=True)
     second.source.sha256 = "b" * 64
     other = seed_article(application, "other-source", second)
@@ -292,6 +348,7 @@ def test_wiki_context_uses_inline_evidence_and_reports_omissions(application, ar
     with application.database.transaction() as ledger:
         records = ledger.list("pilot")
         target = ledger.get(reference.entity_id)
+        assert isinstance(target.payload, Note)
     supplied = note_context(target, records)
     packet = json.loads(note_packet(target, supplied, records))
     assert {record.entity_id for record in supplied if record.kind == "evidence"} == {
@@ -302,34 +359,53 @@ def test_wiki_context_uses_inline_evidence_and_reports_omissions(application, ar
 
 
 def test_generation_cannot_cite_undelivered_evidence(
-    application, article, imported, monkeypatch, tmp_path
-):
+    application: Knowledge,
+    article: SeedArticle,
+    imported: dict[str, Reference],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
     second = article.model_copy(deep=True)
     second.source.sha256 = "b" * 64
     other = seed_article(application, "other-source", second)
     with application.database.transaction() as ledger:
         records = ledger.list("pilot")
         target = ledger.get(imported["zettel"].entity_id)
+        assert isinstance(target.payload, Note)
 
-    def generate(instructions, packet, contract, output_directory, validate):
+    def generate(
+        instructions: str,
+        packet: str,
+        contract: type[BaseModel],
+        validate: Callable[[NoteRevision], None],
+        **kwargs: object,
+    ) -> NoteRevision:
         note = target.payload.model_copy(deep=True)
+        assert isinstance(note, Note)
         note.references.append(other[2])
         note.body += f" Unsupported [{other[2].entity_id}@1]."
         with pytest.raises(ValueError, match="unseen record"):
             validate(NoteRevision(action="revise", rationale="Unseen evidence", note=note))
         return NoteRevision(action="keep", rationale="No supported addition", note=None)
 
-    monkeypatch.setattr("knowledge.consolidation.generate", generate)
-    command = propose_note_revision(target, records, tmp_path)
+    monkeypatch.setattr(
+        "knowledge.source_workflows.note_revision_proposals.structured_generation.generate",
+        generate,
+    )
+    command = propose_note_revision(target, records)
     assert other[2] not in command.context
     assert imported["evidence"] in command.context
 
 
 @pytest.mark.parametrize("same_pdf", [True, False])
-def test_evidence_identity_tracks_pdf_version_not_source_revision(application, imported, same_pdf):
+def test_evidence_identity_tracks_pdf_version_not_source_revision(
+    application: Knowledge, imported: dict[str, Reference], same_pdf: bool
+) -> None:
     with application.database.transaction() as ledger:
         original_source = ledger.get(imported["source"].entity_id)
+        assert isinstance(original_source.payload, LegacySource)
         original_evidence = ledger.get(imported["evidence"].entity_id)
+        assert isinstance(original_evidence.payload, Evidence)
         revised_source = original_source.payload.model_copy(
             update={"sha256": original_source.payload.sha256 if same_pdf else "c" * 64}
         )
@@ -337,9 +413,11 @@ def test_evidence_identity_tracks_pdf_version_not_source_revision(application, i
             "pilot", "source", revised_source, "migration:fixture", imported["source"]
         )
     relation = original_evidence.payload.model_copy(update={"source": migrated})
+    assert isinstance(relation, Evidence)
     accepted = application.link_evidence("after-migration", "pilot", relation, "hermes:fixture")[0]
     with application.database.transaction() as ledger:
         preserved = ledger.get(imported["evidence"].entity_id)
+        assert isinstance(preserved.payload, Evidence)
         assert preserved.payload.source == imported["source"]
         assert preserved.revision == imported["evidence"].revision
         if same_pdf:
@@ -347,13 +425,15 @@ def test_evidence_identity_tracks_pdf_version_not_source_revision(application, i
             assert len(ledger.list("pilot", "evidence")) == 1
         else:
             assert accepted.entity_id != imported["evidence"].entity_id
-            assert ledger.get(accepted.entity_id).payload.source == migrated
+            accepted_evidence = ledger.get(accepted.entity_id).payload
+            assert isinstance(accepted_evidence, Evidence)
+            assert accepted_evidence.source == migrated
             assert len(ledger.list("pilot", "evidence")) == 2
 
 
 def test_new_claim_keeps_passage_rationale_separate_from_matching_reason(
-    application, article, imported
-):
+    application: Knowledge, article: SeedArticle, imported: dict[str, Reference]
+) -> None:
     proposal = article.claim
     decision = ClaimDecision(
         action="new",
@@ -364,18 +444,23 @@ def test_new_claim_keeps_passage_rationale_separate_from_matching_reason(
     references = reconcile(application, imported["source"], proposal, decision, "new-claim")
     with application.database.transaction() as ledger:
         relation = ledger.get(references[1].entity_id).payload
+        assert isinstance(relation, Evidence)
     assert relation.rationale == proposal.rationale
     assert relation.relation == proposal.relation
 
 
 def test_failed_passage_check_keeps_original_matching_decision_for_audit(
-    application, article, imported, tmp_path, monkeypatch
-):
-    from knowledge.grounding import PassageCheck
-    from knowledge.reconciliation import check_claim_grounding
+    application: Knowledge,
+    article: SeedArticle,
+    imported: dict[str, Reference],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from knowledge.source_workflows.claim_reconciliation import check_claim_grounding
+    from knowledge.source_workflows.passage_grounding import PassageCheck
 
     monkeypatch.setattr(
-        "knowledge.reconciliation.check_passage",
+        "knowledge.source_workflows.claim_reconciliation.check_passage",
         lambda *args: PassageCheck(grounded=False, reason="Unsupported time horizon"),
     )
     original = ClaimDecision(
@@ -391,7 +476,9 @@ def test_failed_passage_check_keeps_original_matching_decision_for_audit(
         assert len(ledger.list("pilot", "claim")) == 1
 
 
-def test_reuse_reclassifies_directness_for_the_selected_claim(application, article, imported):
+def test_reuse_reclassifies_directness_for_the_selected_claim(
+    application: Knowledge, article: SeedArticle, imported: dict[str, Reference]
+) -> None:
     with application.database.transaction() as ledger:
         source = ledger.append(
             "pilot", "source", article.source.model_copy(update={"sha256": "b" * 64}), "fixture"
@@ -406,5 +493,6 @@ def test_reuse_reclassifies_directness_for_the_selected_claim(application, artic
     references = reconcile(application, source, article.claim, decision, "indirect")
     with application.database.transaction() as ledger:
         relation = ledger.get(references[1].entity_id).payload
+        assert isinstance(relation, Evidence)
     assert relation.directness == "indirect"
     assert relation.rationale == decision.rationale

@@ -1,0 +1,13 @@
+{% extends 'experiment_base.html' %}
+{% block title %}Literature{% endblock %}
+{% block content %}
+<div class="page-heading"><div><p class="eyebrow">LITERATURE</p><h1>Sources and their citations.</h1><p class="muted">One work, with its observed uses across current experiments.</p></div><a href="/experiments/literature/export">Export citation network</a></div>
+{% if work_id %}<p><a href="/experiments/literature">All sources</a></p>{% endif %}
+{% for entry in entries %}
+<section class="panel">
+{% set record = entry.record %}{% include 'literature_record.html' %}
+<h3>Documents · {{ entry.documents|length }}</h3>
+{% for document in entry.documents %}<details {% if work_id %}open{% endif %}><summary>{{ document.filename }} · {{ document.record.occurrences|length }} citations</summary><p><a href="/experiments/{{ document.run_id }}/attempts/{{ document.attempt_id }}">Inspect extraction</a> · {{ document.record.role }}</p>{% for occurrence in document.record.occurrences %}<p><strong>{{ occurrence.marker }}</strong> · {{ occurrence.section or 'Section unknown' }}</p><blockquote>{{ occurrence.context or 'Context unavailable' }}</blockquote>{% endfor %}</details>{% endfor %}
+</section>
+{% else %}<p class="empty">No matched-source records yet. Run document extraction with Crossref matching.</p>{% endfor %}
+{% endblock %}

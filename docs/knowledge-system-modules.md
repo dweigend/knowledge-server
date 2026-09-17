@@ -1,5 +1,11 @@
 # Research modules and skill reuse
 
+The [Hermes integration target](hermes-integration-target.md), requested on
+2026-09-16, takes precedence for agent execution, task ownership and extension
+packaging. Reuse native Hermes runs, tasks, schedules, plugins and skills;
+Knowledge keeps its domain operations and deterministic processing. This is a
+target decision, not a claim of installed or deployed integration.
+
 The [modular architecture](knowledge-plugin-architecture.md) defines the latest
 approved two-entry workflow, public boundaries, dependency direction and
 replacement criteria. Its diagrams and optional extension inventory are the
@@ -25,12 +31,14 @@ implemented. The future Hub contract remains separate. The September 15
 existing entries and sole Zotero ownership of literature and PDFs. It supersedes
 older proposals below where they imply a separate catalog or PDF store.
 
-The implemented slice uses `zotero.py` for the literature boundary,
-`import_workflow.py` for staged ingestion, `reconciliation.py` for contribution
-decisions, `grounding.py` for passage attribution and `consolidation.py` for
-existing-note revisions. They reuse the application/domain modules and revision
-ledger. No additional service, vector database or retrieval abstraction was
-introduced. See the [verification limits](README.md#historical-evidence-limits).
+The implemented slice uses `literature/zotero_client.py` for the literature
+boundary, `source_workflows/source_import.py` for staged ingestion,
+`source_workflows/claim_reconciliation.py` for contribution decisions,
+`source_workflows/passage_grounding.py` for passage attribution and
+`source_workflows/note_consolidation.py` for existing-note revisions. They
+reuse the knowledge base and revision store. No additional service, vector
+database or retrieval abstraction was introduced. See the
+[verification limits](README.md#historical-evidence-limits).
 
 ## 1. Three different architectural concepts
 
