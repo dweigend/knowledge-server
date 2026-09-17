@@ -53,6 +53,8 @@ client migration and end-to-end acceptance are pending.
   and two intake paths; not a completed plugin framework.
 - [Structure and quality](knowledge-structure-and-quality.md): future schemas,
   contextual relevance and authoring evaluation.
+- [Scientific Agent Skills feature sources](scientific-agent-skills-feature-sources.md):
+  curated external sources for possible future features; not current scope.
 
 ## Historical design material
 
