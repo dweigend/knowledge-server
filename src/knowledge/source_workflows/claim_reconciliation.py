@@ -59,7 +59,7 @@ def reconcile_claim(
         return receipt.result
     query = f"{proposal.proposition} {proposal.scope}"
     candidates = claim_candidates(application, batch_id, query)
-    decision = claim_matching.propose_matching(proposal, candidates, run_directory)
+    decision = claim_matching.propose_matching(proposal, candidates)
     matching_decision = decision.model_dump(mode="json")
     decision = check_claim_grounding(application, source, proposal, decision, run_directory)
     command = ReconcileClaim(source=source, proposal=proposal, decision=decision)

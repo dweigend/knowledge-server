@@ -97,7 +97,7 @@ rendered document content; documents are untrusted input.
 
 Figure previews show original PDF content, not model-redrawn replacements.
 Preserve captions and figure numbers. Previews may be rendered from a pinned PDF
-region; regenerable preview caches are technical artifacts, not library assets.
+region; regenerable previews are technical artifacts, not library assets.
 
 Tables must preserve headers, row/column relationships, units and footnotes.
 Simple tables may use Markdown. Merged cells or other structures that Markdown
@@ -178,8 +178,8 @@ Existing citations must continue to resolve against their original source
 revision and text. Never fabricate historical metadata that was not retained.
 Distinguish a citation exported from current Zotero metadata from the historical
 document version. Existing historical metadata snapshots remain read-only.
-Preserve cited historical PDF versions in Zotero; caches cannot substitute for
-that retention. A changed attachment hash must not serve as the old version.
+Preserve cited historical PDF versions in Zotero. A changed attachment hash must
+not serve as the old version.
 
 ## Replacement rules: no inherited duplicate structures
 

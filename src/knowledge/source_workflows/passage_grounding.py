@@ -39,9 +39,7 @@ def check_passage(
         ensure_ascii=False,
     )
     prompt = prompt_registry.load_prompt("grounding")
-    result = structured_generation.generate(
-        prompt, packet, PassageCheck, run_directory / "proposals"
-    )
+    result = structured_generation.generate(prompt, packet, PassageCheck)
     workflow_event_log.record_event(
         run_directory,
         "passage_check",

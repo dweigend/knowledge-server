@@ -104,7 +104,6 @@ def extract_document(
             instructions,
             packet,
             ArticleExtraction,
-            run_directory / "proposals",
             lambda result, supplied=chunk: validate_extraction(result, pages, supplied, validate),
             configuration=configuration,
             cancelled=cancelled,

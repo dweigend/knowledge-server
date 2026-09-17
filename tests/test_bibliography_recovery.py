@@ -37,19 +37,17 @@ def recover(
     directory: Path,
     *,
     allow_model: bool = True,
-    timeout_seconds: float | None = None,
-    retry_generation: int = 0,
 ) -> recovery.BibliographyRecoveryResult:
-    return recovery.recover_bibliography(
+    files_before = set(directory.rglob("*"))
+    result = recovery.recover_bibliography(
         paper,
         pages,
-        directory,
         configuration=ModelConfiguration(),
         cancelled=lambda: False,
         allow_model=allow_model,
-        timeout_seconds=timeout_seconds,
-        retry_generation=retry_generation,
     )
+    assert set(directory.rglob("*")) == files_before
+    return result
 
 
 def complete_reference(identifier: str = "b0") -> PaperReference:
@@ -146,7 +144,6 @@ def test_model_only_receives_incomplete_entries_and_source_fields_are_validated(
         instructions: str,
         packet: str,
         contract: type[BaseModel],
-        output_directory: Path,
         validate: Callable[[BibliographyParsing], None],
         *,
         configuration: ModelConfiguration,
@@ -156,7 +153,6 @@ def test_model_only_receives_incomplete_entries_and_source_fields_are_validated(
         calls.append(entries)
         assert len(entries) == 1
         assert "Brown B" in entries[0]["raw"]
-        assert configuration.max_attempts == 1
         proposal = BibliographyParsing(
             entries=[
                 ReferenceParsing(
@@ -206,7 +202,7 @@ def test_model_cannot_change_entry_ids_or_duplicate_them() -> None:
 
 
 @pytest.mark.parametrize("failure", [False, True])
-def test_negative_and_failed_model_attempts_are_cached_across_retries(
+def test_negative_and_failed_model_attempts_run_fresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: bool
 ) -> None:
     calls = []
@@ -222,12 +218,9 @@ def test_negative_and_failed_model_attempts_are_cached_across_retries(
     pages = ["References\nSmith J (2001) Source title"]
     first = recover(paper, pages, tmp_path)
     second = recover(paper, pages, tmp_path)
-    assert len(calls) == 1
-    assert second.report.cache_reused
+    assert len(calls) == 2
     assert first.report.status == second.report.status == "needs_review"
     assert first.report.model_status == ("failed" if failure else "completed")
-    recover(paper, [pages[0] + " changed"], tmp_path)
-    assert len(calls) == 2
 
 
 def test_unmatched_original_reference_is_retained(tmp_path: Path) -> None:
@@ -254,27 +247,13 @@ def test_missing_heading_is_unverified_without_unbounded_model_request(
     assert "unverified" in result.report.unresolved_issues[0]
 
 
-def test_exhausted_budget_preserves_grounded_entries_without_model(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(recovery.structured_generation, "generate", lambda *a, **k: pytest.fail())
-    result = recover(
-        paper_with([]), ["References\nSmith J (2001) Source title"], tmp_path, timeout_seconds=0
-    )
-    assert result.report.model_status == "budget_exhausted"
-    assert len(result.paper.references) == 1
-
-
-def test_cancellation_propagates_without_caching(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_cancellation_propagates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def generate(*args: object, **kwargs: object) -> BibliographyParsing:
         raise InterruptedError("Cancelled")
 
     monkeypatch.setattr(recovery.structured_generation, "generate", generate)
     with pytest.raises(InterruptedError):
         recover(paper_with([]), ["References\nSmith J (2001) Source title"], tmp_path)
-    assert not list(Path(tmp_path).rglob("result.json"))
 
 
 def test_unique_author_year_markers_relink_without_model(
@@ -350,113 +329,3 @@ def test_same_author_year_collision_and_existing_links_are_preserved(tmp_path: P
     pages = ["References\n" + "\n".join(ref.raw or "" for ref in references)]
     result = recover(paper, pages, tmp_path, allow_model=False)
     assert result.paper.citations == citations
-
-
-def test_remaining_deadline_changes_reuse_negative_cache_but_prompt_changes_do_not(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls = []
-
-    def generate(
-        *args: object, configuration: ModelConfiguration, **kwargs: object
-    ) -> BibliographyParsing:
-        calls.append(configuration.timeout_seconds)
-        return BibliographyParsing()
-
-    monkeypatch.setattr(recovery.structured_generation, "generate", generate)
-    paper = paper_with([])
-    pages = ["References\nSmith J (2001) Source title"]
-    for timeout in (10, 20):
-        paper.raw_document = f"<provider-run duration='{timeout}' />"
-        result = recovery.recover_bibliography(
-            paper,
-            pages,
-            tmp_path,
-            configuration=ModelConfiguration(timeout_seconds=timeout),
-            cancelled=lambda: False,
-        )
-    assert result.report.cache_reused
-    assert result.paper.raw_document == paper.raw_document
-    assert len(calls) == 1
-    monkeypatch.setattr(recovery, "PARSING_INSTRUCTIONS", recovery.PARSING_INSTRUCTIONS + " More.")
-    recover(paper, pages, tmp_path)
-    assert len(calls) == 2
-
-
-def test_successful_metadata_recovery_is_reused_across_explicit_retry_generations(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls = []
-
-    def generate(
-        instructions: str,
-        packet: str,
-        contract: type[BaseModel],
-        directory: Path,
-        validate: Callable[[BibliographyParsing], None],
-        **options: object,
-    ) -> BibliographyParsing:
-        entries = json.loads(packet)
-        calls.append(directory)
-        proposal = BibliographyParsing(
-            entries=[
-                ReferenceParsing(
-                    entry_id=entries[0]["id"],
-                    metadata=PaperMetadata(title="Source title", authors=["J Smith"], year="2001"),
-                )
-            ]
-        )
-        validate(proposal)
-        return proposal
-
-    monkeypatch.setattr(recovery.structured_generation, "generate", generate)
-    paper = paper_with([])
-    pages = ["References\nSmith J (2001) Source title"]
-    first = recover(paper, pages, tmp_path)
-    retried = recover(paper, pages, tmp_path, retry_generation=1)
-    assert first.report.model_status == "completed"
-    assert retried.report.cache_reused
-    assert retried.paper == first.paper
-    assert len(calls) == 1
-
-
-@pytest.mark.parametrize("empty_response", [False, True])
-def test_explicit_retry_repeats_failed_or_empty_parsing_only_once_per_generation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, empty_response: bool
-) -> None:
-    directories = []
-
-    def generate(*args: object, **kwargs: object) -> BibliographyParsing:
-        directories.append(args[3])
-        if empty_response:
-            return BibliographyParsing()
-        raise ValueError("No usable metadata")
-
-    monkeypatch.setattr(recovery.structured_generation, "generate", generate)
-    paper = paper_with([])
-    pages = ["References\nSmith J (2001) Source title"]
-    for generation in (0, 0, 1, 1):
-        result = recover(paper, pages, tmp_path, retry_generation=generation)
-    assert result.report.cache_reused
-    assert len(directories) == 2
-    assert directories[0] != directories[1]
-
-
-def test_explicit_retry_reconsiders_previous_budget_exhaustion(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls = []
-
-    def generate(*args: object, **kwargs: object) -> BibliographyParsing:
-        calls.append(True)
-        return BibliographyParsing()
-
-    monkeypatch.setattr(recovery.structured_generation, "generate", generate)
-    paper = paper_with([])
-    pages = ["References\nSmith J (2001) Source title"]
-    first = recover(paper, pages, tmp_path, timeout_seconds=0)
-    cached = recover(paper, pages, tmp_path)
-    retried = recover(paper, pages, tmp_path, retry_generation=1)
-    assert first.report.model_status == cached.report.model_status == "budget_exhausted"
-    assert retried.report.model_status == "completed"
-    assert len(calls) == 1

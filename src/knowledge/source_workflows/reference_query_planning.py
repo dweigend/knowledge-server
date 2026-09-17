@@ -1,20 +1,16 @@
 """Propose bounded search variants from source evidence through the existing model bridge."""
 
-import hashlib
 import json
 import subprocess
 from collections.abc import Callable
-from pathlib import Path
 from typing import Final
 
 from knowledge.literature import literature_resolution
-from knowledge.literature.reference_discovery_models import DiscoveryReport, DiscoverySettings
+from knowledge.literature.reference_discovery_models import DiscoveryReport
 from knowledge.literature.structured_paper_models import PaperReference
 from knowledge.model_integration import structured_generation
-from knowledge.runtime_support.atomic_json_files import write_json_atomically
 from knowledge.source_workflows.reference_query_models import (
     QUERY_EVIDENCE,
-    CachedQueryPlan,
     ReferenceQueries,
     ReferenceQuery,
     ReferenceQueryEvidence,
@@ -66,79 +62,40 @@ def validate_query_evidence(query: ReferenceQuery, original: PaperReference) -> 
         raise ValueError("Search author tokens must occur in the original bibliography evidence")
 
 
-def query_plan_directory(
-    packet: str,
-    cache_directory: Path,
-    settings: DiscoverySettings,
-    configuration: structured_generation.ModelConfiguration,
-) -> Path:
-    """Identify a planning attempt by evidence, schema, model and explicit retry revision."""
-    identity = hashlib.sha256(
-        json.dumps(
-            [
-                packet,
-                SEARCH_INSTRUCTIONS,
-                ReferenceQueries.model_json_schema(),
-                settings.retry_generation,
-                configuration.resolved().model_dump(exclude={"timeout_seconds"}),
-            ],
-            sort_keys=True,
-        ).encode()
-    ).hexdigest()
-    return cache_directory / identity
-
-
 def plan_reference_queries(
     evidence: list[ReferenceQueryEvidence],
-    cache_directory: Path,
-    settings: DiscoverySettings,
     report: DiscoveryReport,
     configuration: structured_generation.ModelConfiguration,
     cancelled: Callable[[], bool],
 ) -> ReferenceQueries:
-    """Request one grounded planning batch only after ordinary searches remain unresolved."""
+    """Request one fresh grounded planning batch."""
     evidence = QUERY_EVIDENCE.validate_python(evidence)
     packet = json.dumps(QUERY_EVIDENCE.dump_python(evidence), ensure_ascii=False)
     references = {entry.reference.id: entry.reference for entry in evidence}
-    directory = query_plan_directory(packet, cache_directory, settings, configuration)
-    path = directory / "plan.json"
-    if path.exists():
-        report.cache_hits += 1
-        outcome = CachedQueryPlan.model_validate_json(path.read_text())
-    elif report.model_calls < settings.max_model_calls:
-        report.model_calls += 1
-        outcome = generate_query_plan(packet, references, directory, configuration, cancelled)
-        write_json_atomically(path, outcome.model_dump(mode="json"))
-    else:
-        return ReferenceQueries()
-    if outcome.error:
-        report.warnings.append(outcome.error)
-    validate_queries(outcome.plan, references)
-    return outcome.plan
+    return generate_query_plan(packet, references, configuration, cancelled, report)
 
 
 def generate_query_plan(
     packet: str,
     references: dict[str, PaperReference],
-    directory: Path,
     configuration: structured_generation.ModelConfiguration,
     cancelled: Callable[[], bool],
-) -> CachedQueryPlan:
-    """Retain model failure explicitly while leaving source identities unresolved."""
+    report: DiscoveryReport,
+) -> ReferenceQueries:
+    """Report current model failure while leaving source identities unresolved."""
     try:
-        plan = structured_generation.generate(
+        return structured_generation.generate(
             SEARCH_INSTRUCTIONS,
             packet,
             ReferenceQueries,
-            directory,
             validate=lambda result: validate_queries(result, references),
             configuration=configuration,
             cancelled=cancelled,
         )
-        return CachedQueryPlan(plan=plan)
     except InterruptedError:
         raise
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
-        return CachedQueryPlan(
-            error=f"Reference query planning failed: {type(error).__name__}; review required."
+        report.warnings.append(
+            f"Reference query planning failed: {type(error).__name__}; review required."
         )
+        return ReferenceQueries()

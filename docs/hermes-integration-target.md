@@ -100,8 +100,8 @@ Domain modules remain ordinary Python modules, not one Hermes plugin each.
 ## Bounded generation and deterministic processing
 
 The implemented path remains Knowledge workflow → `structured_generation.py`
-→ `hermes_bridge.py` → a tool-free Hermes agent. It validates and caches
-proposals; it does not register Knowledge tools in the interactive host.
+→ `hermes_bridge.py` → a tool-free Hermes agent. It validates fresh proposals
+and removes temporary transport files; it does not register Knowledge tools in the interactive host.
 This path remains supported until a replacement passes equivalent checks.
 
 For code running inside a future Hermes plugin, evaluate the documented

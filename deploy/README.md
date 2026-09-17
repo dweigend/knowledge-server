@@ -71,8 +71,8 @@ separately. Runtime root is the parent of `KNOWLEDGE_ARCHIVE_ROOT`.
 `uv sync` alone does not provision this inference runtime.
 
 Tools download model weights on first use. Keep them outside the Git repository.
-The adapter sets cache locations under runtime root; inspect the installed
-Surya release for any additional default cache paths before production use.
+The adapter stores third-party model assets under the runtime root; inspect the
+installed Surya release for any additional runtime paths before production use.
 Each tool runs in a bounded systemd unit with a two-hour timeout, 12 GB memory
 limit and four CPU cores. These are conservative pilot defaults.
 

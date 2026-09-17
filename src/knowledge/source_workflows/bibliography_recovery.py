@@ -5,8 +5,6 @@ import json
 import re
 import subprocess
 from collections.abc import Callable
-from pathlib import Path
-from time import monotonic
 from typing import Final
 
 from knowledge.literature.structured_paper_models import (
@@ -16,7 +14,6 @@ from knowledge.literature.structured_paper_models import (
 )
 from knowledge.model_integration import structured_generation
 from knowledge.model_integration.structured_generation import ModelConfiguration
-from knowledge.runtime_support.atomic_json_files import write_json_atomically
 from knowledge.source_workflows.bibliography_recovery_models import (
     BibliographyAudit,
     BibliographyEntry,
@@ -25,9 +22,6 @@ from knowledge.source_workflows.bibliography_recovery_models import (
     BibliographySpan,
 )
 
-RECOVERY_REVISION: Final[int] = 2
-MAX_MODEL_ENTRIES: Final[int] = 200
-MAX_MODEL_CHARACTERS: Final[int] = 60000
 BIBLIOGRAPHY_HEADING: Final[re.Pattern[str]] = re.compile(
     r"^(?:\d+[. ]+)?(?:literatur(?:verzeichnis)?|references|bibliography|works cited)\s*$",
     re.IGNORECASE,
@@ -254,7 +248,6 @@ def validate_parsing(proposal: BibliographyParsing, entries: list[BibliographyEn
 
 def _parse_metadata(
     entries: list[BibliographyEntry],
-    directory: Path,
     configuration: ModelConfiguration,
     cancelled: Callable[[], bool],
 ) -> BibliographyParsing:
@@ -262,7 +255,6 @@ def _parse_metadata(
         PARSING_INSTRUCTIONS,
         json.dumps([entry.model_dump(mode="json") for entry in entries], ensure_ascii=False),
         BibliographyParsing,
-        directory,
         validate=lambda proposal: validate_parsing(proposal, entries),
         configuration=configuration,
         cancelled=cancelled,
@@ -283,11 +275,9 @@ def _apply_parsing(
 def _repair_metadata(
     references: list[PaperReference],
     audit: BibliographyAudit,
-    directory: Path,
     configuration: ModelConfiguration,
     cancelled: Callable[[], bool],
     allow_model: bool,
-    deadline: float,
 ) -> None:
     entries = _parsing_entries(references, audit)
     if not entries:
@@ -295,20 +285,8 @@ def _repair_metadata(
     if not allow_model:
         audit.model_status = "disabled"
         return
-    remaining = min(configuration.timeout_seconds, deadline - monotonic())
-    if (
-        remaining < 1
-        or len(entries) > MAX_MODEL_ENTRIES
-        or sum(len(e.raw) for e in entries) > MAX_MODEL_CHARACTERS
-    ):
-        audit.model_status = "budget_exhausted"
-        audit.unresolved_issues.append(
-            "Bibliography metadata parsing exceeds its configured budget."
-        )
-        return
-    bounded = configuration.model_copy(update={"max_attempts": 1, "timeout_seconds": remaining})
     try:
-        proposal = _parse_metadata(entries, directory, bounded, cancelled)
+        proposal = _parse_metadata(entries, configuration, cancelled)
         _apply_parsing(references, proposal, {entry.id for entry in audit.entries})
         audit.model_status = "completed"
     except InterruptedError:
@@ -421,91 +399,27 @@ def _relink_citations(
         audit.relinked_citation_indexes.append(index)
 
 
-def _cache_path(
-    paper: PaperDocument,
-    pages: list[str],
-    directory: Path,
-    configuration: ModelConfiguration,
-    allow_model: bool,
-) -> Path:
-    packet = {
-        "revision": RECOVERY_REVISION,
-        "paper": paper.model_dump(mode="json", exclude={"raw_document"}),
-        "pages": pages,
-        "configuration": configuration.resolved().model_dump(
-            mode="json", exclude={"timeout_seconds"}
-        ),
-        "allow_model": allow_model,
-        "instructions": PARSING_INSTRUCTIONS,
-        "schema": BibliographyParsing.model_json_schema(),
-    }
-    identity = hashlib.sha256(json.dumps(packet, sort_keys=True).encode()).hexdigest()
-    return directory / identity / "result.json"
-
-
 def recover_bibliography(
     paper: PaperDocument,
     pages: list[str],
-    output_directory: Path,
     *,
     configuration: ModelConfiguration,
     cancelled: Callable[[], bool],
     allow_model: bool = True,
-    timeout_seconds: float | None = None,
-    retry_generation: int = 0,
 ) -> BibliographyRecoveryResult:
-    """Recover missing and merged entries, caching bounded success and failure outcomes."""
-    if retry_generation < 0:
-        raise ValueError("retry_generation must be nonnegative")
+    """Recover missing and merged entries from the current document evidence."""
     structured_generation.check_cancelled(cancelled)
-    deadline = monotonic() + (
-        timeout_seconds if timeout_seconds is not None else configuration.timeout_seconds
-    )
-    cache = _cache_path(paper, pages, output_directory, configuration, allow_model)
-    retry_cache = cache.with_name(f"retry-{retry_generation}.json")
-    cached = _load_recovery(cache, retry_cache, paper, retry_generation)
-    if cached is not None:
-        return cached
     audit = audit_bibliography(paper, pages)
     references = _recover_entries(paper, audit)
     _repair_metadata(
         references,
         audit,
-        cache.parent / "model" / f"retry-{retry_generation}",
         configuration,
         cancelled,
         allow_model,
-        deadline,
     )
     recovered = _recovered_paper(paper, references, audit)
     if not audit.missing_entry_ids and not audit.merged_originals and not audit.unresolved_issues:
         audit.status = "consistent"
     structured_generation.check_cancelled(cancelled)
-    result = BibliographyRecoveryResult(paper=recovered, report=audit)
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    destination = cache if _recovery_succeeded(result) else retry_cache
-    write_json_atomically(destination, result.model_dump(mode="json"))
-    return result
-
-
-def _recovery_succeeded(result: BibliographyRecoveryResult) -> bool:
-    if result.report.model_status == "not_needed":
-        return True
-    return result.report.model_status == "completed" and not _parsing_entries(
-        result.paper.references, result.report
-    )
-
-
-def _load_recovery(
-    cache: Path, retry_cache: Path, paper: PaperDocument, retry_generation: int
-) -> BibliographyRecoveryResult | None:
-    for path in (cache, retry_cache):
-        if not path.exists():
-            continue
-        result = BibliographyRecoveryResult.model_validate_json(path.read_text())
-        if path == cache and retry_generation > 0 and not _recovery_succeeded(result):
-            continue
-        result.report.cache_reused = True
-        result.paper.raw_document = paper.raw_document
-        return result
-    return None
+    return BibliographyRecoveryResult(paper=recovered, report=audit)

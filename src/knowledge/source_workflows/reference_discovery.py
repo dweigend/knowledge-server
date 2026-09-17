@@ -5,8 +5,6 @@ import re
 from collections import Counter
 from collections.abc import Callable
 from itertools import islice
-from pathlib import Path
-from time import monotonic
 
 from knowledge.literature import (
     crossref_client,
@@ -29,8 +27,6 @@ from knowledge.literature import (
 )
 from knowledge.literature.bibliographic_identifiers import extracted_isbn
 from knowledge.model_integration import structured_generation
-from knowledge.runtime_support.atomic_json_files import write_json_atomically
-from knowledge.runtime_support.workflow_event_log import record_event
 from knowledge.source_workflows import bibliography_recovery, reference_query_planning
 from knowledge.source_workflows.reference_discovery_models import (
     ReferenceDiscoveryResult,
@@ -43,8 +39,6 @@ from knowledge.source_workflows.reference_query_models import (
 )
 from knowledge.source_workflows.reference_search import (
     ReferenceSearchSession,
-    query_text,
-    request_key,
 )
 
 
@@ -69,7 +63,7 @@ def available_providers() -> dict[str, resolution.Lookup]:
 def lookup_access(
     reference: papers.PaperMetadata, timeout_seconds: float, cancelled: Callable[[], bool]
 ) -> list[literature_models.Candidate]:
-    """Adapt optional access discovery to the same bounded lookup cache."""
+    """Adapt optional access discovery to the bounded provider session."""
     if not reference.doi:
         return []
     location = unpaywall_client.lookup_unpaywall(reference.doi, timeout_seconds, cancelled)
@@ -216,32 +210,10 @@ def search_fallback_rounds(
 
 
 def identify_reference(state: ReferenceSearchState, session: ReferenceSearchSession) -> None:
-    """Reuse a confirmed identity or perform the initial provider lookup."""
-    path = confirmed_record_path(state.reference, state.record.source_sha256, session)
-    if not path.exists():
-        state.candidates = session.search(
-            initial_provider(state.reference, session.settings), state.reference, state.trace
-        )
-        state.record = resolved_record(
-            state.reference, state.candidates, state.record.source_sha256
-        )
-        return
-    previous = literature_models.LiteratureRecord.model_validate_json(path.read_text())
-    session.report.cache_hits += 1
-    state.candidates = previous.resolution.candidates
-    query = models.SearchQuery(
-        provider=previous.resolution.provider or "cache",
-        query=query_text(state.reference),
-        status="success",
-        cached=True,
-        candidate_count=len(state.candidates),
-        message="Reused confirmed identity.",
+    """Perform the initial provider lookup from current reference evidence."""
+    state.candidates = session.search(
+        initial_provider(state.reference, session.settings), state.reference, state.trace
     )
-    state.trace.queries.append(query)
-    session.record_query(state.reference.id, query)
-    if not search_trigger(previous, session.settings):
-        state.record = previous
-        return
     state.record = resolved_record(state.reference, state.candidates, state.record.source_sha256)
 
 
@@ -257,14 +229,6 @@ def search_provider(
     state.record = resolved_record(
         state.reference, state.candidates, state.record.source_sha256, refined=refined
     )
-
-
-def confirmed_record_path(
-    reference: papers.PaperReference, source_sha256: str, session: ReferenceSearchSession
-) -> Path:
-    """Retain confirmed identities across explicit retries of unresolved searches."""
-    key = request_key("confirmed.v1", reference, 0)
-    return session.cache_directory / "confirmed" / source_sha256 / f"{key}.json"
 
 
 def has_search_evidence(reference: papers.PaperReference) -> bool:
@@ -289,10 +253,10 @@ def initial_provider(reference: papers.PaperReference, settings: models.Discover
 def mark_lookup_failure(
     record: literature_models.LiteratureRecord, trace: models.ReferenceSearch
 ) -> None:
-    """Distinguish unavailable providers and exhausted budgets from an ordinary no-match result."""
+    """Distinguish provider errors from an ordinary no-match result."""
     if record.resolution.status != "unmatched":
         return
-    failed = [query for query in trace.queries if query.status in {"error", "budget", "backoff"}]
+    failed = [query for query in trace.queries if query.status == "error"]
     if not failed:
         return
     record.resolution.message += " " + " ".join(dict.fromkeys(query.message for query in failed))
@@ -300,29 +264,13 @@ def mark_lookup_failure(
         record.resolution.status = "error"
 
 
-def model_configuration(
-    configuration: structured_generation.ModelConfiguration,
-    settings: models.DiscoverySettings,
-    deadline: float,
-) -> structured_generation.ModelConfiguration:
-    """Limit each optional model invocation to one attempt and the remaining wall-clock budget."""
-    return structured_generation.ModelConfiguration.model_validate(
-        {
-            **configuration.model_dump(),
-            "max_attempts": 1,
-            "timeout_seconds": max(1, min(settings.model_timeout_seconds, deadline - monotonic())),
-        }
-    )
-
-
 def refine_unresolved(
     searches: list[ReferenceSearchState],
     session: ReferenceSearchSession,
     configuration: structured_generation.ModelConfiguration,
 ) -> None:
-    """Plan one bounded batch for unresolved sources with remaining search capacity."""
+    """Plan one batch of grounded queries for unresolved sources."""
     audit = session.report.refinement
-    session.release_reserved_requests()
     unresolved = {
         state.reference.id: state
         for state in searches
@@ -331,69 +279,25 @@ def refine_unresolved(
     if not unresolved:
         audit.reason = "No unresolved source has sufficient evidence for refinement."
         return
-    if session.deadline - monotonic() < 1:
-        audit.status = "skipped"
-        audit.reason = "Time budget was exhausted before query refinement."
-        return
-    pending = {key: state for key, state in unresolved.items() if can_refine(state, session)}
-    if not pending:
-        audit.status = "skipped"
-        audit.reason = refinement_unavailable_reason(list(unresolved.values()), session)
-        return
-    requests_before = session.report.requests
-    models_before = session.report.model_calls
-    cache_before = session.report.cache_hits
     warnings_before = len(session.report.warnings)
-    if session.event_directory is not None:
-        record_event(
-            session.event_directory,
-            "reference_refinement_started",
-            references=len(pending),
-            reserved_requests=audit.reserved_requests,
-            requests=session.report.requests,
-            model_calls=session.report.model_calls,
-        )
     plan = reference_query_planning.plan_reference_queries(
-        planning_evidence(list(pending.values())),
-        session.cache_directory / "plans",
-        session.settings,
+        planning_evidence(list(unresolved.values())),
         session.report,
-        model_configuration(configuration, session.settings, session.deadline),
+        configuration,
         session.cancelled,
     )
     audit.planned_queries = len(plan.queries)
-    audit.model_called = session.report.model_calls > models_before
-    audit.cache_reused = session.report.cache_hits > cache_before and not audit.model_called
     if not plan.queries:
         if len(session.report.warnings) > warnings_before:
             audit.status = "failed"
             audit.reason = "Query planning failed; inspect the discovery warnings."
-        elif models_before >= session.settings.max_model_calls and not audit.cache_reused:
-            audit.status = "skipped"
-            audit.reason = "No cached query plan exists and the model-call budget is exhausted."
         else:
             audit.status = "completed"
             audit.reason = "The query planner returned no grounded search variants."
         return
-    search_refinement_rounds(pending, plan.queries, session)
+    search_refinement_rounds(unresolved, plan.queries, session)
     audit.status = "completed"
     audit.reason = "Grounded query variants were searched deterministically."
-    audit.requests = session.report.requests - requests_before
-
-
-def refinement_unavailable_reason(
-    searches: list[ReferenceSearchState], session: ReferenceSearchSession
-) -> str:
-    """Retain the concrete capacity reasons that prevented query refinement."""
-    reasons = {
-        reason
-        for state in searches
-        for provider in ["crossref", *session.settings.providers]
-        if (reason := session.stop_reason(provider, state.reference.id)) is not None
-    }
-    if not reasons:
-        return "No configured provider can run the proposed refinement queries."
-    return "Query refinement unavailable: " + " ".join(sorted(reasons))
 
 
 def planning_evidence(searches: list[ReferenceSearchState]) -> list[ReferenceQueryEvidence]:
@@ -404,18 +308,6 @@ def planning_evidence(searches: list[ReferenceSearchState]) -> list[ReferenceQue
         )
         for state in islice(searches, MAX_QUERY_REFERENCES)
     ]
-
-
-def can_refine(state: ReferenceSearchState, session: ReferenceSearchSession) -> bool:
-    """Require unresolved evidence and capacity at at least one configured provider."""
-    if not search_trigger(state.record, session.settings) or not has_search_evidence(
-        state.reference
-    ):
-        return False
-    return any(
-        not session.stop_reason(provider, state.reference.id)
-        for provider in ["crossref", *session.settings.providers]
-    )
 
 
 def search_refinement_rounds(
@@ -474,82 +366,25 @@ def discover_references(
     paper: papers.PaperDocument,
     pages: list[str],
     source_sha256: str,
-    output_directory: Path,
-    cache_directory: Path,
     *,
     settings: models.DiscoverySettings,
     configuration: structured_generation.ModelConfiguration,
-    timeout_seconds: float,
     cancelled: Callable[[], bool],
     providers: dict[str, resolution.Lookup] | None = None,
 ) -> ReferenceDiscoveryResult:
     """Audit source coverage, recover grounded entries and identify only unresolved literature."""
-    if not 0 < timeout_seconds <= 240:
-        raise ValueError("Reference discovery timeout must be between 0 and 240 seconds")
-    deadline = monotonic() + timeout_seconds
-    record_event(
-        output_directory,
-        "reference_discovery_started",
-        max_requests=settings.max_requests,
-        max_requests_per_reference=settings.max_requests_per_reference,
-        max_model_calls=settings.max_model_calls,
-    )
     session = ReferenceSearchSession(
-        cache_directory=cache_directory / "lookups",
         settings=settings,
         report=models.DiscoveryReport(),
-        deadline=deadline,
         cancelled=cancelled,
         providers=providers if providers is not None else available_providers(),
-        event_directory=output_directory,
     )
-    recovery = recover_source_bibliography(paper, pages, cache_directory, configuration, session)
-    record_event(
-        output_directory,
-        "bibliography_recovery_finished",
-        status=recovery.report.status,
-        model_status=recovery.report.model_status,
-        cache_reused=recovery.report.cache_reused,
-        original_count=recovery.report.original_count,
-        resulting_count=recovery.report.resulting_count,
-        model_calls=session.report.model_calls,
-    )
+    recovery = recover_source_bibliography(paper, pages, configuration, session)
     searches = identify_sources(paper, recovery.paper, source_sha256, session)
-    statuses = Counter(state.record.resolution.status for state in searches)
-    record_event(
-        output_directory,
-        "ordinary_reference_search_finished",
-        requests=session.report.requests,
-        reserved_requests=session.report.refinement.reserved_requests,
-        resolution_counts=dict(statuses),
-    )
     refine_unresolved(searches, session, configuration)
-    refinement_event = {
-        "not_needed": "reference_refinement_not_needed",
-        "skipped": "reference_refinement_skipped",
-        "failed": "reference_refinement_failed",
-        "completed": "reference_refinement_completed",
-    }[session.report.refinement.status]
-    record_event(
-        output_directory,
-        refinement_event,
-        **session.report.refinement.model_dump(mode="json"),
-    )
-    save_confirmed_sources(searches, session)
     collected = collect_literature(recovery.paper, searches, source_sha256)
     if settings.find_open_access:
         enrich_access(collected, session)
-    write_json_atomically(
-        output_directory / "reference-discovery.json", session.report.model_dump(mode="json")
-    )
-    record_event(
-        output_directory,
-        "reference_discovery_finished",
-        requests=session.report.requests,
-        cache_hits=session.report.cache_hits,
-        model_calls=session.report.model_calls,
-        literature_records=len(collected),
-    )
     return ReferenceDiscoveryResult(
         paper=recovery.paper,
         literature=collected,
@@ -561,24 +396,15 @@ def discover_references(
 def recover_source_bibliography(
     paper: papers.PaperDocument,
     pages: list[str],
-    cache_directory: Path,
     configuration: structured_generation.ModelConfiguration,
     session: ReferenceSearchSession,
 ) -> bibliography_recovery.BibliographyRecoveryResult:
-    """Recover bibliography coverage and account for its bounded model work."""
+    """Recover bibliography coverage from the current document."""
     recovery = bibliography_recovery.recover_bibliography(
         paper,
         pages,
-        cache_directory / "bibliography",
-        configuration=model_configuration(configuration, session.settings, session.deadline),
+        configuration=configuration,
         cancelled=session.cancelled,
-        allow_model=session.settings.max_model_calls > 0 and session.deadline - monotonic() >= 1,
-        timeout_seconds=max(0.1, session.deadline - monotonic()),
-        retry_generation=session.settings.retry_generation,
-    )
-    session.report.cache_hits += int(recovery.report.cache_reused)
-    session.report.model_calls += int(
-        not recovery.report.cache_reused and recovery.report.model_status in {"completed", "failed"}
     )
     session.report.warnings.extend(recovery.report.unresolved_issues)
     return recovery
@@ -608,25 +434,9 @@ def identify_sources(
         prepare_reference_search(original, reference, source_sha256, session)
         for original, reference in zip(originals, references, strict=True)
     ]
-    session.report.refinement.reserved_requests = session.reserve_refinement_requests(
-        sum(has_search_evidence(state.reference) for state in searches)
-    )
     search_initial_round(searches, session)
     search_fallback_rounds(searches, session)
     return searches
-
-
-def save_confirmed_sources(
-    searches: list[ReferenceSearchState], session: ReferenceSearchSession
-) -> None:
-    """Persist confirmed identities independently of unresolved-search retries."""
-    for state in searches:
-        if state.record.resolution.status != "matched":
-            continue
-        write_json_atomically(
-            confirmed_record_path(state.reference, state.record.source_sha256, session),
-            state.record.model_dump(mode="json"),
-        )
 
 
 def enrich_access(

@@ -18,7 +18,7 @@ stable; document and test deliberate migrations.
 Include a concise description of the problem, changed behavior and verification
 in pull requests. Distinguish tested behavior from future architectural plans.
 Use synthetic fixtures rather than private papers or model transcripts. Never
-commit credentials, PDFs, local Zotero libraries, caches or database exports.
+commit credentials, PDFs, local Zotero libraries, generated runtime data or database exports.
 
 The Hermes bridge needs its installed runtime for live checks. The default test
 suite does not download OCR models or call a paid model service.

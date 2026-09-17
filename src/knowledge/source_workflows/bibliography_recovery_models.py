@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from knowledge.knowledge_domain.knowledge_record_models import Contract
 from knowledge.literature.structured_paper_models import (
@@ -33,6 +33,8 @@ class BibliographyEntry(Contract):
 class BibliographyAudit(Contract):
     """Expose recovery changes without claiming bibliographic identity verification."""
 
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
+
     status: Literal["consistent", "recovered", "needs_review"]
     original_count: int
     detected_count: int
@@ -43,8 +45,7 @@ class BibliographyAudit(Contract):
     invalidated_citation_indexes: list[int] = Field(default_factory=list)
     relinked_citation_indexes: list[int] = Field(default_factory=list)
     unresolved_issues: list[str] = Field(default_factory=list)
-    model_status: Literal["not_needed", "disabled", "completed", "failed", "budget_exhausted"]
-    cache_reused: bool = False
+    model_status: Literal["not_needed", "disabled", "completed", "failed"]
 
 
 class BibliographyRecoveryResult(Contract):

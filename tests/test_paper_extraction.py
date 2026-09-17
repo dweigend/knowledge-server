@@ -23,7 +23,7 @@ def paper() -> PaperDocument:
     )
 
 
-def test_replaceable_analyzer_preserves_exact_page_quotes_and_private_artifacts(
+def test_replaceable_analyzer_preserves_exact_page_quotes_without_audit_files(
     tmp_path: Path,
 ) -> None:
     pdf = tmp_path / "paper.pdf"
@@ -37,7 +37,6 @@ def test_replaceable_analyzer_preserves_exact_page_quotes_and_private_artifacts(
     result = extract_paper_document(
         pdf,
         {"document_provider": "grobid", "service_url": "http://localhost:8070"},
-        tmp_path / "trace",
         timeout_seconds=10,
         cancelled=lambda: False,
         analyzer=analyzer,
@@ -50,8 +49,7 @@ def test_replaceable_analyzer_preserves_exact_page_quotes_and_private_artifacts(
     assert result.paper is not None
     assert result.paper.metadata.title == "A paper"
     assert result.paper.raw_document is None
-    assert (tmp_path / "trace/provider-response.txt").read_text() == "<provider-output />"
-    assert (tmp_path / "trace/document.md").read_text().startswith("# A paper")
+    assert not (tmp_path / "trace").exists()
     assert TextExtraction.model_validate_json(result.model_dump_json()) == result
     span = segment_verbatim(result).blocks[0].sources[0]
     assert result.pages[span.page - 1][span.start : span.end] == span.quote
@@ -67,7 +65,6 @@ def test_explicit_raw_text_mode_does_not_contact_analyzer(tmp_path: Path) -> Non
     result = extract_paper_document(
         pdf,
         {"document_provider": "poppler"},
-        tmp_path / "trace",
         timeout_seconds=10,
         cancelled=lambda: False,
         analyzer=unexpected,
@@ -87,7 +84,6 @@ def test_analyzer_failure_does_not_silently_return_raw_success(tmp_path: Path) -
         extract_paper_document(
             pdf,
             {"document_provider": "grobid", "service_url": "http://localhost:8070"},
-            tmp_path / "trace",
             timeout_seconds=10,
             cancelled=lambda: False,
             analyzer=unavailable,
@@ -133,13 +129,19 @@ def test_service_url_rejects_query_and_fragment(suffix: str) -> None:
         )
 
 
-def test_extraction_settings_accept_unrelated_recipe_fields_without_coercing_limits() -> None:
+def test_extraction_settings_ignore_unrelated_recipe_fields() -> None:
     from knowledge.source_workflows.paper_extraction_models import PaperExtractionSettings
 
     settings = PaperExtractionSettings.model_validate({"max_characters": 200, "prompt": "custom"})
     assert settings.document_provider == "poppler"
-    with pytest.raises(ValueError):
-        PaperExtractionSettings.model_validate({"discovery": {"max_requests": "10"}})
+    discovery = PaperExtractionSettings.model_validate(
+        {"discovery": {"unknown": "value"}}
+    ).discovery
+    assert discovery.model_dump() == {
+        "providers": ["dnb", "openalex", "openlibrary"],
+        "required_fields": ["title", "authors", "year"],
+        "find_open_access": False,
+    }
 
 
 @pytest.mark.parametrize("interrupt", ["source_changed", "cancelled"])
@@ -163,7 +165,6 @@ def test_analysis_rejects_invalidated_evidence_before_writing_artifacts(
         extract_paper_document(
             pdf,
             {"document_provider": "grobid", "service_url": "http://localhost:8070"},
-            tmp_path / "trace",
             timeout_seconds=10,
             cancelled=lambda: stopped,
             analyzer=analyzer,

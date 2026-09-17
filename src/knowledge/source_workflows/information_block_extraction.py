@@ -248,7 +248,6 @@ def segment_information(
         instructions,
         packet,
         BlockSegmentation,
-        output_directory,
         validate,
         configuration=configuration,
         cancelled=cancelled,

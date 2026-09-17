@@ -28,13 +28,6 @@ class ReferenceQueries(Contract):
     queries: list[ReferenceQuery] = Field(default_factory=list, max_length=MAX_QUERY_REFERENCES)
 
 
-class CachedQueryPlan(BaseModel):
-    """Keep a failed planning attempt from triggering repeated model requests."""
-
-    plan: ReferenceQueries = Field(default_factory=ReferenceQueries)
-    error: str | None = None
-
-
 class ReferenceQueryEvidence(BaseModel):
     """Pair exact extracted reference evidence with bounded provider candidates."""
 

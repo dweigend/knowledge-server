@@ -12,8 +12,8 @@ class Proposal(Contract):
     quote: str
 
 
-def test_cached_schema_valid_output_must_pass_domain_validation(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_identical_generations_call_hermes_and_validate_fresh_output(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = []
 
@@ -23,21 +23,19 @@ def test_cached_schema_valid_output_must_pass_domain_validation(
         Path(arguments[-1]).write_text(json.dumps({"response": json.dumps({"quote": quote})}))
 
     monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
-    first = generate("Instructions", "Source", Proposal, tmp_path)
+    first = generate("Instructions", "Source", Proposal)
     assert first.quote == "fabricated"
 
     def validate(proposal: Proposal) -> None:
         if proposal.quote != "exact source":
             raise ValueError("Quote not in source")
 
-    repaired = generate("Instructions", "Source", Proposal, tmp_path, validate=validate)
+    repaired = generate("Instructions", "Source", Proposal, validate=validate)
     assert repaired.quote == "exact source"
     assert len(calls) == 2
 
 
-def test_json_syntax_repair_excludes_large_source_context(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_json_syntax_repair_excludes_large_source_context(monkeypatch: pytest.MonkeyPatch) -> None:
     requests = []
 
     def respond(arguments: list[str], **kwargs: object) -> None:
@@ -46,7 +44,7 @@ def test_json_syntax_repair_excludes_large_source_context(
         Path(arguments[-1]).write_text(json.dumps({"response": response}))
 
     monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
-    proposal = generate("Extract JSON", "LARGE_SOURCE_CONTEXT", Proposal, tmp_path)
+    proposal = generate("Extract JSON", "LARGE_SOURCE_CONTEXT", Proposal)
     assert proposal.quote == "exact"
     assert len(requests) == 2
     assert "LARGE_SOURCE_CONTEXT" in requests[0]["input"]
@@ -55,7 +53,7 @@ def test_json_syntax_repair_excludes_large_source_context(
 
 
 def test_configuration_variants_do_not_share_model_responses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from knowledge.model_integration.structured_generation import ModelConfiguration
 
@@ -67,23 +65,28 @@ def test_configuration_variants_do_not_share_model_responses(
         Path(arguments[-1]).write_text(json.dumps({"response": '{"quote": "exact"}'}))
 
     monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
-    generate("Instructions", "Source", Proposal, tmp_path)
-    generate("Instructions", "Source", Proposal, tmp_path)
+    generate("Instructions", "Source", Proposal)
+    generate("Instructions", "Source", Proposal)
     generate(
         "Instructions",
         "Source",
         Proposal,
-        tmp_path,
         configuration=ModelConfiguration(model="alternative", provider="custom"),
     )
-    assert [request["model"] for request in requests] == ["gpt-5.6-luna", "alternative"]
-    assert [request["provider"] for request in requests] == ["openai-codex", "custom"]
-    assert [request["reasoning_effort"] for request in requests] == ["max", "max"]
+    assert [request["model"] for request in requests] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-luna",
+        "alternative",
+    ]
+    assert [request["provider"] for request in requests] == [
+        "openai-codex",
+        "openai-codex",
+        "custom",
+    ]
+    assert [request["reasoning_effort"] for request in requests] == ["max", "max", "max"]
 
 
-def test_single_attempt_does_not_run_repair(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_single_attempt_does_not_run_repair(monkeypatch: pytest.MonkeyPatch) -> None:
     import pytest
 
     from knowledge.model_integration.structured_generation import ModelConfiguration
@@ -101,7 +104,6 @@ def test_single_attempt_does_not_run_repair(
             "Instructions",
             "Source",
             Proposal,
-            tmp_path,
             configuration=ModelConfiguration(max_attempts=1, timeout_seconds=12),
         )
     assert len(calls) == 1
@@ -123,12 +125,15 @@ def test_unsupported_model_capabilities_are_rejected() -> None:
             ModelConfiguration.model_validate(configuration)
 
 
-def test_cancelled_generation_does_not_create_request(tmp_path: Path) -> None:
+def test_cancelled_generation_does_not_create_request(monkeypatch: pytest.MonkeyPatch) -> None:
     import pytest
 
+    monkeypatch.setattr(
+        "knowledge.model_integration.structured_generation.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("Cancelled generation called Hermes"),
+    )
     with pytest.raises(InterruptedError, match="cancelled"):
-        generate("Instructions", "Source", Proposal, tmp_path, cancelled=lambda: True)
-    assert list(tmp_path.iterdir()) == []
+        generate("Instructions", "Source", Proposal, cancelled=lambda: True)
 
 
 def test_running_hermes_is_terminated_on_cancellation() -> None:
@@ -147,9 +152,7 @@ def test_running_hermes_is_terminated_on_cancellation() -> None:
     process.wait.assert_called_once_with(timeout=2)
 
 
-def test_provider_failure_records_inspectable_event_without_credentials(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_provider_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     import subprocess
 
     import pytest
@@ -159,49 +162,29 @@ def test_provider_failure_records_inspectable_event_without_credentials(
 
     monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", fail)
     with pytest.raises(subprocess.CalledProcessError):
-        generate("Instructions", "Source", Proposal, tmp_path)
-    events = [
-        json.loads(line)
-        for path in tmp_path.glob("*/events.jsonl")
-        for line in path.read_text().splitlines()
-    ]
-    failure = next(event for event in events if event["event"] == "model_attempt_failed")
-    assert failure["error_type"] == "CalledProcessError"
-    assert failure["status"] == "failed"
-    assert failure["elapsed_seconds"] >= 0
-    assert "SECRET_PROVIDER_TOKEN" not in json.dumps(events)
+        generate("Instructions", "Source", Proposal)
 
 
-def test_reused_response_preserves_files_and_records_effective_provider(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_identical_requests_execute_independently(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+
     def respond(arguments: list[str], **kwargs: object) -> None:
+        calls.append(arguments)
         Path(arguments[-1]).write_text(
             json.dumps(
                 {
                     "model": "actual-model",
                     "provider": "actual-provider",
-                    "execution": "simulated",
                     "response": '{"quote": "exact"}',
                 }
             )
         )
 
     monkeypatch.setattr("knowledge.model_integration.structured_generation.subprocess.run", respond)
-    generate("Instructions", "Source", Proposal, tmp_path)
-    responses = {path: path.read_bytes() for path in tmp_path.glob("*/response-*.json")}
-    generate("Instructions", "Source", Proposal, tmp_path)
-    assert {path: path.read_bytes() for path in responses} == responses
-    events = [
-        json.loads(line)
-        for path in tmp_path.glob("*/events.jsonl")
-        for line in path.read_text().splitlines()
-    ]
-    result = next(event for event in events if event["event"] == "model_response")
-    assert result["model"] == "actual-model"
-    assert result["provider"] == "actual-provider"
-    assert result["response_origin"] == "simulated"
-    assert events[-1]["event"] == "model_cache_reused"
+    assert generate("Instructions", "Source", Proposal).quote == "exact"
+    assert generate("Instructions", "Source", Proposal).quote == "exact"
+    assert len(calls) == 2
+    assert calls[0][-2] != calls[1][-2]
 
 
 def test_bridge_does_not_report_requested_model_as_verified_runtime() -> None:

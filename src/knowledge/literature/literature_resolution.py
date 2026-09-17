@@ -11,7 +11,6 @@ from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
-from time import monotonic, sleep
 from typing import Final, Literal
 
 from knowledge.literature import literature_models
@@ -24,7 +23,6 @@ from knowledge.literature.crossref_client import lookup_crossref, normalize_doi
 Lookup = Callable[
     [papers.PaperMetadata, float, Callable[[], bool]], list[literature_models.Candidate]
 ]
-MIN_REQUEST_INTERVAL: Final[float] = 0.5
 MAX_LOOKUP_SECONDS: Final[int] = 15
 
 
@@ -195,7 +193,7 @@ def metadata_completeness(candidate: literature_models.Candidate) -> int:
 
 def lookup_resolution(
     reference: papers.PaperReference,
-    deadline: float,
+    timeout_seconds: float,
     cancelled: Callable[[], bool],
     lookup: Lookup,
 ) -> literature_models.Resolution:
@@ -203,12 +201,7 @@ def lookup_resolution(
     if cancelled():
         raise InterruptedError("Literature lookup cancelled")
     try:
-        remaining = deadline - monotonic()
-        if remaining <= 0:
-            raise TimeoutError("Literature reconciliation time budget exhausted")
-        return resolve_reference(
-            reference, lookup(reference, min(remaining, MAX_LOOKUP_SECONDS), cancelled)
-        )
+        return resolve_reference(reference, lookup(reference, timeout_seconds, cancelled))
     except InterruptedError:
         raise
     except (ValueError, OSError, KeyError, TypeError) as error:
@@ -260,35 +253,20 @@ def enrich_paper(
     """Reconcile a paper and bibliography, deduplicating only accepted stable identities."""
     if not math.isfinite(timeout_seconds) or not 0 < timeout_seconds <= 240:
         raise ValueError("Literature timeout must be between 0 and 240 seconds")
-    deadline = monotonic() + timeout_seconds
     records: dict[str, literature_models.LiteratureRecord] = {}
-    cache: dict[str, literature_models.Resolution] = {}
-    provider_backoff: literature_models.Resolution | None = None
     references = [
         papers.PaperReference(id="__source__", **paper.metadata.model_dump()),
         *paper.references,
     ]
     reference_counts = Counter(reference.id for reference in paper.references)
     for index, reference in enumerate(references):
-        key = reference.model_dump_json(exclude={"id"})
-        if provider_backoff is not None:
-            cache[key] = provider_backoff
-        if key not in cache:
-            if lookup is None and cache:
-                wait_until = min(monotonic() + MIN_REQUEST_INTERVAL, deadline)
-                while monotonic() < wait_until and not cancelled():
-                    sleep(min(0.05, max(0, wait_until - monotonic())))
-            cache[key] = lookup_resolution(
-                reference, deadline, cancelled, lookup or lookup_crossref
-            )
-            if lookup is None and "HTTP 429" in cache[key].message:
-                provider_backoff = cache[key].model_copy(
-                    update={"message": "Crossref rate limited this run (HTTP 429); retry later."}
-                )
+        current = lookup_resolution(
+            reference, timeout_seconds, cancelled, lookup or lookup_crossref
+        )
         if cancelled():
             raise InterruptedError("Literature lookup cancelled")
         record = build_record(
-            reference, cache[key], source_sha256, "source" if index == 0 else "reference"
+            reference, current, source_sha256, "source" if index == 0 else "reference"
         )
         if index and reference_counts[reference.id] > 1 and record.resolution.status != "matched":
             record.id += f":entry:{index}"

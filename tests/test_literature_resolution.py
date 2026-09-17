@@ -137,7 +137,7 @@ def test_unresolved_markers_and_unknown_targets_are_not_discarded() -> None:
     assert records[2].reference_ids == ["missing"]
 
 
-def test_repeated_identical_requests_are_cached() -> None:
+def test_repeated_identical_references_are_looked_up_fresh() -> None:
     calls = []
 
     def lookup(ref: PaperMetadata, *_: object) -> list[Candidate]:
@@ -146,7 +146,7 @@ def test_repeated_identical_requests_are_cached() -> None:
 
     records = enrich(paper([reference(), reference("b2")]), lookup)
     assert len(records) == 3  # Unmatched title duplicates are not merged.
-    assert calls == [None, "A scientific paper"]
+    assert calls == [None, "A scientific paper", "A scientific paper"]
 
 
 def test_provider_failure_keeps_extracted_data_and_explicit_error() -> None:
@@ -213,27 +213,7 @@ def test_crossref_lookup_uses_encoded_exact_doi_and_bounded_search(
     assert searched[0].method == "bibliographic"
 
 
-def test_exhausted_total_budget_marks_remaining_sources_without_new_requests(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import knowledge.literature.literature_resolution as literature_resolution
-
-    times = iter([0.0, 0.1, 11.0])
-    monkeypatch.setattr(literature_resolution, "monotonic", lambda: next(times))
-    calls = []
-
-    def lookup(ref: PaperMetadata, *_: object) -> list[Candidate]:
-        assert isinstance(ref, PaperReference)
-        calls.append(ref.id)
-        return []
-
-    records = enrich(paper([reference()]), lookup)
-    assert calls == ["__source__"]
-    assert records[1].resolution.status == "error"
-    assert "budget exhausted" in records[1].resolution.message
-
-
-def test_rate_limit_stops_further_requests_in_the_same_run(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rate_limit_does_not_suppress_later_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     import knowledge.literature.literature_resolution as literature_resolution
 
     calls = []
@@ -247,7 +227,7 @@ def test_rate_limit_stops_further_requests_in_the_same_run(monkeypatch: pytest.M
     records = enrich_paper(
         paper([reference()]), "a" * 64, timeout_seconds=10, cancelled=lambda: False
     )
-    assert calls == ["__source__"]
+    assert calls == ["__source__", "b1"]
     assert all(record.resolution.status == "error" for record in records)
 
 

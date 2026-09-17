@@ -378,12 +378,7 @@ def discovery_form(token: str) -> dict[str, str]:
         "literature_provider": "discovery",
         "discovery_settings": "1",
         "discovery_providers": "dnb, openlibrary",
-        "discovery_max_requests": "12",
-        "discovery_max_requests_per_reference": "3",
-        "discovery_max_model_calls": "0",
-        "discovery_model_timeout_seconds": "30",
         "discovery_required_fields": "title, authors, year",
-        "discovery_retry_generation": "2",
         "discovery_find_open_access": "on",
         "model": "test-search-model",
         "provider": "test-provider",
@@ -407,16 +402,11 @@ def test_discovery_settings_save_and_survive_legacy_provider_selection(
     settings = DiscoverySettings.model_validate(recipe.parameters["discovery"]).model_dump()
     assert settings == {
         "providers": ["dnb", "openlibrary"],
-        "max_requests": 12,
-        "max_requests_per_reference": 3,
-        "max_model_calls": 0,
-        "model_timeout_seconds": 30,
         "required_fields": ["title", "authors", "year"],
-        "retry_generation": 2,
         "find_open_access": True,
     }
     assert recipe.output_schema == "extraction.v4"
-    assert 'name="discovery_retry_generation" min="0" value="2"' in response.text
+    assert "Search revision" not in response.text
     form = {
         **step_form(token, "extract_text", "save"),
         "document_provider": "grobid",
@@ -437,8 +427,6 @@ def test_discovery_settings_save_and_survive_legacy_provider_selection(
     "invalid",
     [
         {"discovery_providers": "unknown"},
-        {"discovery_max_requests": "-1"},
-        {"discovery_retry_generation": "-1"},
         {"discovery_required_fields": "unknown"},
     ],
 )
@@ -459,7 +447,7 @@ def test_invalid_discovery_settings_do_not_save_revisions(
     assert get_revision("prompt", recipe.prompt_name) == prompt
 
 
-def test_discovery_trace_and_historical_output_render_without_network(
+def test_discovery_trace_and_output_render_without_network(
     workbench: tuple[TestClient, Path, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from test_grobid import TEI
@@ -493,22 +481,14 @@ def test_discovery_trace_and_historical_output_render_without_network(
         "resulting_count": 19,
         "status": "needs_review",
         "model_status": "completed",
-        "cache_reused": True,
         "unresolved_issues": ["Citation targets require review."],
     }
     output["discovery"] = {
-        "requests": 3,
-        "cache_hits": 2,
-        "model_calls": 0,
-        "warnings": ["Request budget exhausted."],
+        "warnings": ["DNB request failed."],
         "refinement": {
             "status": "skipped",
-            "reason": "Search request budget was exhausted before query refinement.",
-            "reserved_requests": 2,
+            "reason": "No unresolved source has sufficient evidence for refinement.",
             "planned_queries": 0,
-            "requests": 0,
-            "model_called": False,
-            "cache_reused": False,
         },
         "searches": [
             {
@@ -519,7 +499,6 @@ def test_discovery_trace_and_historical_output_render_without_network(
                         "provider": "dnb",
                         "query": "A book",
                         "status": "success",
-                        "cached": True,
                         "message": "No candidate found.",
                         "candidate_count": 0,
                     }
@@ -529,15 +508,14 @@ def test_discovery_trace_and_historical_output_render_without_network(
     }
     page = client.get(base)
     assert page.status_code == 200, page.text
-    assert "3 requests · 2 cache hits · 0 model calls" in page.text
     assert "Discovery search trace" in page.text
     assert "12 extracted · 19 detected in text · 19 retained" in page.text
     assert "Citation targets require review." in page.text
-    assert "Request budget exhausted." in page.text
+    assert "DNB request failed." in page.text
     assert "No candidate found." in page.text
-    assert "dnb · success · cached" in page.text
-    assert "Query refinement · skipped · 2 requests reserved" in page.text
-    assert "Search request budget was exhausted before query refinement." in page.text
+    assert "dnb · success · 0 candidates" in page.text
+    assert "Query refinement · skipped" in page.text
+    assert "No unresolved source has sufficient evidence for refinement." in page.text
     assert get_revision("recipe", "extract_text") == saved
 
 

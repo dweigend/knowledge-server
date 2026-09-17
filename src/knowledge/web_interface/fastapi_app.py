@@ -373,7 +373,7 @@ def source_description(
     record: models.Record,
     database: postgresql_revision_store.Database,
 ) -> dict[str, JsonValue]:
-    """Show an explicit availability error instead of substituting cached literature."""
+    """Show an explicit availability error instead of substituting stale literature."""
     try:
         with database.transaction() as ledger:
             reference = sources.zotero_reference(ledger, record)

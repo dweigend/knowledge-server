@@ -30,7 +30,7 @@ class ModelConfiguration(BaseModel):
         return self
 
     def resolved(self) -> "ModelConfiguration":
-        """Make the existing Luna defaults explicit before hashing a request."""
+        """Make the existing Luna defaults explicit before sending a request."""
         return self.model_copy(
             update={
                 "model": self.model or "gpt-5.6-luna",
@@ -43,7 +43,6 @@ class GenerationResponse(BaseModel):
     """Retain response text and optional provenance from the Hermes bridge."""
 
     response: str
-    execution: str = "unverified"
     model: str | None = None
     provider: str | None = None
 

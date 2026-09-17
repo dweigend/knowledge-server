@@ -34,8 +34,8 @@ The boundary is split into `literature/structured_paper_models.py`
 `source_workflows/structured_paper_extraction.py` (shared orchestration) and
 `web_interface/paper_markdown_renderer.py` (safe rendering).
 An analyzer with the same callable contract can replace GROBID without changing
-source-span validation or UI contracts. The original provider response and
-Markdown are retained in the attempt's private trace directory; the export
+source-span validation or UI contracts. Original provider responses and temporary
+Hermes transport files are discarded after each call; the immutable attempt
 contains the normalized paper result. The exact-text revision identifies only
 the Poppler text; the attempt output hash covers the enriched result as well.
 
@@ -43,9 +43,8 @@ Configure `KNOWLEDGE_GROBID_URL` before creating a new registry, or set the serv
 URL in the step form. The selected URL is pinned in each recipe. See
 [service setup](../deploy/README.md#optional-scientific-pdf-service).
 Extraction failure fails the attempt rather than silently substituting raw-text
-success. The HTTP client honors cancellation and the overall step deadline;
-remote computation
-may continue after its connection is closed.
+success. The HTTP client honors cancellation and its transport timeout; remote
+computation may continue after its connection is closed.
 GROBID consolidation is disabled. A separate Crossref adapter now reconciles
 paper metadata and bibliography when `literature_provider` is `crossref` or
 `discovery`. Discovery adds bounded fallback searches after this first pass.
@@ -86,9 +85,9 @@ also removes its observations from this view; nothing is silently accepted into
 the permanent knowledge database. The reusable contracts provide the foundation
 for that later integration without a separate persistent graph database.
 
-In Crossref-only mode, requests are sequential, cached within the run, individually bounded to
-15 seconds and subject to the overall step budget. HTTP 429 stops further lookup
-requests in that run. A failed lookup remains visible on its source record.
+In Crossref-only mode, requests are sequential and always execute against the
+provider. A failed lookup remains visible on its source record; it does not
+suppress a later request for the same reference.
 Crossref coverage and GROBID reference extraction are incomplete, particularly
 for older books: the interface does not claim all records are complete simply
 because execution finished.
@@ -105,56 +104,41 @@ a direct book-catalog lookup first. ISBN-10 and ISBN-13 identify the same editio
 after normalization; conflicting editions remain unresolved.
 
 `source_workflows/reference_discovery.py` is the callable workflow boundary;
-provider clients, grounded bibliography recovery and persistent search caching
-remain separate modules. Discovery preserves the exact PDF text revision.
+provider clients and grounded bibliography recovery remain separate modules.
+Discovery preserves the exact PDF text revision.
 The completeness audit recognizes author/year and numbered bibliographies with
 explicit headings. Unrecognized layouts remain a review issue rather than a
 claim of complete extraction. Recovered references retain exact page spans;
 ambiguous citation targets stay unresolved.
 
-New extraction recipes use low reasoning effort for bounded metadata parsing.
+New extraction recipes use low reasoning effort for metadata parsing.
 The existing Hermes runtime is required only when model assistance is needed;
 configure `KNOWLEDGE_HERMES_PYTHON` on the machine running the worker. Missing
-runtimes and timed-out model requests remain visible and cached, while grounded
-extraction and catalog results are retained. No model or network request runs
-when viewing an existing result.
+runtimes and timed-out model requests fail the current operation. No model or
+network request runs when viewing an existing result.
 
-Advanced controls pin the provider order, request budgets, model-call budget,
-model timeout, required fields and search revision in the recipe. Defaults are
-DNB, OpenAlex and Open Library; Semantic Scholar and Google Books are optional.
+Advanced controls pin the provider order and required fields in the recipe.
+Defaults are DNB, OpenAlex and Open Library; Semantic Scholar and Google Books are optional.
 Optional credentials are listed in `.env.example`. Open-access lookup is opt-in;
 Unpaywall requires a contact email. Credentials are environment settings, never
 part of recipes or exported search traces.
 
-The default fallback limits are 100 requests per run, 10 per reference and 2 model
-calls, with a 60-second model timeout. The overall step deadline still applies.
 Model assistance may propose bounded search queries; candidates must pass the
 bibliographic identity checks before becoming confirmed records. Neither a model
 response nor an open-access URL is sufficient evidence for an identity.
 
 Discovery gives every searchable reference one initial lookup before distributing
-fallback providers round-robin. When a model-call slot remains after bibliography
-recovery, up to one fifth of the request budget is held for grounded query
-refinement without preventing those initial lookups. The same one-fifth reserve
-applies to each reference, so difficult sources retain two of their ten requests
-for refined searches. The result records whether refinement ran, used a cached
-plan, returned no variants or was skipped because a time, request or model-call
-budget was exhausted.
-
-Search results are cached within the source experiment, including unsuccessful
-searches, so an ordinary rerun does not repeat unchanged failed queries
-indefinitely. Increase **Search revision**
-to explicitly retry negative cache entries. Confirmed complete references and
-successful bibliography recovery remain cached across search revisions.
-Changing budgets alone does not clear negative entries.
-The result shows request, cache-hit and model-call totals, warnings
-and a collapsed per-reference trace of provider, query, status and candidate count.
+fallback providers round-robin. Unresolved sources then receive freshly planned,
+grounded query variants. Every rerun repeats provider, bibliography-recovery and
+Hermes work; no positive, negative, identity, query-plan or model-response result
+is reused.
+The result shows warnings and a collapsed per-reference trace of provider, query,
+status and candidate count.
 Rejected candidates retain deterministic title, identifier, year, author or
-chapter-versus-book reasons. The attempt execution trace records each redacted
-lookup plus bibliography recovery, refinement and final resource totals; raw
-provider responses and model reasoning remain private diagnostics.
-Reading a result never starts another search. Provider failures and exhausted
-budgets remain visible; unresolved sources are retained for review.
+chapter-versus-book reasons. These facts live in the immutable result rather than
+separate request, response or event files. Raw provider responses and model
+reasoning are not retained. Reading a result never starts another search. Provider failures
+remain visible; unresolved sources are retained for review.
 
 Existing saved recipes are not rewritten or activated automatically. Saving a
 legacy recipe creates a new `extraction.v4` revision; historical outputs without
@@ -242,22 +226,21 @@ sequenceDiagram
   participant Hermes
   Human->>UI: Start one step
   UI->>Runner: Pin recipe, inputs, schema and code
-  Runner->>Domain: Execute within attempt limits
+  Runner->>Domain: Execute the selected operation
   opt Model operation
     Domain->>Hermes: Actual request with bounded configuration
     Hermes-->>Domain: Response or failure
   end
   Domain-->>Runner: Validated result or validation error
-  Runner-->>UI: Persist immutable terminal record and trace
+  Runner-->>UI: Persist immutable terminal record and result
   Human->>UI: Refresh, inspect or rerun
 ```
 
 The adapter supports tool-free Hermes requests. Unsupported tools and monetary
 caps are rejected; there are no decorative controls that silently ignore them.
-Request limits and a total step time limit apply. Effective model/provider are
-recorded when reported by Hermes; unknown values remain unknown. Cache hits and
-validation repair attempts are explicit. Traces contain observable requests and
-responses, never hidden reasoning or raw provider diagnostics.
+Configured schema-repair attempts and transport timeouts apply. Effective
+model/provider are recorded when reported by Hermes; unknown values remain unknown.
+Temporary transport files are removed before the call returns.
 
 ## Configuration and retention
 
@@ -280,7 +263,7 @@ does not alter historical attempts. Author rules require the author's supplied
 instructions/examples; the application does not invent a personal voice.
 
 Private run directories live beside the archive under `experiments/`. Source
-copies, knowledge snapshots, attempt inputs, outputs and traces belong to the
+copies, knowledge snapshots, attempt inputs and terminal outputs belong to the
 experiment. Saved configurations live in `KNOWLEDGE_CONFIGURATION_ROOT` (or the
 private default configuration path) and survive deletion. Explicit report files
 written outside the run directory also survive. Cleanup directly removes the

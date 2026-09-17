@@ -1,10 +1,8 @@
-"""Describe bounded reference searches and their inspectable evidence."""
+"""Describe reference searches and their inspectable evidence."""
 
 from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
-
-from knowledge.literature.literature_models import Candidate
 
 Provider = Literal["dnb", "openalex", "openlibrary", "semantic_scholar", "google_books"]
 RequiredField = Literal["title", "authors", "year", "venue", "publisher", "pages", "doi"]
@@ -25,9 +23,9 @@ def unique_requirements(fields: list[RequiredField]) -> list[RequiredField]:
 
 
 class DiscoverySettings(BaseModel):
-    """Limit optional searches while retaining unsuccessful results until explicit retry."""
+    """Configure optional providers and metadata requirements."""
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="ignore", strict=True)
 
     providers: Annotated[list[Provider], AfterValidator(unique_providers)] = Field(
         default=["dnb", "openalex", "openlibrary"]
@@ -35,29 +33,23 @@ class DiscoverySettings(BaseModel):
     required_fields: Annotated[list[RequiredField], AfterValidator(unique_requirements)] = Field(
         default=["title", "authors", "year"]
     )
-    max_requests: int = Field(default=100, ge=0, le=200)
-    max_requests_per_reference: int = Field(default=10, ge=1, le=12)
-    max_model_calls: int = Field(default=2, ge=0, le=5)
-    model_timeout_seconds: float = Field(default=60, ge=1, le=120)
-    retry_generation: int = Field(default=0, ge=0)
     find_open_access: bool = False
 
 
 class SearchQuery(BaseModel):
-    """Record one provider query without credentials or unbounded response bodies."""
+    """Record one provider query without credentials or response bodies."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")
 
     provider: str
     query: str
-    status: Literal["success", "error", "budget", "backoff", "skipped"]
-    cached: bool = False
+    status: Literal["success", "error", "skipped"]
     message: str = ""
     candidate_count: int = 0
 
 
 class ReferenceSearch(BaseModel):
-    """Explain why one source required lookup and which bounded queries ran."""
+    """Explain why one source required lookup and which queries ran."""
 
     reference_id: str
     trigger: str
@@ -65,33 +57,16 @@ class ReferenceSearch(BaseModel):
 
 
 class RefinementAudit(BaseModel):
-    """Report whether model-assisted query refinement ran and what it consumed."""
+    """Report whether model-assisted query refinement ran."""
 
     status: Literal["not_needed", "completed", "skipped", "failed"] = "not_needed"
     reason: str = ""
-    reserved_requests: int = 0
     planned_queries: int = 0
-    requests: int = 0
-    model_called: bool = False
-    cache_reused: bool = False
 
 
 class DiscoveryReport(BaseModel):
-    """Expose resource usage and unresolved quality issues without claiming completeness."""
+    """Expose unresolved quality issues and searches without claiming completeness."""
 
-    requests: int = 0
-    cache_hits: int = 0
-    model_calls: int = 0
     warnings: list[str] = Field(default_factory=list)
     searches: list[ReferenceSearch] = Field(default_factory=list)
     refinement: RefinementAudit = Field(default_factory=RefinementAudit)
-
-
-class CachedLookup(BaseModel):
-    """Retain a provider's positive or negative result for an identical request."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    candidates: list[Candidate] = Field(default_factory=list)
-    error: str | None = None
-    checked_at: str

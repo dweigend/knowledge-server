@@ -25,6 +25,7 @@ from knowledge.experiments import (
 )
 from knowledge.experiments.experiment_views import AttemptView
 from knowledge.knowledge_domain import application_errors
+from knowledge.literature.reference_discovery_models import DiscoverySettings
 from knowledge.model_integration import prompt_registry, structured_generation
 from knowledge.runtime_support import environment_settings
 from knowledge.web_interface import paper_markdown_renderer
@@ -114,18 +115,8 @@ def extraction_form_parameters(
             for entry in required_text(form, f"discovery_{name}", allow_empty=True).split(",")
             if entry.strip()
         ]
-    for name in (
-        "max_requests",
-        "max_requests_per_reference",
-        "max_model_calls",
-        "retry_generation",
-    ):
-        discovery[name] = int(required_text(form, f"discovery_{name}"))
-    discovery["model_timeout_seconds"] = float(
-        required_text(form, "discovery_model_timeout_seconds")
-    )
     discovery["find_open_access"] = form.get("discovery_find_open_access") == "on"
-    parameters["discovery"] = discovery
+    parameters["discovery"] = DiscoverySettings.model_validate(discovery).model_dump(mode="json")
     return parameters
 
 

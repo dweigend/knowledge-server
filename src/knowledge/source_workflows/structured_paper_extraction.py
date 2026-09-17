@@ -7,7 +7,6 @@ stores inspectable artifacts for downstream steps.
 import hashlib
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from time import monotonic
 from typing import Protocol
 
 from knowledge.literature import grobid_client, literature_resolution, structured_paper_models
@@ -40,44 +39,37 @@ def validate_paper_parameters(parameters: Mapping[str, object]) -> None:
 def extract_paper_document(
     pdf: Path,
     parameters: Mapping[str, object],
-    output_directory: Path,
     *,
     timeout_seconds: float,
     cancelled: Callable[[], bool],
     analyzer: PaperAnalyzer = grobid_client.extract_paper,
     configuration: ModelConfiguration | None = None,
-    cache_directory: Path | None = None,
 ) -> information_block_extraction.TextExtraction:
     """Preserve exact page evidence and attach provider-neutral document analysis."""
     settings = PaperExtractionSettings.model_validate(parameters)
-    deadline = monotonic() + timeout_seconds
     extraction = information_block_extraction.extract_text(
         pdf, cancelled=cancelled, timeout_seconds=timeout_seconds
     )
     if settings.document_provider == "poppler":
         return extraction
 
-    paper = analyze_document(pdf, extraction, settings, deadline, cancelled, analyzer)
-    save_paper_artifacts(paper, output_directory)
+    paper = analyze_document(pdf, extraction, settings, timeout_seconds, cancelled, analyzer)
     if settings.literature_provider == "discovery":
         return discover_literature(
             extraction,
             paper,
             settings,
-            output_directory,
-            cache_directory or output_directory / "reference-cache",
             configuration or ModelConfiguration(),
-            deadline,
             cancelled,
         )
-    return attach_literature(extraction, paper, settings, deadline, cancelled)
+    return attach_literature(extraction, paper, settings, timeout_seconds, cancelled)
 
 
 def analyze_document(
     pdf: Path,
     extraction: information_block_extraction.TextExtraction,
     settings: PaperExtractionSettings,
-    deadline: float,
+    timeout_seconds: float,
     cancelled: Callable[[], bool],
     analyzer: PaperAnalyzer,
 ) -> structured_paper_models.PaperDocument:
@@ -87,7 +79,7 @@ def analyze_document(
     paper = analyzer(
         pdf,
         base_url=settings.service_url,
-        timeout_seconds=remaining_analysis_seconds(deadline),
+        timeout_seconds=timeout_seconds,
         cancelled=cancelled,
     )
     if cancelled():
@@ -97,35 +89,20 @@ def analyze_document(
     return paper
 
 
-def remaining_analysis_seconds(deadline: float) -> float:
-    """Reject a depleted extraction budget before starting further analysis."""
-    remaining = deadline - monotonic()
-    if remaining <= 0:
-        raise TimeoutError("Paper extraction exceeded its time limit")
-    return remaining
-
-
 def discover_literature(
     extraction: information_block_extraction.TextExtraction,
     paper: structured_paper_models.PaperDocument,
     settings: PaperExtractionSettings,
-    output_directory: Path,
-    cache_directory: Path,
     configuration: ModelConfiguration,
-    deadline: float,
     cancelled: Callable[[], bool],
 ) -> information_block_extraction.TextExtraction:
-    """Attach recovered bibliography and the bounded discovery audit to exact page evidence."""
-    remaining = remaining_analysis_seconds(deadline)
+    """Attach recovered bibliography and fresh discovery results to exact page evidence."""
     result = reference_discovery.discover_references(
         paper,
         list(extraction.pages),
         extraction.pdf_sha256,
-        output_directory,
-        cache_directory,
         settings=settings.discovery,
         configuration=configuration,
-        timeout_seconds=max(0.1, remaining - 1),
         cancelled=cancelled,
     )
     return extraction.model_copy(
@@ -142,7 +119,7 @@ def attach_literature(
     extraction: information_block_extraction.TextExtraction,
     paper: structured_paper_models.PaperDocument,
     settings: PaperExtractionSettings,
-    deadline: float,
+    timeout_seconds: float,
     cancelled: Callable[[], bool],
 ) -> information_block_extraction.TextExtraction:
     """Attach structured evidence and optional Crossref records without discovery."""
@@ -154,19 +131,7 @@ def attach_literature(
     literature = literature_resolution.enrich_paper(
         paper,
         extraction.pdf_sha256,
-        timeout_seconds=max(0.1, deadline - monotonic() - 1),
+        timeout_seconds=timeout_seconds,
         cancelled=cancelled,
     )
     return result.model_copy(update={"literature": literature})
-
-
-def save_paper_artifacts(
-    paper: structured_paper_models.PaperDocument, output_directory: Path
-) -> None:
-    """Retain provider output and Markdown inside the owned attempt trace."""
-    output_directory.mkdir(parents=True, exist_ok=True)
-    if paper.raw_document is not None:
-        (output_directory / "provider-response.txt").write_text(
-            paper.raw_document, encoding="utf-8"
-        )
-    (output_directory / "document.md").write_text(paper.markdown, encoding="utf-8")

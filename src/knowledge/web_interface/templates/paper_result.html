@@ -3,15 +3,15 @@
 {% if result.bibliography is defined and result.bibliography %}
 {% set bibliography = result.bibliography %}
 <p class="caption">Bibliography · {{ bibliography.original_count }} extracted · {{ bibliography.detected_count }} detected in text · {{ bibliography.resulting_count }} retained · {{ bibliography.status }}</p>
-<details><summary>Bibliography recovery</summary><p class="caption">Model: {{ bibliography.model_status }}{% if bibliography.cache_reused %} · cached{% endif %}</p>{% for issue in bibliography.unresolved_issues %}<p class="notice">{{ issue }}</p>{% endfor %}</details>
+<details><summary>Bibliography recovery</summary><p class="caption">Model: {{ bibliography.model_status }}</p>{% for issue in bibliography.unresolved_issues %}<p class="notice">{{ issue }}</p>{% endfor %}</details>
 {% endif %}
 {% if result.discovery is defined and result.discovery %}
-<p class="caption">Discovery · {{ result.discovery.requests }} requests · {{ result.discovery.cache_hits }} cache hits · {{ result.discovery.model_calls }} model calls</p>
+<p class="caption">Discovery</p>
 {% for warning in result.discovery.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
-{% if result.discovery.refinement is defined %}{% set refinement = result.discovery.refinement %}<p class="caption">Query refinement · {{ refinement.status }}{% if refinement.reserved_requests %} · {{ refinement.reserved_requests }} requests reserved{% endif %}{% if refinement.model_called %} · model called{% elif refinement.cache_reused %} · cached plan{% endif %}{% if refinement.planned_queries %} · {{ refinement.planned_queries }} variants{% endif %}</p>{% if refinement.reason %}<p class="caption">{{ refinement.reason }}</p>{% endif %}{% endif %}
+{% if result.discovery.refinement is defined %}{% set refinement = result.discovery.refinement %}<p class="caption">Query refinement · {{ refinement.status }}{% if refinement.planned_queries %} · {{ refinement.planned_queries }} variants{% endif %}</p>{% if refinement.reason %}<p class="caption">{{ refinement.reason }}</p>{% endif %}{% endif %}
 <details><summary>Discovery search trace</summary>
 {% for search in result.discovery.searches %}<details><summary>{{ search.reference_id }} · {{ search.trigger }}</summary>
-{% for query in search.queries %}<p class="caption">{{ query.provider }} · {{ query.status }}{% if query.cached %} · cached{% endif %} · {{ query.candidate_count }} candidates</p><blockquote>{{ query.query }}</blockquote>{% if query.message %}<p class="caption">{{ query.message }}</p>{% endif %}{% endfor %}
+{% for query in search.queries %}<p class="caption">{{ query.provider }} · {{ query.status }} · {{ query.candidate_count }} candidates</p><blockquote>{{ query.query }}</blockquote>{% if query.message %}<p class="caption">{{ query.message }}</p>{% endif %}{% endfor %}
 </details>{% else %}<p class="caption">No searches recorded.</p>{% endfor %}
 </details>
 {% endif %}

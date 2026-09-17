@@ -88,7 +88,7 @@ def get_bibliography(
 
 
 def attachment_path(library: str, key: str, instance: str) -> Path:
-    """Resolve Zotero's stored attachment URL without creating a PDF cache."""
+    """Resolve Zotero's stored attachment URL without copying the PDF."""
     request = Request(
         BASE_URL + f"/api/{library}/items/{key}/file/view/url",
         headers={"Zotero-Server-ID": instance},

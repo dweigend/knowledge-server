@@ -1,15 +1,16 @@
-"""Generate cached, schema-validated proposals through a Hermes subprocess.
+"""Generate schema-validated proposals through a Hermes subprocess.
 
-Requests support cancellation and limited repair while raw model output remains
-untrusted until structural and domain validation succeed.
+Requests support cancellation and limited repair. Raw model output remains
+untrusted until structural and domain validation succeed and temporary transport
+files are deleted before the call returns.
 """
 
-import hashlib
 import json
 import os
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import monotonic
 from typing import Final
 
@@ -18,7 +19,6 @@ from pydantic import ValidationError
 from knowledge.knowledge_domain import knowledge_record_models as models
 from knowledge.model_integration.generation_models import GenerationResponse
 from knowledge.model_integration.generation_models import ModelConfiguration as ModelConfiguration
-from knowledge.runtime_support import workflow_event_log as events
 
 HERMES_PYTHON: Final[Path] = Path(
     os.environ.get(
@@ -37,27 +37,21 @@ def generate[T: models.Contract](
     instructions: str,
     packet: str,
     contract: type[T],
-    output_directory: Path,
     validate: Callable[[T], None] | None = None,
     *,
     configuration: ModelConfiguration | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> T:
-    """Reuse a validated proposal or request at most two schema-checked attempts."""
+    """Request a fresh proposal with bounded schema-repair attempts."""
     check_cancelled(cancelled)
     configuration = (configuration or ModelConfiguration()).resolved()
     schema = json.dumps(contract.model_json_schema(), ensure_ascii=False)
     request = {"instructions": instructions, "input": f"SCHEMA:\n{schema}\n\nINPUT:\n{packet}"}
     request["configuration"] = configuration.model_dump_json()
-    identity = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
-    directory = output_directory / identity
-    directory.mkdir(parents=True, exist_ok=True)
-    accepted = directory / "validated.json"
-    cached = load_cached_proposal(accepted, contract, validate)
-    if cached is not None:
-        events.record_event(directory, "model_cache_reused", contract=contract.__name__)
-        return cached
-    return generate_attempts(request, directory, contract, validate, configuration, cancelled)
+    with TemporaryDirectory(prefix="knowledge-model-") as temporary:
+        return generate_attempts(
+            request, Path(temporary), contract, validate, configuration, cancelled
+        )
 
 
 def generate_attempts[T: models.Contract](
@@ -68,40 +62,19 @@ def generate_attempts[T: models.Contract](
     configuration: ModelConfiguration,
     cancelled: Callable[[], bool] | None,
 ) -> T:
-    """Try the initial request and one repair, preserving every response for inspection."""
-    accepted = directory / "validated.json"
+    """Try the initial request and configured schema-repair attempts."""
     for attempt in range(configuration.max_attempts):
         check_cancelled(cancelled)
-        started = monotonic()
         try:
             response = request_response(request, directory, attempt, cancelled=cancelled)
             check_cancelled(cancelled)
-        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as error:
-            events.record_event(
-                directory,
-                "model_attempt_failed",
-                attempt=attempt + 1,
-                status="cancelled" if isinstance(error, InterruptedError) else "failed",
-                error_type=type(error).__name__,
-                elapsed_seconds=round(monotonic() - started, 2),
-            )
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError):
             raise
-        errors: list[str] = []
-        proposal = validate_response(response, request, contract, validate, errors=errors)
-        events.record_event(
-            directory,
-            "model_attempt",
-            attempt=attempt + 1,
-            status="rejected" if proposal is None else "validated",
-            elapsed_seconds=round(monotonic() - started, 2),
-            contract=contract.__name__,
-            validation_errors=errors,
-        )
+        proposal = validate_response(response, request, contract, validate)
         if proposal is None:
             continue
-        accepted.write_text(proposal.model_dump_json(indent=2))
         return proposal
-    raise ValueError(f"Model output failed contract validation; inspect {directory}")
+    raise ValueError("Model output failed contract validation")
 
 
 def validate_response[T: models.Contract](
@@ -130,23 +103,6 @@ def validate_response[T: models.Contract](
             "omit invalid relations."
         )
         return None
-
-
-def load_cached_proposal[T: models.Contract](
-    accepted: Path,
-    contract: type[T],
-    validate: Callable[[T], None] | None,
-) -> T | None:
-    """Recheck domain validity; an outdated cached proposal triggers regeneration."""
-    if not accepted.exists():
-        return None
-    cached = contract.model_validate_json(accepted.read_text())
-    try:
-        if validate is not None:
-            validate(cached)
-    except ValueError:
-        return None
-    return cached
 
 
 def run_hermes(
@@ -213,37 +169,13 @@ def request_response(
     *,
     cancelled: Callable[[], bool] | None = None,
 ) -> str:
-    """Reuse recorded responses and preserve changed repair requests separately."""
+    """Run Hermes once using temporary request, response and diagnostic files."""
     request_path = directory / f"request-{attempt}.json"
     response_path = directory / f"response-{attempt}.json"
-    if request_path.exists() and json.loads(request_path.read_text()) != request:
-        suffix = hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()[:16]
-        request_path = directory / f"request-{attempt}-{suffix}.json"
-        response_path = directory / f"response-{attempt}-{suffix}.json"
     request_path.write_text(json.dumps(request, ensure_ascii=False))
-    cached = response_path.exists()
-    events.record_event(
-        directory,
-        "model_request",
-        attempt=attempt + 1,
-        request_file=request_path.name,
-        response_file=response_path.name,
-        execution="cached" if cached else "live",
-    )
-    if not cached:
-        log_path = directory / f"hermes-{attempt}.log"
-        run_hermes(request_path, response_path, log_path, cancelled=cancelled)
+    log_path = directory / f"hermes-{attempt}.log"
+    run_hermes(request_path, response_path, log_path, cancelled=cancelled)
     recorded = GenerationResponse.model_validate_json(response_path.read_bytes())
-    events.record_event(
-        directory,
-        "model_response",
-        attempt=attempt + 1,
-        response_file=response_path.name,
-        execution="cached" if cached else "live",
-        response_origin=recorded.execution,
-        model=recorded.model,
-        provider=recorded.provider,
-    )
     response = recorded.response.strip()
     if response.startswith("```json") and response.endswith("```"):
         response = response[7:-3].strip()

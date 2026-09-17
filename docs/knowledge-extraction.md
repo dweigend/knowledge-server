@@ -112,8 +112,7 @@ Re-extraction never changes the text behind an existing quote.
 Do not maintain Markdown, HTML and a flat page-text copy independently. Generate
 views and model packets from the common structure. Retain old flat snapshots
 only for identified historical readers. Temporary PDFs and page images are
-deleted after processing; reproducible preview caches have a bounded lifecycle.
-Historical PDFs remain Zotero attachments, not extraction-cache assets.
+deleted after processing. Historical PDFs remain Zotero attachments.
 
 ## Background execution
 
@@ -135,7 +134,7 @@ owns agent interaction. No Redis, Celery, event bus or generic workflow engine.
 - Log step, tool/configuration, page range, duration, outcome and error
 privately.
   Terminate owned helper processes on failure or shutdown and remove staging
-  files. Do not allow tool caches or servers to escape configured ownership.
+  files. Do not allow tool runtime files or servers to escape configured ownership.
 
 ## Module boundary and operations
 

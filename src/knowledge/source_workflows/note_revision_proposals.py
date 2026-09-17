@@ -7,7 +7,6 @@ database services or the workflow that accepts and persists a revision.
 import json
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Final, Literal
 
 from pydantic import Field
@@ -78,7 +77,6 @@ def validate_preserved_citations(previous: models.Note, note: models.Note) -> No
 def propose_note_revision(
     target: models.Record,
     records: list[models.Record],
-    run_directory: Path,
     *,
     instructions: str | None = None,
     configuration: structured_generation.ModelConfiguration | None = None,
@@ -96,7 +94,6 @@ def propose_note_revision(
         instructions,
         packet,
         NoteRevision,
-        run_directory / "proposals",
         lambda result: validate_note_revision(result, target, supplied),
         configuration=configuration,
         cancelled=cancelled,

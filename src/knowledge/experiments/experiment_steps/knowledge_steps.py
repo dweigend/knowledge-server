@@ -58,7 +58,6 @@ def select_entries(
         retrieval,
         _knowledge_query(execution),
         execution.prompt_text,
-        execution.output_directory,
         execution.recipe.model,
         execution.cancelled,
     )
@@ -111,7 +110,6 @@ def _propose_claim_changes(
         decision = claim_matching.propose_matching(
             claim.proposal,
             candidates,
-            execution.output_directory,
             instructions=execution.prompt_text,
             configuration=execution.recipe.model,
             cancelled=execution.cancelled,
@@ -152,7 +150,6 @@ def _propose_note_change(
     command = note_revision_proposals.propose_note_revision(
         record,
         records,
-        execution.output_directory,
         instructions=prompt,
         configuration=execution.recipe.model,
         cancelled=execution.cancelled,

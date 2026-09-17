@@ -7,7 +7,6 @@ any change proposal is generated.
 import json
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Final
 
 from pydantic import Field
@@ -81,7 +80,6 @@ def select_knowledge(
     retrieval: KnowledgeRetrieval,
     question: str,
     instructions: str,
-    output_directory: Path,
     configuration: structured_generation.ModelConfiguration,
     cancelled: Callable[[], bool],
 ) -> KnowledgeSelection:
@@ -95,7 +93,6 @@ def select_knowledge(
         instructions,
         packet,
         KnowledgeSelection,
-        output_directory,
         lambda result: validate_selection(result, retrieval),
         configuration=configuration,
         cancelled=cancelled,

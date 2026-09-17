@@ -126,8 +126,8 @@ Do not access or mutate Zotero's SQLite tables directly.
 
 Zotero object versions support change detection; they do not replace our
 immutable citation history. Keep cited PDF versions as Zotero attachments and
-retain exact evidence snapshots. Any technical cache must be disposable,
-version-aware and require no separate manual maintenance.
+retain exact evidence snapshots. Temporary derived files must be disposable and
+require no separate manual maintenance.
 
 ## Observed gap and smallest migration
 

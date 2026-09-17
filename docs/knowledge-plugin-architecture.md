@@ -166,7 +166,7 @@ Scientific policies remain in their owning domain; the core is not a generic
 arbitrary-record mutation endpoint.
 
 One database can hold canonical knowledge and workflow state with distinct
-owners. Plugin caches are rebuildable and cannot become alternative records.
+owners. Temporary plugin artifacts cannot become alternative records.
 Existing Open Research Lab research databases remain separate project artifacts;
 they must not become a second authority for accepted claims in this system.
 

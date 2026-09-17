@@ -1,45 +1,17 @@
-"""Run bounded provider queries with persistent positive and negative caching."""
+"""Run fresh provider queries for one discovery execution."""
 
-import hashlib
-import json
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from pathlib import Path
-from time import monotonic, sleep
-from typing import Final
+from dataclasses import dataclass
 
 from knowledge.literature import literature_resolution
 from knowledge.literature import reference_discovery_models as models
 from knowledge.literature.bibliographic_identifiers import extracted_isbn
 from knowledge.literature.literature_models import Candidate
 from knowledge.literature.structured_paper_models import PaperMetadata, PaperReference
-from knowledge.runtime_support.atomic_json_files import write_json_atomically
-from knowledge.runtime_support.workflow_event_log import record_event
-
-CACHE_VERSION: Final[str] = "reference-search.v3"
-MIN_REQUEST_INTERVAL_SECONDS: Final[int] = 1
-CANCELLATION_POLL_SECONDS: Final[float] = 0.05
-MIN_LOOKUP_SECONDS: Final[float] = 0.001
-REFINEMENT_RESERVE_DIVISOR: Final[int] = 5
-
-
-def refinement_reserve(total_requests: int, minimum_initial_requests: int) -> int:
-    """Reserve one fifth of capacity without displacing required initial lookups."""
-    return min(
-        total_requests // REFINEMENT_RESERVE_DIVISOR,
-        max(0, total_requests - minimum_initial_requests),
-    )
-
-
-def request_key(provider: str, reference: PaperMetadata, retry_generation: int) -> str:
-    """Hash the effective query and explicit retry revision, excluding local reference IDs."""
-    payload = [CACHE_VERSION, provider, reference.model_dump(exclude={"id"}), retry_generation]
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 def query_text(reference: PaperMetadata) -> str:
-    """Expose only bibliographic search evidence in the attempt trace."""
+    """Expose only bibliographic search evidence in the result."""
     if isinstance(reference, PaperReference) and reference.raw:
         return reference.raw
     return " · ".join(
@@ -48,7 +20,7 @@ def query_text(reference: PaperMetadata) -> str:
 
 
 def supports_query(provider: str, reference: PaperMetadata) -> bool:
-    """Avoid spending request budgets on adapters that cannot search the supplied fields."""
+    """Skip adapters that cannot search the supplied fields."""
     if provider == "crossref":
         return bool(reference.title or reference.doi or getattr(reference, "raw", None))
     if provider == "unpaywall":
@@ -62,26 +34,17 @@ def supports_query(provider: str, reference: PaperMetadata) -> bool:
 
 @dataclass
 class ReferenceSearchSession:
-    """Own request budgets, per-provider backoff and private cache files for one run."""
+    """Own provider access and the current discovery report."""
 
-    cache_directory: Path
     settings: models.DiscoverySettings
     report: models.DiscoveryReport
-    deadline: float
     cancelled: Callable[[], bool]
     providers: dict[str, literature_resolution.Lookup]
-    backoff: set[str] = field(default_factory=set)
-    last_requests: dict[str, float] = field(default_factory=dict)
-    reference_requests: dict[str, int] = field(default_factory=dict)
-    event_directory: Path | None = None
-    request_limit: int | None = None
-    reference_request_limit: int | None = None
-    request_limit_reason: str = "Search request budget exhausted."
 
     def search(
         self, provider: str, reference: PaperReference, trace: models.ReferenceSearch
     ) -> list[Candidate]:
-        """Reuse identical results before spending either request or per-reference budget."""
+        """Run one provider query for the current execution."""
         self.check_cancelled()
         query = models.SearchQuery(provider=provider, query=query_text(reference), status="success")
         trace.queries.append(query)
@@ -94,149 +57,39 @@ class ReferenceSearchSession:
             query.message = "Insufficient fields for this provider; no request made."
             candidates = []
         else:
-            result = self.lookup(provider, reference, trace.reference_id, query)
-            candidates = result.candidates if result is not None else []
-            if result is not None:
-                query.candidate_count = len(result.candidates)
-                query.message = result.error or ""
-                query.status = "error" if result.error else "success"
-        self.record_query(trace.reference_id, query)
+            candidates = self.request(provider, reference, query)
+            query.candidate_count = len(candidates)
         return candidates
 
-    def reserve_refinement_requests(self, minimum_initial_requests: int) -> int:
-        """Reserve one fifth of global and per-source capacity for query refinement."""
-        reserved = refinement_reserve(self.settings.max_requests, minimum_initial_requests)
-        if not reserved:
-            self.release_reserved_requests()
-            return 0
-        self.request_limit = self.settings.max_requests - reserved
-        per_reference_reserve = refinement_reserve(self.settings.max_requests_per_reference, 1)
-        self.reference_request_limit = (
-            self.settings.max_requests_per_reference - per_reference_reserve
-        )
-        self.request_limit_reason = (
-            "Initial search budget exhausted; remaining requests are reserved for refinement."
-        )
-        return reserved
-
-    def release_reserved_requests(self) -> None:
-        """Restore the hard run limit before model-assisted refinement."""
-        self.request_limit = None
-        self.reference_request_limit = None
-        self.request_limit_reason = "Search request budget exhausted."
-
-    def record_query(self, reference_id: str, query: models.SearchQuery) -> None:
-        """Append one redacted provider outcome to the owning attempt log."""
-        if self.event_directory is None:
-            return
-        record_event(
-            self.event_directory,
-            "reference_lookup_finished",
-            reference_id=reference_id,
-            provider=query.provider,
-            query=query.query,
-            status=query.status,
-            cached=query.cached,
-            candidate_count=query.candidate_count,
-            message=query.message,
-            requests=self.report.requests,
-            request_limit=(
-                self.request_limit if self.request_limit is not None else self.settings.max_requests
-            ),
-        )
-
-    def lookup(
+    def request(
         self,
         provider: str,
         reference: PaperReference,
-        reference_id: str,
         query: models.SearchQuery,
-    ) -> models.CachedLookup | None:
-        """Read cached evidence or persist a fresh lookup only when budgets permit it."""
-        key = request_key(provider, reference, self.settings.retry_generation)
-        path = self.cache_directory / f"{key}.json"
-        if path.exists():
-            result = models.CachedLookup.model_validate_json(path.read_text())
-            query.cached = True
-            self.report.cache_hits += 1
-            return result
-
-        reason = self.wait_for_capacity(provider, reference_id)
-        if reason:
-            query.status = "backoff" if provider in self.backoff else "budget"
-            query.message = reason
-            return None
-
-        result = self.request(provider, reference, reference_id)
-        write_json_atomically(path, result.model_dump(mode="json"))
-        return result
-
-    def wait_for_capacity(self, provider: str, reference_id: str) -> str | None:
-        """Check budgets before and after cancellable provider pacing."""
-        reason = self.stop_reason(provider, reference_id)
-        if reason:
-            return reason
-        self.wait_for_provider(provider)
+    ) -> list[Candidate]:
+        """Call one provider and record recoverable transport failures on the query."""
         self.check_cancelled()
-        return self.stop_reason(provider, reference_id)
-
-    def stop_reason(self, provider: str, reference_id: str) -> str | None:
-        """Explain why a fresh request cannot run without caching a synthetic failure."""
-        if provider in self.backoff:
-            return "Provider rate limited this run; another provider may still be used."
-        if monotonic() >= self.deadline:
-            return "Search time budget exhausted."
-        request_limit = (
-            self.request_limit if self.request_limit is not None else self.settings.max_requests
-        )
-        if self.report.requests >= request_limit:
-            return self.request_limit_reason
-        reference_limit = self.reference_request_limit or self.settings.max_requests_per_reference
-        if self.reference_requests.get(reference_id, 0) >= reference_limit:
-            return "Per-reference request budget exhausted."
-        return None
-
-    def request(
-        self, provider: str, reference: PaperReference, reference_id: str
-    ) -> models.CachedLookup:
-        """Call one provider and preserve recoverable transport failures as explicit results."""
-        self.check_cancelled()
-        remaining = self.deadline - monotonic()
-        self.report.requests += 1
-        self.reference_requests[reference_id] = self.reference_requests.get(reference_id, 0) + 1
-        self.last_requests[provider] = monotonic()
-        checked_at = datetime.now(UTC).isoformat()
         try:
-            candidates = self.providers[provider](
+            return self.providers[provider](
                 reference,
-                max(MIN_LOOKUP_SECONDS, min(literature_resolution.MAX_LOOKUP_SECONDS, remaining)),
+                literature_resolution.MAX_LOOKUP_SECONDS,
                 self.cancelled,
             )
         except InterruptedError:
             raise
         except (OSError, ValueError) as error:
-            return self.failed_lookup(provider, error, checked_at)
-        return models.CachedLookup(candidates=candidates, checked_at=checked_at)
+            self.record_failure(provider, error, query)
+            return []
 
-    def failed_lookup(
-        self, provider: str, error: OSError | ValueError, checked_at: str
-    ) -> models.CachedLookup:
-        """Redact provider failure details and pause only a rate-limited provider."""
+    def record_failure(
+        self, provider: str, error: OSError | ValueError, query: models.SearchQuery
+    ) -> None:
+        """Redact provider failure details in the current query result."""
+        query.status = "error"
         if "429" not in str(error):
-            return models.CachedLookup(
-                error=f"{provider}: {type(error).__name__}", checked_at=checked_at
-            )
-        self.backoff.add(provider)
-        return models.CachedLookup(error=f"{provider}: HTTP 429", checked_at=checked_at)
-
-    def wait_for_provider(self, provider: str) -> None:
-        """Pace sequential requests while remaining responsive to cancellation."""
-        ready = min(
-            self.last_requests.get(provider, 0) + MIN_REQUEST_INTERVAL_SECONDS, self.deadline
-        )
-        while monotonic() < ready:
-            self.check_cancelled()
-            sleep(min(CANCELLATION_POLL_SECONDS, max(0, ready - monotonic())))
+            query.message = f"{provider}: {type(error).__name__}"
+            return
+        query.message = f"{provider}: HTTP 429"
 
     def check_cancelled(self) -> None:
         """Stop immediately when the owning experiment is cancelled."""

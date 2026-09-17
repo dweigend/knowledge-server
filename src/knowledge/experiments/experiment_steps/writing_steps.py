@@ -30,7 +30,6 @@ def prepare_writing(
             "propose_changes": execution.inputs["propose_changes"].model_dump(mode="json"),
         },
         execution.prompt_text,
-        execution.output_directory,
         execution.recipe.model,
         execution.cancelled,
     )
@@ -53,7 +52,6 @@ def draft_text(
         execution.inputs["segment_blocks"],
         execution.author_rules,
         execution.prompt_text,
-        execution.output_directory,
         recipe.model,
         execution.cancelled,
     )

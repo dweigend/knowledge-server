@@ -7,7 +7,6 @@ records as a side effect.
 import json
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Final
 
 from pydantic import Field, JsonValue
@@ -70,7 +69,6 @@ def prepare_writing_points(
     blocks: information_block_extraction.InformationBlocks,
     context: dict[str, JsonValue],
     instructions: str,
-    output_directory: Path,
     configuration: structured_generation.ModelConfiguration,
     cancelled: Callable[[], bool],
 ) -> WritingPoints:
@@ -85,7 +83,6 @@ def prepare_writing_points(
         instructions,
         packet,
         WritingPoints,
-        output_directory,
         lambda result: validate_writing_points(result, blocks, goal),
         configuration=configuration,
         cancelled=cancelled,
@@ -98,7 +95,6 @@ def draft_prose(
     blocks: information_block_extraction.InformationBlocks,
     author_rules: dict[str, JsonValue],
     instructions: str,
-    output_directory: Path,
     configuration: structured_generation.ModelConfiguration,
     cancelled: Callable[[], bool],
 ) -> WritingDraft:
@@ -119,7 +115,6 @@ def draft_prose(
         instructions,
         packet,
         WritingDraft,
-        output_directory,
         lambda result: validate_block_citations(result.text, result.block_indexes, allowed),
         configuration=configuration,
         cancelled=cancelled,

@@ -79,25 +79,24 @@ Independent discovery-field rules use Pydantic `AfterValidator` functions.
 
 `ReferenceSearchState` keeps each original reference, internal search identifier,
 candidates, resolution and trace together. Initial and model-refined searches
-share one provider loop. The search session owns pacing and request counters directly as typed dataclass
-fields, alongside its explicit provider and cancellation dependencies. Query proposals and their evidence packets reuse
+share one provider loop. The search session owns only its explicit provider,
+report and cancellation dependencies. Query proposals and their evidence packets reuse
 `PaperReference` and `Candidate` instead of constructing untyped dictionaries.
 A Pydantic `TypeAdapter` bounds the planning list to 50 references; each evidence
-entry admits six candidates. Planning receives that typed list directly. These limits affect model input only; the source audit
+entry admits six candidates. Planning receives that typed list directly. These limits affect model input only; the result
 retains all collected candidates.
 
 Crossref now shares the bounded HTTP transport with the other discovery providers.
 Its response schemas validate deposited fields before normalization. Provider
-transport and validation failures remain cacheable; unexpected `KeyError` and
-`TypeError` propagate instead of masquerading as unresolved sources. Cancellation
-also propagates and is never written to the negative cache.
+transport and validation failures remain visible in the current result; unexpected
+`KeyError` and `TypeError` propagate instead of masquerading as unresolved sources.
+Cancellation also propagates.
 
-Existing output schemas, field defaults, whitespace policies and cache hashes
-remain unchanged. Planning packets deliberately retain the previous `json.dumps`
-representation: replacing it with `model_dump_json()` would change cache keys.
+Existing output schemas, field defaults and whitespace policies remain unchanged.
+Planning packets retain the established `json.dumps` representation.
 Trusted internal copies use `model_copy`; external input and constrained settings
 use validation. `Contract` is not a universal base because its whitespace trimming
-would change exact evidence. No generic model or cache hierarchy is introduced.
+would change exact evidence.
 
 ### Review comment coverage
 
@@ -105,9 +104,9 @@ would change exact evidence. No generic model or cache hierarchy is introduced.
 | --- | --- |
 | 1–2 | Keep settings declarative; separate field validators with early returns. |
 | 3 | Use independent guard clauses when selecting the richest matching candidate. |
-| 4–5 | Keep mutable counters with their owning session as typed dataclass fields; remove the redundant state envelope and constructor assignments. |
-| 6 | Separate lookup orchestration, cached results and pacing/budget checks. |
-| 7 | Keep request accounting separate from redacted provider failure handling; catch only recoverable transport/validation errors. |
+| 4–5 | Keep session state typed and remove redundant envelopes and constructor assignments. |
+| 6 | Keep provider lookup orchestration separate from identity resolution. |
+| 7 | Catch only recoverable transport and validation errors. |
 | 8 | Separate initial identity lookup from the shared fallback provider loop. |
 | 9–10 | Apply one proposal at a time through the same provider loop as ordinary searches. |
 | 11 | Retain one typed state per source throughout recovery, identification, refinement and persistence; read its source hash instead of passing duplicate parameters. |

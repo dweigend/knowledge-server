@@ -76,7 +76,7 @@ def consolidate_note(
         with application.database.transaction() as ledger:
             if ledger.get_receipt(receipt_id):
                 return
-    command = note_revision_proposals.propose_note_revision(target, records, run_directory)
+    command = note_revision_proposals.propose_note_revision(target, records)
     request_id = "consolidate:" + hashlib.sha256(command.model_dump_json().encode()).hexdigest()
     write_note_proposal(application, batch_id, target, command, request_id, run_directory)
 
@@ -177,7 +177,6 @@ def reassess_claim(
         prompt,
         packet,
         models.Assessment,
-        run_directory / "proposals",
         lambda result: validate_assessment(result, claim.reference(), relations),
     )
     command = knowledge_service.AssessmentCommand(

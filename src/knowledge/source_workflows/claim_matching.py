@@ -6,7 +6,6 @@ grounding and atomic acceptance remain in the reconciliation workflow.
 
 import json
 from collections.abc import Callable
-from pathlib import Path
 from typing import Literal
 
 from pydantic import Field
@@ -39,7 +38,6 @@ def validate_decision(decision: ClaimDecision, candidates: list[models.Record]) 
 def propose_matching(
     proposal: models.ExtractedClaim,
     candidates: list[models.Record],
-    run_directory: Path,
     *,
     instructions: str | None = None,
     configuration: structured_generation.ModelConfiguration | None = None,
@@ -61,7 +59,6 @@ def propose_matching(
         instructions,
         packet,
         ClaimDecision,
-        run_directory / "proposals",
         lambda result: validate_decision(result, candidates),
         configuration=configuration,
         cancelled=cancelled,

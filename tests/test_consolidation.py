@@ -393,7 +393,7 @@ def test_generation_cannot_cite_undelivered_evidence(
         "knowledge.source_workflows.note_revision_proposals.structured_generation.generate",
         generate,
     )
-    command = propose_note_revision(target, records, tmp_path)
+    command = propose_note_revision(target, records)
     assert other[2] not in command.context
     assert imported["evidence"] in command.context
 

@@ -112,7 +112,6 @@ def run_request(
         agent.run_conversation(user_message=request.input, system_message=request.instructions)
     )
     return GenerationResponse(
-        execution="live",
         model=getattr(agent, "model", None),
         provider=getattr(agent, "provider", None),
         requested_model=model,
